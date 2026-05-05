@@ -38,4 +38,20 @@ normalized residual:
 particle_mask = detect_particles_from_residual(residual, threshold=5.0)
 ```
 
+Particle velocities can be extracted from a sequence of particle masks and
+compared to the signed belt image velocity:
+
+```python
+velocities = extract_particle_velocities_vs_belt(
+    particle_masks,
+    belt_image_velocity_px_per_frame=model.image_velocity_px_per_frame,
+)
+for velocity in velocities:
+    print(velocity.velocity_y_px_per_frame, velocity.velocity_ratio_y)
+```
+
+`velocity_ratio_y` is `particle_velocity_y / belt_velocity_y`. Particles moving
+in the belt direction but slower than the belt therefore have ratios between
+0 and 1.
+
 Datasets are intentionally not stored in this repository.
