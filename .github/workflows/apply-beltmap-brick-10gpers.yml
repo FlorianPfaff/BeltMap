@@ -1,5 +1,9 @@
 name: Apply BeltMap to Brick 10g/s Zenodo images
 
+run-name: >-
+  Brick 10g/s max_frames=${{ inputs.max_frames || '0' }}
+  velocity=${{ inputs.belt_velocity_px_per_frame || 'auto' }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -63,8 +67,77 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Validate Zenodo URL is reachable
+        env:
+          DATASET_URL: ${{ inputs.dataset_url }}
+        run: |
+          curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
+
+      - name: Install and test package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "pillow>=10"
+          python -m pytest -q
+
+      - name: Validate driver imports and configuration parsing
+        env:
+          BELT_REGION: ${{ inputs.belt_region }}
+          BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
+          BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
+          DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
+          MIN_AREA_PX: ${{ inputs.min_area_px }}
+          MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
+          MAX_MATCH_DISTANCE_PX: ${{ inputs.max_match_distance_px }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+          MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
+          VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import scripts.apply_beltmap_to_images as driver
+
+          checks = {
+              "data_dir": str(driver.DATA),
+              "output_dir": str(driver.OUT),
+              "extensions": sorted(driver.EXTS),
+              "belt_velocity_px_per_frame": os.environ["BELT_VELOCITY_PX_PER_FRAME"],
+              "max_frames": int(os.environ["MAX_FRAMES"]),
+              "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
+              "velocity_search_radius_px": int(os.environ["VELOCITY_SEARCH_RADIUS_PX"]),
+          }
+          float(os.environ["DETECTION_THRESHOLD"])
+          int(os.environ["MIN_AREA_PX"])
+          int(os.environ["MIN_TRACK_LENGTH"])
+          if os.environ.get("BELT_PERIOD_PX", "").strip():
+              int(os.environ["BELT_PERIOD_PX"])
+          if os.environ.get("MAX_MATCH_DISTANCE_PX", "").strip():
+              float(os.environ["MAX_MATCH_DISTANCE_PX"])
+          if os.environ.get("BELT_REGION", "").strip():
+              region = [int(part.strip()) for part in os.environ["BELT_REGION"].split(",")]
+              assert len(region) == 4, region
+              checks["belt_region"] = region
+          print(json.dumps(checks, indent=2))
+          PY
+
   apply-beltmap:
     name: Apply BeltMap
+    needs: preflight
     runs-on: [self-hosted, linux]
     timeout-minutes: 360
 
