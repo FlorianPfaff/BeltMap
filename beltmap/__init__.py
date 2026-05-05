@@ -1,5 +1,6 @@
 """Conveyor-belt map reconstruction and phase-estimation tools."""
 
+from .detection import detect_particles_from_residual
 from .phase import (
     BeltMotionModel,
     PhaseEstimate,
@@ -29,6 +30,7 @@ __all__ = [
     "PhaseRegistrationConfig",
     "ResidualConfig",
     "ResidualImage",
+    "detect_particles_from_residual",
     "estimate_local_noise",
     "estimate_phase",
     "generate_residual_image",

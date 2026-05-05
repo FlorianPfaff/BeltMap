@@ -31,4 +31,11 @@ The normalized image is
 `(image - expected_background) / local_noise`. The local noise is estimated
 robustly from the residual image, and invalid non-belt pixels are masked.
 
+Bright brick particles on a dark belt can then be detected by thresholding the
+normalized residual:
+
+```python
+particle_mask = detect_particles_from_residual(residual, threshold=5.0)
+```
+
 Datasets are intentionally not stored in this repository.
