@@ -12,4 +12,23 @@ The public clean-belt renderer is `render_expected_clean_belt`. It can render a
 full-frame expected background with a validity mask so subtraction ignores the
 camera background outside the belt crop.
 
+Residual images for particle localization are generated with
+`generate_residual_image` or the convenience wrapper
+`render_clean_belt_residual`:
+
+```python
+residual = render_clean_belt_residual(
+    image=frame,
+    belt_map=belt_map,
+    frame_index=t,
+    motion_model=model,
+    belt_region=(top, left, height, width),
+)
+z_image = residual.normalized
+```
+
+The normalized image is
+`(image - expected_background) / local_noise`. The local noise is estimated
+robustly from the residual image, and invalid non-belt pixels are masked.
+
 Datasets are intentionally not stored in this repository.
