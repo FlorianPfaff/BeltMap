@@ -1,0 +1,108 @@
+name: Smoke test BeltMap image driver
+
+on:
+  push:
+    paths:
+      - "beltmap/**"
+      - "scripts/apply_beltmap_to_images.py"
+      - ".github/workflows/smoke-beltmap-driver.yml"
+      - "pyproject.toml"
+  pull_request:
+    paths:
+      - "beltmap/**"
+      - "scripts/apply_beltmap_to_images.py"
+      - ".github/workflows/smoke-beltmap-driver.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-driver:
+    name: Run driver on synthetic image sequence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install BeltMap and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "pillow>=10"
+
+      - name: Generate synthetic belt sequence
+        run: |
+          mkdir -p data/images outputs
+          python - <<'PY'
+          from pathlib import Path
+
+          import numpy as np
+          from PIL import Image
+
+          out = Path("data/images")
+          height, width = 64, 48
+          yy = np.arange(height)[:, None]
+          xx = np.arange(width)[None, :]
+
+          # Periodic texture moving downward by two pixels per frame.
+          base = 100 + 25 * np.sin(2 * np.pi * yy / 16) + 10 * np.cos(2 * np.pi * xx / 12)
+          for i in range(12):
+              frame = np.roll(base, shift=2 * i, axis=0)
+              # Add a bright particle moving slightly slower than the belt.
+              y = min(height - 5, 8 + i)
+              x = 22
+              frame[y : y + 3, x : x + 3] += 120
+              Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)).save(out / f"frame_{i:03d}.png")
+          PY
+
+      - name: Run image driver
+        env:
+          BELT_VELOCITY_PX_PER_FRAME: "2"
+          BELT_PERIOD_PX: "64"
+          DETECTION_THRESHOLD: "3.0"
+          MIN_AREA_PX: "2"
+          MIN_TRACK_LENGTH: "2"
+          MAX_FRAMES: "12"
+          MAP_SAMPLE_FRAMES: "12"
+        run: python scripts/apply_beltmap_to_images.py
+
+      - name: Validate expected outputs
+        run: |
+          test -s outputs/metadata.json
+          test -s outputs/belt_map.npy
+          test -s outputs/belt_map.png
+          test -s outputs/detections.csv
+          test -s outputs/detections_per_frame.csv
+          test -s outputs/velocities.csv
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          metadata = json.loads(Path("outputs/metadata.json").read_text())
+          assert metadata["n_images"] == 12, metadata
+          assert metadata["belt_velocity_px_per_frame"] == 2.0, metadata
+          assert metadata["n_detections"] > 0, metadata
+
+          rows = list(csv.DictReader(Path("outputs/detections.csv").open()))
+          assert rows, "No detections were written"
+          print(json.dumps(metadata, indent=2))
+          PY
+
+      - name: Upload smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beltmap-driver-smoke-outputs
+          path: outputs/**
+          if-no-files-found: warn
+          retention-days: 7
