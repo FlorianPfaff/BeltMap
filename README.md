@@ -8,6 +8,11 @@ The first implemented piece is belt phase estimation:
 - render the expected clean belt crop for a frame
 - refine the predicted phase by robustly registering the observed frame against the belt map
 
+The image-sequence driver writes `phase_estimates.csv` with one row per
+processed image. It reports the predicted phase, the registration correction,
+the corrected phase in belt-map pixels, the normalized phase fraction, and the
+equivalent phase angle in radians.
+
 The public clean-belt renderer is `render_expected_clean_belt`. It can render a
 full-frame expected background with a validity mask so subtraction ignores the
 camera background outside the belt crop.

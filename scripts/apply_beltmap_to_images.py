@@ -38,6 +38,10 @@ DETECTION_FIELDS = [
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
 ]
+PHASE_FIELDS = [
+    "frame_index", "image", "phase_px", "phase_fraction", "phase_rad",
+    "predicted_phase_px", "correction_px", "loss", "score", "method",
+]
 VELOCITY_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
     "velocity_y_px_per_frame", "velocity_x_px_per_frame", "speed_px_per_frame",
@@ -354,6 +358,29 @@ def write_detection_outputs(detections_by_frame: list, detection_rows: list[dict
     write_csv(OUT / "detections_per_frame.csv", [{"frame_index": i, "n_detections": len(dets)} for i, dets in enumerate(detections_by_frame)], ["frame_index", "n_detections"])
 
 
+def phase_estimate_row(frame_index: int, path: Path, residual: ResidualImage, period_px: float) -> dict:
+    if residual.clean_render is None:
+        raise ValueError("phase estimates require residuals with a clean belt render")
+    estimate = residual.clean_render.phase_estimate
+    phase_fraction = estimate.phase_px / period_px
+    return {
+        "frame_index": frame_index,
+        "image": str(path.relative_to(DATA)),
+        "phase_px": estimate.phase_px,
+        "phase_fraction": phase_fraction,
+        "phase_rad": phase_fraction * 2.0 * math.pi,
+        "predicted_phase_px": estimate.predicted_phase_px,
+        "correction_px": estimate.correction_px,
+        "loss": "" if estimate.loss is None else estimate.loss,
+        "score": "" if estimate.score is None else estimate.score,
+        "method": estimate.method,
+    }
+
+
+def write_phase_outputs(phase_rows: list[dict]) -> None:
+    write_csv(OUT / "phase_estimates.csv", phase_rows, PHASE_FIELDS)
+
+
 def should_save_residual_preview(frame_index: int, preview_frames: int, preview_interval: int) -> bool:
     return frame_index < preview_frames or (preview_interval > 0 and frame_index % preview_interval == 0)
 
@@ -400,10 +427,12 @@ def main() -> None:
 
     detections_by_frame = []
     detection_rows: list[dict] = []
+    phase_rows: list[dict] = []
     detection_start = time.perf_counter()
     for frame_index, path in enumerate(paths):
         frame = crop(read_gray(path), region)
         residual = render_clean_belt_residual(image=frame, belt_map=belt_map, frame_index=float(frame_index), motion_model=motion_model, belt_region=None, registration_config=registration_config, residual_config=residual_config)
+        phase_rows.append(phase_estimate_row(frame_index, path, residual, float(map_height)))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             save_png(residual, OUT / f"residual_frame_{frame_index:06d}.png")
         mask = detect_particles_from_residual(residual, threshold=detection_threshold)
@@ -427,7 +456,8 @@ def main() -> None:
         processed = frame_index + 1
         if partial_output_interval > 0 and (processed == 1 or processed % partial_output_interval == 0):
             write_detection_outputs(detections_by_frame, detection_rows)
-            emit("detect", "wrote partial detection outputs", processed_frames=processed, total_detections=len(detection_rows))
+            write_phase_outputs(phase_rows)
+            emit("detect", "wrote partial detection and phase outputs", processed_frames=processed, total_detections=len(detection_rows), phase_estimates=len(phase_rows))
         if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
             dt = time.perf_counter() - detection_start
             fps = processed / dt if dt > 0 else float("inf")
@@ -436,7 +466,8 @@ def main() -> None:
             emit("detect", f"processed {processed}/{len(paths)} frames", processed_frames=processed, remaining_frames=remaining, detections_this_frame=len(detections), total_detections=len(detection_rows), frames_per_second=round(fps, 4), eta_s=round(eta, 1) if math.isfinite(eta) else None, current_image=path)
 
     write_detection_outputs(detections_by_frame, detection_rows)
-    emit("detect", "finished residual rendering and detection", processed_frames=len(paths), total_detections=len(detection_rows))
+    write_phase_outputs(phase_rows)
+    emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows))
 
     max_match = os.getenv("MAX_MATCH_DISTANCE_PX", "").strip()
     tracking_config = ParticleTrackingConfig(max_match_distance_px=float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity)), velocity_prior_y_px_per_frame=0.8 * belt_velocity)
@@ -466,6 +497,7 @@ def main() -> None:
         "reference_phase_px": reference_phase,
         "detection_threshold": detection_threshold,
         "min_area_px": min_area_px,
+        "n_phase_estimates": len(phase_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
         "n_velocity_estimates": len(velocity_rows),
@@ -480,6 +512,7 @@ def main() -> None:
         f"- Frame stride: {frame_stride}\n"
         f"- Belt velocity: {belt_velocity:.6g} px/frame\n"
         f"- Belt map height: {map_height}\n"
+        f"- Phase estimates: {len(phase_rows)}\n"
         f"- Detections: {len(detection_rows)}\n"
         f"- Tracks: {len(tracks)}\n"
         f"- Velocity estimates: {len(velocity_rows)}\n"
