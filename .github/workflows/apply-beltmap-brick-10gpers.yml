@@ -2,6 +2,7 @@ name: Apply BeltMap to Brick 10g/s Zenodo images
 
 run-name: >-
   Brick 10g/s max_frames=${{ inputs.max_frames || '0' }}
+  stride=${{ inputs.frame_stride || '1' }}
   velocity=${{ inputs.belt_velocity_px_per_frame || 'auto' }}
 
 on:
@@ -48,10 +49,15 @@ on:
         type: string
         default: ""
       max_frames:
-        description: "Optional limit on processed frames. 0 = all frames."
+        description: "Optional limit on processed frames. 0 = all selected frames."
         required: true
         type: string
         default: "0"
+      frame_stride:
+        description: "Process every Nth frame after natural sorting. 1 = no subsampling."
+        required: true
+        type: string
+        default: "1"
       map_sample_frames:
         description: "Number of frames sampled to build the belt map"
         required: true
@@ -62,6 +68,26 @@ on:
         required: true
         type: string
         default: "50"
+      progress_interval_frames:
+        description: "Print progress every N frames during long stages"
+        required: true
+        type: string
+        default: "25"
+      partial_output_interval_frames:
+        description: "Write partial CSV outputs every N processed frames. 0 = only final."
+        required: true
+        type: string
+        default: "250"
+      debug_residual_preview_frames:
+        description: "Save residual PNG previews for the first N frames"
+        required: true
+        type: string
+        default: "3"
+      debug_residual_preview_interval_frames:
+        description: "Also save residual previews every N frames. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
 
 permissions:
   contents: read
@@ -104,8 +130,13 @@ jobs:
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
           MAX_MATCH_DISTANCE_PX: ${{ inputs.max_match_distance_px }}
           MAX_FRAMES: ${{ inputs.max_frames }}
+          FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
+          PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
+          PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
+          DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
+          DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
           python - <<'PY'
           import json
@@ -118,8 +149,13 @@ jobs:
               "extensions": sorted(driver.EXTS),
               "belt_velocity_px_per_frame": os.environ["BELT_VELOCITY_PX_PER_FRAME"],
               "max_frames": int(os.environ["MAX_FRAMES"]),
+              "frame_stride": int(os.environ["FRAME_STRIDE"]),
               "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
               "velocity_search_radius_px": int(os.environ["VELOCITY_SEARCH_RADIUS_PX"]),
+              "progress_interval_frames": int(os.environ["PROGRESS_INTERVAL_FRAMES"]),
+              "partial_output_interval_frames": int(os.environ["PARTIAL_OUTPUT_INTERVAL_FRAMES"]),
+              "debug_residual_preview_frames": int(os.environ["DEBUG_RESIDUAL_PREVIEW_FRAMES"]),
+              "debug_residual_preview_interval_frames": int(os.environ["DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES"]),
           }
           float(os.environ["DETECTION_THRESHOLD"])
           int(os.environ["MIN_AREA_PX"])
@@ -182,9 +218,14 @@ jobs:
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
           MAX_MATCH_DISTANCE_PX: ${{ inputs.max_match_distance_px }}
           MAX_FRAMES: ${{ inputs.max_frames }}
+          FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
-        run: python scripts/apply_beltmap_to_images.py
+          PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
+          PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
+          DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
+          DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
+        run: python -u scripts/apply_beltmap_to_images.py
 
       - name: Upload BeltMap outputs
         if: always()
