@@ -13,6 +13,7 @@ data/
 datasets/
 raw/
 outputs/
+_artifacts/
 out/
 out_*/
 *.zip

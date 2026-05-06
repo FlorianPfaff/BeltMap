@@ -14,20 +14,20 @@ on:
         type: string
         default: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
       belt_region:
-        description: "Optional crop: top,left,height,width. Empty = full image."
+        description: "Crop: top,left,height,width. Default is the known Brick belt ROI."
         required: false
         type: string
-        default: ""
+        default: "0,220,1330,1800"
       belt_velocity_px_per_frame:
         description: "Belt image velocity in px/frame, or 'auto'"
         required: true
         type: string
-        default: "auto"
+        default: "59.3"
       belt_period_px:
         description: "Optional belt period/circumference in pixels. Empty = infer sequence map."
         required: false
         type: string
-        default: ""
+        default: "14723"
       detection_threshold:
         description: "Threshold on normalized residual for bright brick particles"
         required: true
@@ -67,7 +67,7 @@ on:
         description: "Max vertical shift searched for auto velocity"
         required: true
         type: string
-        default: "50"
+        default: "90"
       progress_interval_frames:
         description: "Print progress every N frames during long stages"
         required: true

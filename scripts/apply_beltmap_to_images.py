@@ -62,6 +62,17 @@ def env_float(name: str, default: float, minimum: float | None = None) -> float:
     return parsed
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    if value == "":
+        return default
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value, got {value!r}")
+
+
 def elapsed_s() -> float:
     return time.perf_counter() - START_TIME
 
@@ -152,6 +163,54 @@ def crop(frame: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
     return frame[top: top + height, left: left + width]
 
 
+def is_full_frame_region(
+    region: tuple[int, int, int, int],
+    frame_shape: tuple[int, int],
+) -> bool:
+    top, left, height, width = region
+    return top == 0 and left == 0 and (height, width) == frame_shape
+
+
+def validate_auto_velocity_region(
+    region: tuple[int, int, int, int],
+    frame_shape: tuple[int, int],
+) -> None:
+    if is_full_frame_region(region, frame_shape) and not env_bool("ALLOW_FULL_FRAME_AUTO_VELOCITY"):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME=auto is unsafe with a full-frame BELT_REGION. "
+            "Set BELT_REGION to the belt crop, supply BELT_VELOCITY_PX_PER_FRAME explicitly, "
+            "or set ALLOW_FULL_FRAME_AUTO_VELOCITY=1 if the full frame truly contains only belt texture."
+        )
+
+
+def validate_auto_velocity_estimate(
+    velocity: float,
+    shifts: list[float],
+    *,
+    max_shift: int,
+) -> None:
+    min_abs_velocity = env_float("AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", 0.25, minimum=0.0)
+    if abs(velocity) < min_abs_velocity:
+        raise ValueError(
+            f"Auto-estimated belt velocity {velocity:.6g} px/frame is below "
+            f"AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME={min_abs_velocity}. "
+            "This usually means static background dominated the crop. Supply BELT_REGION and/or "
+            "BELT_VELOCITY_PX_PER_FRAME explicitly."
+        )
+
+    max_edge_fraction = env_float("AUTO_VELOCITY_MAX_EDGE_FRACTION", 0.2, minimum=0.0)
+    if max_edge_fraction > 1.0:
+        raise ValueError("AUTO_VELOCITY_MAX_EDGE_FRACTION must be in [0, 1]")
+    if shifts:
+        edge_fraction = float(np.mean(np.abs(np.asarray(shifts)) >= 0.9 * max_shift))
+        if edge_fraction > max_edge_fraction:
+            raise ValueError(
+                f"Auto velocity search often hit the search edge: edge_fraction={edge_fraction:.3f}, "
+                f"max_shift={max_shift}. Increase VELOCITY_SEARCH_RADIUS_PX or supply "
+                "BELT_VELOCITY_PX_PER_FRAME explicitly."
+            )
+
+
 def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int) -> float:
     def score(shift: int) -> float:
         if shift > 0:
@@ -194,7 +253,9 @@ def estimate_velocity(paths: list[Path], region: tuple[int, int, int, int]) -> t
         previous = current
         if index == 1 or index == pair_count or index % progress_interval == 0:
             emit("velocity", f"estimated {index}/{pair_count} shifts", current_shift_px=shifts[-1], median_shift_px=float(np.median(shifts)))
-    return float(np.median(shifts)), shifts
+    velocity = float(np.median(shifts))
+    validate_auto_velocity_estimate(velocity, shifts, max_shift=max_shift)
+    return velocity, shifts
 
 
 def optional_positive_int(name: str) -> int | None:
@@ -309,6 +370,7 @@ def main() -> None:
 
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
     if velocity_spec == "auto":
+        validate_auto_velocity_region(region, first.shape)
         belt_velocity, pair_shifts = estimate_velocity(paths, region)
     else:
         belt_velocity, pair_shifts = float(velocity_spec), []
