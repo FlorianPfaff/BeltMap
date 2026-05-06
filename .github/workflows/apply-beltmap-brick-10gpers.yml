@@ -211,43 +211,49 @@ jobs:
           poetry install --with test
           poetry run pytest -q
 
-      - name: Prepare Zenodo dataset from local runner cache
+      - name: Prepare Zenodo dataset from local runner dataset cache
         env:
           DATASET_URL: ${{ inputs.dataset_url }}
         run: |
           set -euo pipefail
 
-          CACHE_ROOT="$HOME/.cache/beltmap/brick-10gpers"
-          CACHE_ZIP="$CACHE_ROOT/images_Brick_10gpers.zip"
-          CACHE_IMAGES="$CACHE_ROOT/images"
+          DATASET_CACHE_ROOT="$HOME/.cache/datasets"
+          DATASET_NAME="images_Brick_10gpers"
+          CACHE_IMAGES="$DATASET_CACHE_ROOT/$DATASET_NAME"
+          CACHE_ZIP="$DATASET_CACHE_ROOT/$DATASET_NAME.zip"
+          CACHE_TMP="$DATASET_CACHE_ROOT/$DATASET_NAME.tmp"
 
-          mkdir -p "$CACHE_ROOT" data outputs
+          mkdir -p "$DATASET_CACHE_ROOT" data outputs
 
-          if [ ! -s "$CACHE_ZIP" ]; then
-            echo "Local dataset zip cache miss; downloading Zenodo zip."
-            rm -f "$CACHE_ZIP.tmp"
-            curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
-              -o "$CACHE_ZIP.tmp" "$DATASET_URL"
-            mv "$CACHE_ZIP.tmp" "$CACHE_ZIP"
-          else
-            echo "Local dataset zip cache hit: $CACHE_ZIP"
-          fi
-
-          if ! find "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
-            echo "Local extracted dataset cache miss; extracting images."
-            rm -rf "$CACHE_IMAGES"
-            mkdir -p "$CACHE_IMAGES"
-            poetry run python -c 'from zipfile import ZipFile; ZipFile("'$CACHE_ZIP'").extractall("'$CACHE_IMAGES'")'
-          else
+          if find "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
             echo "Local extracted dataset cache hit: $CACHE_IMAGES"
+          else
+            echo "Local extracted dataset cache miss or empty: $CACHE_IMAGES"
+            rm -rf "$CACHE_TMP"
+            mkdir -p "$CACHE_TMP"
+            if [ ! -s "$CACHE_ZIP" ]; then
+              echo "Local dataset zip cache miss; downloading Zenodo zip to $CACHE_ZIP"
+              rm -f "$CACHE_ZIP.tmp"
+              curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
+                -o "$CACHE_ZIP.tmp" "$DATASET_URL"
+              mv "$CACHE_ZIP.tmp" "$CACHE_ZIP"
+            else
+              echo "Local dataset zip cache hit: $CACHE_ZIP"
+            fi
+            echo "Extracting dataset atomically to $CACHE_IMAGES"
+            poetry run python -c 'from zipfile import ZipFile; ZipFile("'$CACHE_ZIP'").extractall("'$CACHE_TMP'")'
+            rm -rf "$CACHE_IMAGES"
+            mv "$CACHE_TMP" "$CACHE_IMAGES"
           fi
 
           rm -rf data/images data/images_Brick_10gpers.zip
-          ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
           ln -s "$CACHE_IMAGES" data/images
+          if [ -s "$CACHE_ZIP" ]; then
+            ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
+          fi
 
           echo "Dataset size summary:"
-          du -sh data/images_Brick_10gpers.zip data/images || true
+          du -sh "$CACHE_IMAGES" data/images data/images_Brick_10gpers.zip 2>/dev/null || true
           echo "Number of extracted image files:"
           find data/images -type f | wc -l
           echo "First files in extracted dataset:"
