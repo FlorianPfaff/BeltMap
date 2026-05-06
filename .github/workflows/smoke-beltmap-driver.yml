@@ -7,16 +7,24 @@ on:
       - "scripts/apply_beltmap_to_images.py"
       - ".github/workflows/smoke-beltmap-driver.yml"
       - "pyproject.toml"
+      - "poetry.lock"
   pull_request:
     paths:
       - "beltmap/**"
       - "scripts/apply_beltmap_to_images.py"
       - ".github/workflows/smoke-beltmap-driver.yml"
       - "pyproject.toml"
+      - "poetry.lock"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  POETRY_NO_INTERACTION: "1"
+  POETRY_VERSION: "2.2.1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
 
 jobs:
   smoke-driver:
@@ -32,17 +40,22 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: "pip"
+
+      - name: Install Poetry
+        run: |
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
 
       - name: Install BeltMap and test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" "pillow>=10"
+        run: poetry install --with test
 
       - name: Generate synthetic belt sequence
         run: |
           mkdir -p data/images outputs
-          python - <<'PY'
+          poetry run python - <<'PY'
           from pathlib import Path
 
           import numpy as np
@@ -73,7 +86,7 @@ jobs:
           MIN_TRACK_LENGTH: "2"
           MAX_FRAMES: "12"
           MAP_SAMPLE_FRAMES: "12"
-        run: python scripts/apply_beltmap_to_images.py
+        run: poetry run python scripts/apply_beltmap_to_images.py
 
       - name: Validate expected outputs
         run: |
@@ -83,7 +96,7 @@ jobs:
           test -s outputs/detections.csv
           test -s outputs/detections_per_frame.csv
           test -s outputs/velocities.csv
-          python - <<'PY'
+          poetry run python - <<'PY'
           import csv
           import json
           from pathlib import Path
