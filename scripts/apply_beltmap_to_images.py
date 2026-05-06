@@ -20,6 +20,7 @@ from beltmap import (
     ParticleTrackingConfig,
     PhaseRegistrationConfig,
     ResidualConfig,
+    ResidualImage,
     detect_particles_from_residual,
     estimate_particle_velocities_vs_belt,
     extract_particle_detections,
@@ -263,12 +264,21 @@ def build_belt_map(paths: list[Path], region: tuple[int, int, int, int], velocit
     return belt_map, reference_phase, map_height
 
 
-def save_png(array: np.ndarray, path: Path) -> None:
-    finite = np.isfinite(array)
-    low, high = np.percentile(array[finite], [1, 99]) if finite.any() else (0, 1)
+def as_display_array(array: Any) -> np.ndarray:
+    if isinstance(array, ResidualImage):
+        return np.asarray(array.normalized, dtype=np.float64)
+    if hasattr(array, "normalized"):
+        return np.asarray(array.normalized, dtype=np.float64)
+    return np.asarray(array, dtype=np.float64)
+
+
+def save_png(array: Any, path: Path) -> None:
+    arr = as_display_array(array)
+    finite = np.isfinite(arr)
+    low, high = np.percentile(arr[finite], [1, 99]) if finite.any() else (0, 1)
     if high <= low:
         high = low + 1
-    Image.fromarray(np.clip((array - low) / (high - low) * 255, 0, 255).astype(np.uint8)).save(path)
+    Image.fromarray(np.clip((arr - low) / (high - low) * 255, 0, 255).astype(np.uint8)).save(path)
 
 
 def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
@@ -407,7 +417,7 @@ def main() -> None:
         f"- Images processed: {len(paths)}\n"
         f"- Frame stride: {frame_stride}\n"
         f"- Belt velocity: {belt_velocity:.6g} px/frame\n"
-        f"- Belt map height: {map_height} px\n"
+        f"- Belt map height: {map_height}\n"
         f"- Detections: {len(detection_rows)}\n"
         f"- Tracks: {len(tracks)}\n"
         f"- Velocity estimates: {len(velocity_rows)}\n"
