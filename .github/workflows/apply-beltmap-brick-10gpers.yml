@@ -92,6 +92,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   preflight:
     name: Preflight checks
@@ -193,18 +196,55 @@ jobs:
           python -m pip install -e ".[test]" "pillow>=10"
           python -m pytest -q
 
-      - name: Download and extract Zenodo images
+      - name: Prepare dataset cache key
+        id: dataset-key
         env:
           DATASET_URL: ${{ inputs.dataset_url }}
         run: |
-          rm -rf data outputs
-          mkdir -p data/images outputs
-          curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
-            -o data/images_Brick_10gpers.zip "$DATASET_URL"
-          python - <<'PY'
-          from zipfile import ZipFile
-          ZipFile("data/images_Brick_10gpers.zip").extractall("data/images")
+          mkdir -p data outputs
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import hashlib
+          import os
+          url = os.environ["DATASET_URL"]
+          print(f"hash={hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]}")
           PY
+
+      - name: Restore cached Zenodo dataset
+        id: cache-dataset
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/images_Brick_10gpers.zip
+            data/images
+          key: beltmap-brick-10gpers-${{ runner.os }}-${{ runner.arch }}-${{ steps.dataset-key.outputs.hash }}-v1
+          restore-keys: |
+            beltmap-brick-10gpers-${{ runner.os }}-${{ runner.arch }}-${{ steps.dataset-key.outputs.hash }}-
+
+      - name: Download and extract Zenodo images
+        env:
+          DATASET_URL: ${{ inputs.dataset_url }}
+          CACHE_HIT: ${{ steps.cache-dataset.outputs.cache-hit }}
+        run: |
+          mkdir -p data/images outputs
+
+          if [ "$CACHE_HIT" = "true" ] && [ -s data/images_Brick_10gpers.zip ] && find data/images -type f | grep -q .; then
+            echo "Dataset cache hit; using cached zip and extracted images."
+          else
+            echo "Dataset cache miss or incomplete cache; downloading and extracting dataset."
+            rm -rf data/images data/images_Brick_10gpers.zip
+            mkdir -p data/images
+            curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
+              -o data/images_Brick_10gpers.zip "$DATASET_URL"
+            python - <<'PY'
+            from zipfile import ZipFile
+            ZipFile("data/images_Brick_10gpers.zip").extractall("data/images")
+            PY
+          fi
+
+          echo "Dataset size summary:"
+          du -sh data/images_Brick_10gpers.zip data/images || true
+          echo "Number of extracted image files:"
+          find data/images -type f | wc -l
           echo "First files in extracted dataset:"
           find data/images -type f | sed -n '1,20p'
 
