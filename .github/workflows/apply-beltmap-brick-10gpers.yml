@@ -63,6 +63,26 @@ on:
         required: true
         type: string
         default: "120"
+      map_mask_iterations:
+        description: "Particle-mask refinement iterations while building the belt map"
+        required: true
+        type: string
+        default: "1"
+      map_particle_mask_threshold:
+        description: "Threshold on provisional map residuals for masking particle pixels"
+        required: true
+        type: string
+        default: "5.0"
+      map_particle_mask_margin_px:
+        description: "Safety margin added around detected particle bounding boxes during map building"
+        required: true
+        type: string
+        default: "8"
+      map_particle_mask_min_area_px:
+        description: "Minimum component area for map-building particle masks"
+        required: true
+        type: string
+        default: "4"
       velocity_search_radius_px:
         description: "Max vertical shift searched for auto velocity"
         required: true
@@ -144,6 +164,10 @@ jobs:
           MAX_FRAMES: ${{ inputs.max_frames }}
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
+          MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
+          MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
+          MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
+          MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
           PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
@@ -163,6 +187,10 @@ jobs:
               "max_frames": int(os.environ["MAX_FRAMES"]),
               "frame_stride": int(os.environ["FRAME_STRIDE"]),
               "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
+              "map_mask_iterations": int(os.environ["MAP_MASK_ITERATIONS"]),
+              "map_particle_mask_threshold": float(os.environ["MAP_PARTICLE_MASK_THRESHOLD"]),
+              "map_particle_mask_margin_px": int(os.environ["MAP_PARTICLE_MASK_MARGIN_PX"]),
+              "map_particle_mask_min_area_px": int(os.environ["MAP_PARTICLE_MASK_MIN_AREA_PX"]),
               "velocity_search_radius_px": int(os.environ["VELOCITY_SEARCH_RADIUS_PX"]),
               "progress_interval_frames": int(os.environ["PROGRESS_INTERVAL_FRAMES"]),
               "partial_output_interval_frames": int(os.environ["PARTIAL_OUTPUT_INTERVAL_FRAMES"]),
@@ -271,6 +299,10 @@ jobs:
           MAX_FRAMES: ${{ inputs.max_frames }}
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
+          MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
+          MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
+          MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
+          MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
           PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}

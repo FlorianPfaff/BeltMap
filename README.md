@@ -13,6 +13,14 @@ processed image. It reports the predicted phase, the registration correction,
 the corrected phase in belt-map pixels, the normalized phase fraction, and the
 equivalent phase angle in radians.
 
+When building `belt_map.npy`, the driver can iteratively mask bright particles
+from the map accumulation. It first builds a provisional belt map, renders each
+sampled frame at its belt phase, detects bright residual components, expands
+their bounding boxes by `MAP_PARTICLE_MASK_MARGIN_PX`, and rebuilds the map by
+averaging only unmasked pixels. With repeated belt revolutions, particle-covered
+observations are therefore treated as missing data instead of contaminating the
+clean belt estimate.
+
 The public clean-belt renderer is `render_expected_clean_belt`. It can render a
 full-frame expected background with a validity mask so subtraction ignores the
 camera background outside the belt crop.
