@@ -94,6 +94,9 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  POETRY_NO_INTERACTION: "1"
+  POETRY_VERSION: "2.2.1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
 
 jobs:
   preflight:
@@ -109,7 +112,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: "pip"
+
+      - name: Install Poetry
+        run: |
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
 
       - name: Validate Zenodo URL is reachable
         env:
@@ -119,9 +129,8 @@ jobs:
 
       - name: Install and test package
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" "pillow>=10"
-          python -m pytest -q
+          poetry install --with test
+          poetry run pytest -q
 
       - name: Validate driver imports and configuration parsing
         env:
@@ -141,7 +150,7 @@ jobs:
           DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
-          python - <<'PY'
+          poetry run python - <<'PY'
           import json
           import os
           import scripts.apply_beltmap_to_images as driver
@@ -188,13 +197,19 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: "pip"
+
+      - name: Install Poetry
+        run: |
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
 
       - name: Install BeltMap and runtime dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" "pillow>=10"
-          python -m pytest -q
+          poetry install --with test
+          poetry run pytest -q
 
       - name: Prepare Zenodo dataset from local runner cache
         env:
@@ -222,7 +237,7 @@ jobs:
             echo "Local extracted dataset cache miss; extracting images."
             rm -rf "$CACHE_IMAGES"
             mkdir -p "$CACHE_IMAGES"
-            python -c 'from zipfile import ZipFile; ZipFile("'$CACHE_ZIP'").extractall("'$CACHE_IMAGES'")'
+            poetry run python -c 'from zipfile import ZipFile; ZipFile("'$CACHE_ZIP'").extractall("'$CACHE_IMAGES'")'
           else
             echo "Local extracted dataset cache hit: $CACHE_IMAGES"
           fi
@@ -255,7 +270,7 @@ jobs:
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
           DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
-        run: python -u scripts/apply_beltmap_to_images.py
+        run: poetry run python -u scripts/apply_beltmap_to_images.py
 
       - name: Upload BeltMap outputs
         if: always()
