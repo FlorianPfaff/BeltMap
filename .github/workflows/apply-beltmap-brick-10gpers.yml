@@ -196,50 +196,40 @@ jobs:
           python -m pip install -e ".[test]" "pillow>=10"
           python -m pytest -q
 
-      - name: Prepare dataset cache key
-        id: dataset-key
+      - name: Prepare Zenodo dataset from local runner cache
         env:
           DATASET_URL: ${{ inputs.dataset_url }}
         run: |
-          mkdir -p data outputs
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import hashlib
-          import os
-          url = os.environ["DATASET_URL"]
-          print(f"hash={hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]}")
-          PY
+          set -euo pipefail
 
-      - name: Restore cached Zenodo dataset
-        id: cache-dataset
-        uses: actions/cache@v5
-        with:
-          path: |
-            data/images_Brick_10gpers.zip
-            data/images
-          key: beltmap-brick-10gpers-${{ runner.os }}-${{ runner.arch }}-${{ steps.dataset-key.outputs.hash }}-v1
-          restore-keys: |
-            beltmap-brick-10gpers-${{ runner.os }}-${{ runner.arch }}-${{ steps.dataset-key.outputs.hash }}-
+          CACHE_ROOT="$HOME/.cache/beltmap/brick-10gpers"
+          CACHE_ZIP="$CACHE_ROOT/images_Brick_10gpers.zip"
+          CACHE_IMAGES="$CACHE_ROOT/images"
 
-      - name: Download and extract Zenodo images
-        env:
-          DATASET_URL: ${{ inputs.dataset_url }}
-          CACHE_HIT: ${{ steps.cache-dataset.outputs.cache-hit }}
-        run: |
-          mkdir -p data/images outputs
+          mkdir -p "$CACHE_ROOT" data outputs
 
-          if [ "$CACHE_HIT" = "true" ] && [ -s data/images_Brick_10gpers.zip ] && find data/images -type f | grep -q .; then
-            echo "Dataset cache hit; using cached zip and extracted images."
-          else
-            echo "Dataset cache miss or incomplete cache; downloading and extracting dataset."
-            rm -rf data/images data/images_Brick_10gpers.zip
-            mkdir -p data/images
+          if [ ! -s "$CACHE_ZIP" ]; then
+            echo "Local dataset zip cache miss; downloading Zenodo zip."
+            rm -f "$CACHE_ZIP.tmp"
             curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
-              -o data/images_Brick_10gpers.zip "$DATASET_URL"
-            python - <<'PY'
-            from zipfile import ZipFile
-            ZipFile("data/images_Brick_10gpers.zip").extractall("data/images")
-            PY
+              -o "$CACHE_ZIP.tmp" "$DATASET_URL"
+            mv "$CACHE_ZIP.tmp" "$CACHE_ZIP"
+          else
+            echo "Local dataset zip cache hit: $CACHE_ZIP"
           fi
+
+          if ! find "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
+            echo "Local extracted dataset cache miss; extracting images."
+            rm -rf "$CACHE_IMAGES"
+            mkdir -p "$CACHE_IMAGES"
+            python -c 'from zipfile import ZipFile; ZipFile("'$CACHE_ZIP'").extractall("'$CACHE_IMAGES'")'
+          else
+            echo "Local extracted dataset cache hit: $CACHE_IMAGES"
+          fi
+
+          rm -rf data/images data/images_Brick_10gpers.zip
+          ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
+          ln -s "$CACHE_IMAGES" data/images
 
           echo "Dataset size summary:"
           du -sh data/images_Brick_10gpers.zip data/images || true
