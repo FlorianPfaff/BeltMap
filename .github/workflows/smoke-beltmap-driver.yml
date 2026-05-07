@@ -72,7 +72,8 @@ jobs:
           poetry run python examples/synthetic_sequence/validate_outputs.py \
             --output-dir outputs \
             --expected-frames 12 \
-            --expected-velocity 2.0
+            --expected-velocity 2.0 \
+            --require-validation-report
 
       - name: Upload smoke outputs
         if: always()
