@@ -6,6 +6,7 @@ from beltmap import (
     estimate_phase,
     render_belt_view,
 )
+from beltmap.phase import _box_blur, _prepare_for_registration, _uniform_filter_axis
 
 
 def make_belt_map(period=96, width=32):
@@ -31,6 +32,25 @@ def add_synthetic_particles(frame):
     return corrupted
 
 
+def reference_uniform_filter_axis(image, *, radius, axis):
+    arr = np.asarray(image, dtype=np.float64)
+    out = np.empty_like(arr)
+    window = 2 * radius + 1
+    for index in np.ndindex(arr.shape):
+        total = 0.0
+        for offset in range(-radius, radius + 1):
+            source = list(index)
+            source[axis] = min(max(index[axis] + offset, 0), arr.shape[axis] - 1)
+            total += arr[tuple(source)]
+        out[index] = total / window
+    return out
+
+
+def reference_box_blur(image, *, radius):
+    vertical = reference_uniform_filter_axis(image, radius=radius, axis=0)
+    return reference_uniform_filter_axis(vertical, radius=radius, axis=1)
+
+
 def test_motion_model_wraps_signed_image_velocity():
     model = BeltMotionModel(
         image_velocity_px_per_frame=2.5,
@@ -49,6 +69,56 @@ def test_render_belt_view_uses_fractional_phase():
     rendered = render_belt_view(belt, phase_px=0.5, height=3)
 
     np.testing.assert_allclose(rendered[:, 0], [0.5, 1.5, 2.5])
+
+
+def test_uniform_filter_axis_matches_edge_padded_reference():
+    image = np.array(
+        [
+            [1.0, 2.0, 4.0, 8.0],
+            [16.0, 32.0, 64.0, 128.0],
+            [3.0, 9.0, 27.0, 81.0],
+        ]
+    )
+
+    for radius in (1, 2):
+        for axis in (0, 1):
+            np.testing.assert_allclose(
+                _uniform_filter_axis(image, radius=radius, axis=axis),
+                reference_uniform_filter_axis(image, radius=radius, axis=axis),
+            )
+
+
+def test_box_blur_matches_separable_edge_padded_reference():
+    image = np.array(
+        [
+            [0.0, 2.0, 6.0, 12.0],
+            [10.0, 14.0, 20.0, 28.0],
+            [30.0, 38.0, 48.0, 60.0],
+        ]
+    )
+
+    for radius in (1, 2):
+        np.testing.assert_allclose(
+            _box_blur(image, radius=radius),
+            reference_box_blur(image, radius=radius),
+        )
+
+
+def test_prepare_for_registration_uses_edge_padded_highpass():
+    image = np.array(
+        [
+            [2.0, 4.0, 8.0, 16.0],
+            [3.0, 9.0, 27.0, 81.0],
+            [5.0, 25.0, 125.0, 625.0],
+        ]
+    )
+    highpass = image - reference_box_blur(image, radius=1)
+    expected = highpass / np.std(highpass)
+
+    np.testing.assert_allclose(
+        _prepare_for_registration(image, highpass_radius_px=1),
+        expected,
+    )
 
 
 def test_registration_refines_phase_with_particle_outliers():
