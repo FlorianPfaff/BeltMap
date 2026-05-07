@@ -152,3 +152,13 @@ in the belt direction but slower than the belt therefore have ratios between
 0 and 1.
 
 Datasets are intentionally not stored in this repository.
+
+## Citation
+
+If you use BeltMap in academic work, please cite the software using the metadata
+in [`CITATION.cff`](CITATION.cff).
+
+## License
+
+BeltMap is released under the MIT License. See [`LICENSE`](LICENSE) for the full
+license text.
