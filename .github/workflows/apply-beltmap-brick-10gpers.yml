@@ -289,7 +289,7 @@ jobs:
           echo "First files in extracted dataset:"
           find data/images -type f | sed -n '1,20p'
 
-      - name: Run BeltMap driver
+      - name: Run BeltMap through CLI config
         env:
           BELT_REGION: ${{ inputs.belt_region }}
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
@@ -310,7 +310,78 @@ jobs:
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
           DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
-        run: poetry run python -u scripts/apply_beltmap_to_images.py
+        run: |
+          poetry run python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def env_value(name: str) -> str:
+              return os.environ.get(name, "").strip()
+
+          def append_value(
+              lines: list[str],
+              key: str,
+              env_name: str,
+              *,
+              optional: bool = False,
+          ) -> None:
+              value = env_value(env_name)
+              if optional and value == "":
+                  return
+              lines.append(f"{key} = {json.dumps(value)}")
+
+          lines: list[str] = []
+          lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
+
+          lines.append("[frames]")
+          append_value(lines, "max_frames", "MAX_FRAMES")
+          append_value(lines, "stride", "FRAME_STRIDE")
+          lines.append("")
+
+          lines.append("[belt]")
+          append_value(lines, "region", "BELT_REGION", optional=True)
+          append_value(lines, "velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME")
+          append_value(lines, "period_px", "BELT_PERIOD_PX", optional=True)
+          lines.append("")
+
+          lines.append("[detection]")
+          append_value(lines, "threshold", "DETECTION_THRESHOLD")
+          append_value(lines, "min_area_px", "MIN_AREA_PX")
+          lines.append("")
+
+          lines.append("[tracking]")
+          append_value(lines, "min_track_length", "MIN_TRACK_LENGTH")
+          append_value(lines, "max_match_distance_px", "MAX_MATCH_DISTANCE_PX", optional=True)
+          lines.append("")
+
+          lines.append("[map]")
+          append_value(lines, "sample_frames", "MAP_SAMPLE_FRAMES")
+          append_value(lines, "mask_iterations", "MAP_MASK_ITERATIONS")
+          append_value(lines, "particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD")
+          append_value(lines, "particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX")
+          append_value(lines, "particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX")
+          lines.append("")
+
+          lines.append("[auto_velocity]")
+          append_value(lines, "search_radius_px", "VELOCITY_SEARCH_RADIUS_PX")
+          lines.append("")
+
+          lines.append("[progress]")
+          append_value(lines, "interval_frames", "PROGRESS_INTERVAL_FRAMES")
+          append_value(lines, "partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES")
+          lines.append("")
+
+          lines.append("[debug]")
+          append_value(lines, "residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES")
+          append_value(lines, "residual_preview_interval_frames", "DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES")
+
+          config_path = Path("beltmap-run.toml")
+          config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(config_path.read_text(encoding="utf-8"))
+          PY
+
+          poetry run beltmap-apply --config beltmap-run.toml --print-config
 
       - name: Upload BeltMap outputs
         if: always()
