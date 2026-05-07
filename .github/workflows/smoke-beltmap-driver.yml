@@ -64,6 +64,9 @@ jobs:
       - name: Run image driver through reusable example config
         run: poetry run beltmap-apply --config examples/synthetic_sequence/beltmap.toml --print-config
 
+      - name: Generate validation report
+        run: poetry run beltmap-validate --output-dir outputs --quiet
+
       - name: Validate expected outputs
         run: |
           poetry run python examples/synthetic_sequence/validate_outputs.py \
