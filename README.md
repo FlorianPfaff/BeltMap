@@ -9,6 +9,18 @@ For a concise description of the implemented coordinate convention, phase model,
 registration step, belt-map reconstruction, residual normalization, particle
 detection, and tracking assumptions, see the [algorithm note](docs/algorithm.md).
 
+Try the self-contained synthetic sequence example without downloading external
+data:
+
+```bash
+python -m pip install -e ".[test]"
+bash examples/synthetic_sequence/run.sh
+```
+
+The example generates a small moving-belt image sequence, runs `beltmap-apply`,
+and validates the expected outputs. See
+[`examples/synthetic_sequence`](examples/synthetic_sequence) for details.
+
 The first implemented piece is belt phase estimation:
 
 - predict the belt phase from a signed constant-speed model
