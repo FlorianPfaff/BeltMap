@@ -4,7 +4,6 @@ import argparse
 import json
 import math
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -13,248 +12,45 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
     import tomli as tomllib
 
-
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
 
-
-@dataclass(frozen=True)
-class ConfigOption:
-    name: str
-    env_var: str
-    kind: str
-    help: str
-    config_keys: tuple[tuple[str, ...], ...]
-    metavar: str | None = None
-
-
-OPTIONS: tuple[ConfigOption, ...] = (
-    ConfigOption(
-        "image_dir",
-        "BELTMAP_IMAGE_DIR",
-        "path",
-        "Directory containing input images.",
-        (("image_dir",), ("paths", "image_dir")),
-        "DIR",
-    ),
-    ConfigOption(
-        "output_dir",
-        "BELTMAP_OUTPUT_DIR",
-        "path",
-        "Directory where BeltMap outputs are written.",
-        (("output_dir",), ("paths", "output_dir")),
-        "DIR",
-    ),
-    ConfigOption(
-        "belt_region",
-        "BELT_REGION",
-        "region",
-        "Belt crop as top,left,height,width. Omit to use the full frame.",
-        (("belt_region",), ("belt", "region")),
-        "TOP,LEFT,HEIGHT,WIDTH",
-    ),
-    ConfigOption(
-        "belt_velocity_px_per_frame",
-        "BELT_VELOCITY_PX_PER_FRAME",
-        "velocity",
-        "Signed belt image velocity in pixels per frame, or 'auto'.",
-        (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")),
-        "PX_PER_FRAME|auto",
-    ),
-    ConfigOption(
-        "belt_period_px",
-        "BELT_PERIOD_PX",
-        "int",
-        "Optional belt circumference/period in pixels.",
-        (("belt_period_px",), ("belt", "period_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "detection_threshold",
-        "DETECTION_THRESHOLD",
-        "float",
-        "Threshold on normalized residuals for bright particles.",
-        (("detection_threshold",), ("detection", "threshold")),
-        "Z",
-    ),
-    ConfigOption(
-        "min_area_px",
-        "MIN_AREA_PX",
-        "int",
-        "Minimum connected-component area for detections.",
-        (("min_area_px",), ("detection", "min_area_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "min_track_length",
-        "MIN_TRACK_LENGTH",
-        "int",
-        "Minimum detections per track for velocity estimates.",
-        (("min_track_length",), ("tracking", "min_track_length")),
-        "N",
-    ),
-    ConfigOption(
-        "max_match_distance_px",
-        "MAX_MATCH_DISTANCE_PX",
-        "float",
-        "Optional tracking match distance. Omit to derive it from belt speed.",
-        (("max_match_distance_px",), ("tracking", "max_match_distance_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "max_frames",
-        "MAX_FRAMES",
-        "int",
-        "Maximum number of selected frames to process. Use 0 for all frames.",
-        (("max_frames",), ("frames", "max_frames")),
-        "N",
-    ),
-    ConfigOption(
-        "frame_stride",
-        "FRAME_STRIDE",
-        "int",
-        "Process every Nth frame after natural sorting.",
-        (("frame_stride",), ("frames", "stride")),
-        "N",
-    ),
-    ConfigOption(
-        "map_sample_frames",
-        "MAP_SAMPLE_FRAMES",
-        "int",
-        "Number of frames sampled to build the belt map.",
-        (("map_sample_frames",), ("map", "sample_frames")),
-        "N",
-    ),
-    ConfigOption(
-        "map_mask_iterations",
-        "MAP_MASK_ITERATIONS",
-        "int",
-        "Particle-mask refinement iterations while building the belt map.",
-        (("map_mask_iterations",), ("map", "mask_iterations")),
-        "N",
-    ),
-    ConfigOption(
-        "map_particle_mask_threshold",
-        "MAP_PARTICLE_MASK_THRESHOLD",
-        "float",
-        "Threshold used for particle masking during map building.",
-        (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")),
-        "Z",
-    ),
-    ConfigOption(
-        "map_particle_mask_margin_px",
-        "MAP_PARTICLE_MASK_MARGIN_PX",
-        "int",
-        "Safety margin around detected particle boxes during map building.",
-        (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "map_particle_mask_min_area_px",
-        "MAP_PARTICLE_MASK_MIN_AREA_PX",
-        "int",
-        "Minimum component area for map-building particle masks.",
-        (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "velocity_search_radius_px",
-        "VELOCITY_SEARCH_RADIUS_PX",
-        "int",
-        "Max vertical shift searched during automatic belt-velocity estimation.",
-        (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "velocity_estimation_pairs",
-        "VELOCITY_ESTIMATION_PAIRS",
-        "int",
-        "Number of adjacent frame pairs used for automatic velocity estimation.",
-        (("velocity_estimation_pairs",), ("auto_velocity", "estimation_pairs")),
-        "N",
-    ),
-    ConfigOption(
-        "auto_velocity_min_abs_px_per_frame",
-        "AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME",
-        "float",
-        "Minimum accepted absolute auto-estimated belt velocity.",
-        (("auto_velocity_min_abs_px_per_frame",), ("auto_velocity", "min_abs_px_per_frame")),
-        "PX_PER_FRAME",
-    ),
-    ConfigOption(
-        "auto_velocity_max_edge_fraction",
-        "AUTO_VELOCITY_MAX_EDGE_FRACTION",
-        "float",
-        "Maximum accepted fraction of auto-velocity shifts that hit the search edge.",
-        (("auto_velocity_max_edge_fraction",), ("auto_velocity", "max_edge_fraction")),
-        "FRACTION",
-    ),
-    ConfigOption(
-        "allow_full_frame_auto_velocity",
-        "ALLOW_FULL_FRAME_AUTO_VELOCITY",
-        "bool",
-        "Allow automatic belt-velocity estimation on a full-frame belt region.",
-        (("allow_full_frame_auto_velocity",), ("auto_velocity", "allow_full_frame")),
-    ),
-    ConfigOption(
-        "registration_search_radius_px",
-        "REGISTRATION_SEARCH_RADIUS_PX",
-        "float",
-        "Phase-registration search radius in pixels.",
-        (("registration_search_radius_px",), ("registration", "search_radius_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "registration_search_step_px",
-        "REGISTRATION_SEARCH_STEP_PX",
-        "float",
-        "Phase-registration search step in pixels.",
-        (("registration_search_step_px",), ("registration", "search_step_px")),
-        "PX",
-    ),
-    ConfigOption(
-        "progress_interval_frames",
-        "PROGRESS_INTERVAL_FRAMES",
-        "int",
-        "Print progress every N frames during long stages.",
-        (("progress_interval_frames",), ("progress", "interval_frames")),
-        "N",
-    ),
-    ConfigOption(
-        "partial_output_interval_frames",
-        "PARTIAL_OUTPUT_INTERVAL_FRAMES",
-        "int",
-        "Write partial CSV outputs every N processed frames. Use 0 for final only.",
-        (("partial_output_interval_frames",), ("progress", "partial_output_interval_frames")),
-        "N",
-    ),
-    ConfigOption(
-        "debug_residual_preview_frames",
-        "DEBUG_RESIDUAL_PREVIEW_FRAMES",
-        "int",
-        "Save residual PNG previews for the first N frames.",
-        (("debug_residual_preview_frames",), ("debug", "residual_preview_frames")),
-        "N",
-    ),
-    ConfigOption(
-        "debug_residual_preview_interval_frames",
-        "DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES",
-        "int",
-        "Also save residual previews every N frames. Use 0 to disable.",
-        (("debug_residual_preview_interval_frames",), ("debug", "residual_preview_interval_frames")),
-        "N",
-    ),
+OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str | None], ...] = (
+    ("image_dir", "BELTMAP_IMAGE_DIR", "path", (("image_dir",), ("paths", "image_dir")), "Directory containing input images.", "DIR"),
+    ("output_dir", "BELTMAP_OUTPUT_DIR", "path", (("output_dir",), ("paths", "output_dir")), "Directory where BeltMap outputs are written.", "DIR"),
+    ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
+    ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity in pixels per frame, or 'auto'.", "PX_PER_FRAME|auto"),
+    ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
+    ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for bright particles.", "Z"),
+    ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
+    ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
+    ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
+    ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
+    ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
+    ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
+    ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
+    ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Threshold used for particle masking during map building.", "Z"),
+    ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
+    ("map_particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX", "int", (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px")), "Minimum component area for map-building particle masks.", "PX"),
+    ("velocity_search_radius_px", "VELOCITY_SEARCH_RADIUS_PX", "int", (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")), "Max vertical shift searched during automatic belt-velocity estimation.", "PX"),
+    ("velocity_estimation_pairs", "VELOCITY_ESTIMATION_PAIRS", "int", (("velocity_estimation_pairs",), ("auto_velocity", "estimation_pairs")), "Number of adjacent frame pairs used for automatic velocity estimation.", "N"),
+    ("auto_velocity_min_abs_px_per_frame", "AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", "float", (("auto_velocity_min_abs_px_per_frame",), ("auto_velocity", "min_abs_px_per_frame")), "Minimum accepted absolute auto-estimated belt velocity.", "PX_PER_FRAME"),
+    ("auto_velocity_max_edge_fraction", "AUTO_VELOCITY_MAX_EDGE_FRACTION", "float", (("auto_velocity_max_edge_fraction",), ("auto_velocity", "max_edge_fraction")), "Maximum accepted fraction of auto-velocity shifts that hit the search edge.", "FRACTION"),
+    ("allow_full_frame_auto_velocity", "ALLOW_FULL_FRAME_AUTO_VELOCITY", "bool", (("allow_full_frame_auto_velocity",), ("auto_velocity", "allow_full_frame")), "Allow automatic belt-velocity estimation on a full-frame belt region.", None),
+    ("registration_search_radius_px", "REGISTRATION_SEARCH_RADIUS_PX", "float", (("registration_search_radius_px",), ("registration", "search_radius_px")), "Phase-registration search radius in pixels.", "PX"),
+    ("registration_search_step_px", "REGISTRATION_SEARCH_STEP_PX", "float", (("registration_search_step_px",), ("registration", "search_step_px")), "Phase-registration search step in pixels.", "PX"),
+    ("progress_interval_frames", "PROGRESS_INTERVAL_FRAMES", "int", (("progress_interval_frames",), ("progress", "interval_frames")), "Print progress every N frames during long stages.", "N"),
+    ("partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES", "int", (("partial_output_interval_frames",), ("progress", "partial_output_interval_frames")), "Write partial CSV outputs every N processed frames. Use 0 for final only.", "N"),
+    ("debug_residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES", "int", (("debug_residual_preview_frames",), ("debug", "residual_preview_frames")), "Save residual PNG previews for the first N frames.", "N"),
+    ("debug_residual_preview_interval_frames", "DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", "int", (("debug_residual_preview_interval_frames",), ("debug", "residual_preview_interval_frames")), "Also save residual previews every N frames. Use 0 to disable.", "N"),
 )
 
-OPTION_BY_NAME = {option.name: option for option in OPTIONS}
-OPTION_BY_ENV = {option.env_var: option for option in OPTIONS}
-CONFIG_KEY_TO_OPTION = {
-    key: option for option in OPTIONS for key in option.config_keys
-}
+OPTION_BY_NAME = {spec[0]: spec for spec in OPTION_SPECS}
+OPTION_BY_ENV = {spec[1]: spec for spec in OPTION_SPECS}
+CONFIG_KEY_TO_NAME = {key: spec[0] for spec in OPTION_SPECS for key in spec[3]}
 
 CONFIG_TEMPLATE = """# BeltMap image-sequence driver configuration.
-# CLI flags override environment variables, and environment variables override
-# values from this file.
+# CLI flags override environment variables, and environment variables override values from this file.
 
 [paths]
 image_dir = "data/images"
@@ -265,9 +61,7 @@ max_frames = 0
 stride = 1
 
 [belt]
-# Crop format is [top, left, height, width]. Omit this key to use the full frame.
 region = [0, 220, 1330, 1800]
-# Use a number for a known signed belt velocity, or "auto" to estimate it.
 velocity_px_per_frame = "auto"
 # period_px = 14723
 
@@ -312,53 +106,20 @@ def build_parser() -> argparse.ArgumentParser:
         prog="beltmap-apply",
         description="Apply BeltMap to an image sequence and write residual, detection, tracking, and velocity outputs.",
     )
-    parser.add_argument(
-        "-c",
-        "--config",
-        type=Path,
-        help="TOML or JSON config file. Values can be flat or grouped into sections.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print the resolved driver environment and exit without running the image driver.",
-    )
-    parser.add_argument(
-        "--print-config",
-        action="store_true",
-        help="Print the resolved driver environment before running the image driver.",
-    )
-    parser.add_argument(
-        "--write-config-template",
-        type=Path,
-        metavar="PATH",
-        help="Write a TOML config template and exit.",
-    )
-
-    for option in OPTIONS:
-        flag = f"--{option.name.replace('_', '-')}"
-        help_text = f"{option.help} [env: {option.env_var}]"
-        if option.kind == "bool":
-            parser.add_argument(
-                flag,
-                dest=option.name,
-                action=argparse.BooleanOptionalAction,
-                default=None,
-                help=help_text,
-            )
+    parser.add_argument("-c", "--config", type=Path, help="TOML or JSON config file. Values can be flat or grouped into sections.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the resolved driver environment and exit without running the image driver.")
+    parser.add_argument("--print-config", action="store_true", help="Print the resolved driver environment before running the image driver.")
+    parser.add_argument("--write-config-template", type=Path, metavar="PATH", help="Write a TOML config template and exit.")
+    for name, env_var, kind, _keys, help_text, metavar in OPTION_SPECS:
+        flag = f"--{name.replace('_', '-')}"
+        if kind == "bool":
+            parser.add_argument(flag, dest=name, action=argparse.BooleanOptionalAction, default=None, help=f"{help_text} [env: {env_var}]")
         else:
-            parser.add_argument(
-                flag,
-                dest=option.name,
-                metavar=option.metavar,
-                help=help_text,
-            )
+            parser.add_argument(flag, dest=name, metavar=metavar, help=f"{help_text} [env: {env_var}]")
     return parser
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f"Config file does not exist: {path}")
     suffix = path.suffix.lower()
     if suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -374,8 +135,6 @@ def load_config_file(path: Path) -> dict[str, Any]:
 def flatten_config(data: Mapping[str, Any], prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
     flattened: dict[tuple[str, ...], Any] = {}
     for key, value in data.items():
-        if not isinstance(key, str):
-            raise ValueError(f"Config keys must be strings, got {key!r}")
         path = prefix + (key,)
         if isinstance(value, Mapping):
             flattened.update(flatten_config(value, path))
@@ -384,114 +143,27 @@ def flatten_config(data: Mapping[str, Any], prefix: tuple[str, ...] = ()) -> dic
     return flattened
 
 
-def values_from_config(path: Path | None) -> tuple[dict[str, str], dict[str, str]]:
-    if path is None:
-        return {}, {}
-
-    values: dict[str, str] = {}
-    sources: dict[str, str] = {}
-    for key_path, raw_value in flatten_config(load_config_file(path)).items():
-        option = CONFIG_KEY_TO_OPTION.get(key_path)
-        if option is None:
-            dotted = ".".join(key_path)
-            raise ValueError(f"Unknown config option {dotted!r}")
-        normalized = normalize_value(option, raw_value)
-        if normalized is None:
-            continue
-        if option.name in values:
-            raise ValueError(f"Config option {option.name!r} was specified more than once")
-        values[option.name] = normalized
-        sources[option.name] = f"config:{path}"
-    return values, sources
-
-
-def values_from_environment(environ: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
-    values: dict[str, str] = {}
-    sources: dict[str, str] = {}
-    for option in OPTIONS:
-        raw_value = environ.get(option.env_var)
-        if raw_value is None or raw_value.strip() == "":
-            continue
-        normalized = normalize_value(option, raw_value)
-        if normalized is None:
-            continue
-        values[option.name] = normalized
-        sources[option.name] = f"env:{option.env_var}"
-    return values, sources
-
-
-def values_from_args(namespace: argparse.Namespace) -> tuple[dict[str, str], dict[str, str]]:
-    values: dict[str, str] = {}
-    sources: dict[str, str] = {}
-    for option in OPTIONS:
-        raw_value = getattr(namespace, option.name)
-        if raw_value is None:
-            continue
-        normalized = normalize_value(option, raw_value)
-        if normalized is None:
-            continue
-        values[option.name] = normalized
-        sources[option.name] = "cli"
-    return values, sources
-
-
-def resolve_driver_env(
-    namespace: argparse.Namespace,
-    environ: Mapping[str, str] | None = None,
-) -> tuple[dict[str, str], dict[str, Any]]:
-    """Resolve config-file, environment, and CLI values into driver env vars."""
-
-    current_environ = os.environ if environ is None else environ
-    merged: dict[str, str] = {}
-    sources: dict[str, str] = {}
-
-    for layer_values, layer_sources in (
-        values_from_config(namespace.config),
-        values_from_environment(current_environ),
-        values_from_args(namespace),
-    ):
-        merged.update(layer_values)
-        sources.update(layer_sources)
-
-    env_updates = {OPTION_BY_NAME[name].env_var: value for name, value in merged.items()}
-    report = {
-        "precedence": ["config", "environment", "cli"],
-        "options": {
-            name: {
-                "env_var": OPTION_BY_NAME[name].env_var,
-                "value": value,
-                "source": sources[name],
-            }
-            for name, value in sorted(merged.items())
-        },
-        "driver_environment": dict(sorted(env_updates.items())),
-    }
-    return env_updates, report
-
-
-def normalize_value(option: ConfigOption, value: Any) -> str | None:
+def normalize_value(name: str, value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
         value = value.strip()
         if value == "":
             return None
-
-    if option.kind == "bool":
-        return "1" if parse_bool(value, option.name) else "0"
-    if option.kind == "int":
-        return str(parse_int(value, option.name))
-    if option.kind == "float":
-        return format_float(parse_float(value, option.name))
-    if option.kind == "velocity":
+    kind = OPTION_BY_NAME[name][2]
+    if kind == "bool":
+        return "1" if parse_bool(value, name) else "0"
+    if kind == "int":
+        return str(parse_int(value, name))
+    if kind == "float":
+        return f"{parse_float(value, name):.15g}"
+    if kind == "velocity":
         if isinstance(value, str) and value.lower() == "auto":
             return "auto"
-        return format_float(parse_float(value, option.name))
-    if option.kind == "region":
-        return format_region(value, option.name)
-    if option.kind in {"path", "str"}:
-        return str(value)
-    raise ValueError(f"Unsupported option kind {option.kind!r} for {option.name}")
+        return f"{parse_float(value, name):.15g}"
+    if kind == "region":
+        return format_region(value, name)
+    return str(value)
 
 
 def parse_bool(value: Any, name: str) -> bool:
@@ -511,48 +183,85 @@ def parse_bool(value: Any, name: str) -> bool:
 def parse_int(value: Any, name: str) -> int:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be an integer, got {value!r}")
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise ValueError(f"{name} must be an integer, got {value!r}")
-        return int(value)
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name} must be an integer, got {value!r}") from exc
+    parsed = int(value)
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    return parsed
 
 
 def parse_float(value: Any, name: str) -> float:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name} must be a finite number, got {value!r}") from exc
+    parsed = float(value)
     if not math.isfinite(parsed):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
     return parsed
 
 
-def format_float(value: float) -> str:
-    return f"{value:.15g}"
-
-
 def format_region(value: Any, name: str) -> str:
-    if isinstance(value, str):
-        parts = [part.strip() for part in value.split(",")]
-    elif isinstance(value, (list, tuple)):
-        parts = list(value)
-    else:
-        raise ValueError(f"{name} must be a comma-separated string or a four-item list")
-
+    parts = [part.strip() for part in value.split(",")] if isinstance(value, str) else list(value)
     if len(parts) != 4:
         raise ValueError(f"{name} must contain exactly four values: top,left,height,width")
     return ",".join(str(parse_int(part, name)) for part in parts)
 
 
-def apply_driver_env(env_updates: Mapping[str, str]) -> None:
-    for key, value in env_updates.items():
-        os.environ[key] = value
+def values_from_config(path: Path | None) -> tuple[dict[str, str], dict[str, str]]:
+    if path is None:
+        return {}, {}
+    values: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for key_path, raw_value in flatten_config(load_config_file(path)).items():
+        name = CONFIG_KEY_TO_NAME.get(key_path)
+        if name is None:
+            raise ValueError(f"Unknown config option {'.'.join(key_path)!r}")
+        normalized = normalize_value(name, raw_value)
+        if normalized is not None:
+            values[name] = normalized
+            sources[name] = f"config:{path}"
+    return values, sources
+
+
+def values_from_environment(environ: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    values: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for name, env_var, *_rest in OPTION_SPECS:
+        raw_value = environ.get(env_var)
+        if raw_value and raw_value.strip():
+            values[name] = normalize_value(name, raw_value) or ""
+            sources[name] = f"env:{env_var}"
+    return values, sources
+
+
+def values_from_args(namespace: argparse.Namespace) -> tuple[dict[str, str], dict[str, str]]:
+    values: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for name, *_rest in OPTION_SPECS:
+        raw_value = getattr(namespace, name)
+        if raw_value is not None:
+            normalized = normalize_value(name, raw_value)
+            if normalized is not None:
+                values[name] = normalized
+                sources[name] = "cli"
+    return values, sources
+
+
+def resolve_driver_env(namespace: argparse.Namespace, environ: Mapping[str, str] | None = None) -> tuple[dict[str, str], dict[str, Any]]:
+    current_environ = os.environ if environ is None else environ
+    merged: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for layer_values, layer_sources in (values_from_config(namespace.config), values_from_environment(current_environ), values_from_args(namespace)):
+        merged.update(layer_values)
+        sources.update(layer_sources)
+    env_updates = {OPTION_BY_NAME[name][1]: value for name, value in merged.items() if value != ""}
+    report = {
+        "precedence": ["config", "environment", "cli"],
+        "options": {
+            name: {"env_var": OPTION_BY_NAME[name][1], "value": value, "source": sources[name]}
+            for name, value in sorted(merged.items())
+        },
+        "driver_environment": dict(sorted(env_updates.items())),
+    }
+    return env_updates, report
 
 
 def write_config_template(path: Path) -> None:
@@ -569,37 +278,26 @@ def write_resolved_config(report: Mapping[str, Any], env_updates: Mapping[str, s
 
 
 def run_driver(env_updates: Mapping[str, str], report: Mapping[str, Any]) -> None:
-    apply_driver_env(env_updates)
+    os.environ.update(env_updates)
     write_resolved_config(report, env_updates)
-
-    from scripts import apply_beltmap_to_images as driver
-
-    # The legacy driver stores these two paths as module globals at import time.
-    # Reassign them as a safeguard if the module was imported before this CLI.
-    driver.DATA = Path(os.getenv("BELTMAP_IMAGE_DIR", "data/images"))
-    driver.OUT = Path(os.getenv("BELTMAP_OUTPUT_DIR", "outputs"))
+    from beltmap import driver
     driver.main()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-
     if args.write_config_template is not None:
         write_config_template(args.write_config_template)
         return 0
-
     try:
         env_updates, report = resolve_driver_env(args)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
-
     if args.print_config or args.dry_run:
         print(json.dumps(report, indent=2), flush=True)
-
     if args.dry_run:
         return 0
-
     run_driver(env_updates, report)
     return 0
 
