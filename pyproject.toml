@@ -58,7 +58,6 @@ speed = [
 [tool.poetry]
 packages = [
     { include = "beltmap" },
-    { include = "scripts" },
 ]
 
 [tool.poetry.group.test.dependencies]
