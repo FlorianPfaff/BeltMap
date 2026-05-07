@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from pathlib import Path
+from typing import Any
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Validate outputs produced by the BeltMap synthetic sequence example.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("outputs"),
+        help="BeltMap output directory to validate.",
+    )
+    parser.add_argument(
+        "--expected-frames",
+        type=int,
+        default=12,
+        help="Expected number of processed frames.",
+    )
+    parser.add_argument(
+        "--expected-velocity",
+        type=float,
+        default=2.0,
+        help="Expected signed belt image velocity in px/frame.",
+    )
+    return parser
+
+
+def require_file(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size == 0:
+        raise AssertionError(f"Missing or empty output file: {path}")
+
+
+def read_csv(path: Path) -> list[dict[str, Any]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def validate_outputs(
+    output_dir: Path,
+    *,
+    expected_frames: int,
+    expected_velocity: float,
+) -> dict[str, Any]:
+    required = [
+        "metadata.json",
+        "belt_map.npy",
+        "belt_map.png",
+        "detections.csv",
+        "detections_per_frame.csv",
+        "phase_estimates.csv",
+        "velocities.csv",
+    ]
+    for name in required:
+        require_file(output_dir / name)
+
+    metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    if metadata["n_images"] != expected_frames:
+        raise AssertionError(metadata)
+    if abs(metadata["belt_velocity_px_per_frame"] - expected_velocity) > 1e-9:
+        raise AssertionError(metadata)
+    if metadata["n_detections"] <= 0:
+        raise AssertionError("No detections were written")
+
+    detections = read_csv(output_dir / "detections.csv")
+    if not detections:
+        raise AssertionError("detections.csv contains no rows")
+
+    phase_estimates = read_csv(output_dir / "phase_estimates.csv")
+    if len(phase_estimates) != expected_frames:
+        raise AssertionError(
+            f"Expected {expected_frames} phase rows, got {len(phase_estimates)}"
+        )
+
+    velocities = read_csv(output_dir / "velocities.csv")
+    return {
+        "output_dir": str(output_dir),
+        "n_images": metadata["n_images"],
+        "belt_velocity_px_per_frame": metadata["belt_velocity_px_per_frame"],
+        "n_detections": metadata["n_detections"],
+        "n_tracks": metadata["n_tracks"],
+        "n_velocity_estimates": metadata["n_velocity_estimates"],
+        "velocity_rows": len(velocities),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    summary = validate_outputs(
+        args.output_dir,
+        expected_frames=args.expected_frames,
+        expected_velocity=args.expected_velocity,
+    )
+    print(json.dumps(summary, indent=2), flush=True)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
