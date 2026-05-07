@@ -9,7 +9,7 @@ creates a small grayscale conveyor-belt image sequence with:
 
 The example is intentionally tiny so it can run in CI and on a laptop while
 exercising BeltMap's map reconstruction, residual rendering, particle detection,
-tracking, and velocity output path.
+tracking, velocity output path, and validation-report generation.
 
 ## Run from an installed checkout
 
@@ -21,13 +21,15 @@ bash examples/synthetic_sequence/run.sh
 ```
 
 The script generates frames below `data/images`, runs `beltmap-apply` with
-`examples/synthetic_sequence/beltmap.toml`, and validates the expected outputs.
+`examples/synthetic_sequence/beltmap.toml`, writes a validation report with
+`beltmap-validate`, and validates the expected outputs.
 
 ## Run step by step
 
 ```bash
 python examples/synthetic_sequence/generate.py --output-dir data/images --frames 12
 beltmap-apply --config examples/synthetic_sequence/beltmap.toml --print-config
+beltmap-validate --output-dir outputs
 python examples/synthetic_sequence/validate_outputs.py --output-dir outputs
 ```
 
@@ -59,6 +61,17 @@ outputs/
   residual_frame_000001.png
   residual_frame_000002.png
   velocities.csv
+```
+
+Expected validation-report outputs:
+
+```text
+outputs/
+  validation_report.md
+  phase_corrections.png
+  registration_score.png
+  detections_per_frame.png
+  velocity_ratio_histogram.png
 ```
 
 ## Configuration
