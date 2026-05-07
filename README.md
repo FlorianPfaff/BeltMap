@@ -8,6 +8,8 @@ Tools for reconstructing conveyor-belt background maps and using them to improve
 For a concise description of the implemented coordinate convention, phase model,
 registration step, belt-map reconstruction, residual normalization, particle
 detection, and tracking assumptions, see the [algorithm note](docs/algorithm.md).
+For a file-by-file and column-by-column description of driver outputs, see the
+[output schema reference](docs/outputs.md).
 
 Try the self-contained synthetic sequence example without downloading external
 data:
