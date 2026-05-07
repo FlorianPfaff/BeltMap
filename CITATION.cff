@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use BeltMap, please cite it using the metadata below."
+title: "BeltMap: Conveyor-belt map reconstruction and particle localization tools"
+type: software
+authors:
+  - family-names: Pfaff
+    given-names: Florian
+version: 0.1.0
+date-released: "2026-05-07"
+abstract: >-
+  BeltMap provides Python tools for reconstructing conveyor-belt background maps,
+  estimating belt phase, rendering clean belt backgrounds, normalizing residual
+  images, detecting particles, and estimating particle velocities relative to belt
+  motion.
+keywords:
+  - conveyor belt
+  - particle localization
+  - particle tracking
+  - background subtraction
+  - image registration
+  - computer vision
+license: MIT
+repository-code: "https://github.com/IPS-Stuttgart/BeltMap"
+url: "https://github.com/IPS-Stuttgart/BeltMap"
