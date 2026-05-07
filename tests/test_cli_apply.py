@@ -84,7 +84,10 @@ allow_full_frame = true
         encoding="utf-8",
     )
 
-    env_updates, report = cli.resolve_driver_env(parse_args("--config", str(config_path)), environ={})
+    env_updates, report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ={},
+    )
 
     assert env_updates == {
         "ALLOW_FULL_FRAME_AUTO_VELOCITY": "1",
@@ -116,7 +119,10 @@ def test_flat_json_config_is_resolved_to_driver_environment(tmp_path):
         encoding="utf-8",
     )
 
-    env_updates, _report = cli.resolve_driver_env(parse_args("--config", str(config_path)), environ={})
+    env_updates, _report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ={},
+    )
 
     assert env_updates == {
         "ALLOW_FULL_FRAME_AUTO_VELOCITY": "0",
@@ -148,7 +154,10 @@ image_dir = "section-images"
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match=r"Config option 'image_dir' was specified more than once"):
+    with pytest.raises(
+        ValueError,
+        match=r"Config option 'image_dir' was specified more than once",
+    ):
         cli.values_from_config(config_path)
 
 
@@ -167,19 +176,19 @@ def test_empty_environment_values_are_ignored():
 
 
 def test_normalize_value_accepts_expected_shapes_and_rejects_bad_values():
-    assert cli.normalize_value(cli.OPTION_BY_NAME["belt_region"], [1, 2, 3, 4]) == "1,2,3,4"
-    assert cli.normalize_value(cli.OPTION_BY_NAME["belt_region"], "1, 2, 3, 4") == "1,2,3,4"
-    assert cli.normalize_value(cli.OPTION_BY_NAME["belt_velocity_px_per_frame"], "auto") == "auto"
-    assert cli.normalize_value(cli.OPTION_BY_NAME["belt_velocity_px_per_frame"], 2.0) == "2"
-    assert cli.normalize_value(cli.OPTION_BY_NAME["allow_full_frame_auto_velocity"], "yes") == "1"
-    assert cli.normalize_value(cli.OPTION_BY_NAME["allow_full_frame_auto_velocity"], "no") == "0"
+    assert cli.normalize_value("belt_region", [1, 2, 3, 4]) == "1,2,3,4"
+    assert cli.normalize_value("belt_region", "1, 2, 3, 4") == "1,2,3,4"
+    assert cli.normalize_value("belt_velocity_px_per_frame", "auto") == "auto"
+    assert cli.normalize_value("belt_velocity_px_per_frame", 2.0) == "2"
+    assert cli.normalize_value("allow_full_frame_auto_velocity", "yes") == "1"
+    assert cli.normalize_value("allow_full_frame_auto_velocity", "no") == "0"
 
     with pytest.raises(ValueError, match="belt_region must contain exactly four values"):
-        cli.normalize_value(cli.OPTION_BY_NAME["belt_region"], [1, 2, 3])
+        cli.normalize_value("belt_region", [1, 2, 3])
     with pytest.raises(ValueError, match="detection_threshold must be a finite number"):
-        cli.normalize_value(cli.OPTION_BY_NAME["detection_threshold"], "nan")
+        cli.normalize_value("detection_threshold", "nan")
     with pytest.raises(ValueError, match="min_area_px must be an integer"):
-        cli.normalize_value(cli.OPTION_BY_NAME["min_area_px"], 1.5)
+        cli.normalize_value("min_area_px", 1.5)
 
 
 def test_write_config_template_writes_valid_toml(tmp_path):
@@ -207,8 +216,8 @@ def test_main_write_config_template_exits_without_running_driver(tmp_path, monke
 
 
 def test_dry_run_prints_report_and_does_not_run_driver(monkeypatch, capsys):
-    for option in cli.OPTIONS:
-        monkeypatch.delenv(option.env_var, raising=False)
+    for _name, env_var, *_rest in cli.OPTION_SPECS:
+        monkeypatch.delenv(env_var, raising=False)
 
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("run_driver should not be called during --dry-run")
