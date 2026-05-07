@@ -8,11 +8,40 @@ version = "0.1.0"
 description = "Conveyor-belt map reconstruction and phase estimation tools"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Florian Pfaff" },
+]
+keywords = [
+    "background-subtraction",
+    "computer-vision",
+    "conveyor-belt",
+    "image-registration",
+    "particle-localization",
+    "particle-tracking",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
 dependencies = [
     "numpy>=1.23",
     "pillow>=10",
     "tomli>=2; python_version < '3.11'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/IPS-Stuttgart/BeltMap"
+Repository = "https://github.com/IPS-Stuttgart/BeltMap"
+Issues = "https://github.com/IPS-Stuttgart/BeltMap/issues"
 
 [project.scripts]
 beltmap-apply = "beltmap.cli.apply:main"
