@@ -5,6 +5,7 @@ on:
     paths:
       - "beltmap/**"
       - "scripts/apply_beltmap_to_images.py"
+      - "examples/synthetic_sequence/**"
       - ".github/workflows/smoke-beltmap-driver.yml"
       - "pyproject.toml"
       - "poetry.lock"
@@ -12,6 +13,7 @@ on:
     paths:
       - "beltmap/**"
       - "scripts/apply_beltmap_to_images.py"
+      - "examples/synthetic_sequence/**"
       - ".github/workflows/smoke-beltmap-driver.yml"
       - "pyproject.toml"
       - "poetry.lock"
@@ -55,82 +57,19 @@ jobs:
       - name: Generate synthetic belt sequence
         run: |
           mkdir -p data/images outputs
-          poetry run python - <<'PY'
-          from pathlib import Path
+          poetry run python examples/synthetic_sequence/generate.py \
+            --output-dir data/images \
+            --frames 12
 
-          import numpy as np
-          from PIL import Image
-
-          out = Path("data/images")
-          height, width = 64, 48
-          yy = np.arange(height)[:, None]
-          xx = np.arange(width)[None, :]
-
-          # Periodic texture moving downward by two pixels per frame.
-          base = 100 + 25 * np.sin(2 * np.pi * yy / 16) + 10 * np.cos(2 * np.pi * xx / 12)
-          for i in range(12):
-              frame = np.roll(base, shift=2 * i, axis=0)
-              # Add a bright particle moving slightly slower than the belt.
-              y = min(height - 5, 8 + i)
-              x = 22
-              frame[y : y + 3, x : x + 3] += 120
-              Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)).save(out / f"frame_{i:03d}.png")
-          PY
-
-      - name: Run image driver through CLI
-        run: |
-          poetry run beltmap-apply \
-            --image-dir data/images \
-            --output-dir outputs \
-            --belt-velocity-px-per-frame 2 \
-            --belt-period-px 64 \
-            --detection-threshold 3.0 \
-            --min-area-px 2 \
-            --min-track-length 2 \
-            --max-frames 12 \
-            --map-sample-frames 12 \
-            --print-config
+      - name: Run image driver through reusable example config
+        run: poetry run beltmap-apply --config examples/synthetic_sequence/beltmap.toml --print-config
 
       - name: Validate expected outputs
         run: |
-          test -s outputs/config_resolved.json
-          test -s outputs/metadata.json
-          test -s outputs/belt_map.npy
-          test -s outputs/belt_map.png
-          test -s outputs/detections.csv
-          test -s outputs/detections_per_frame.csv
-          test -s outputs/velocities.csv
-          poetry run python - <<'PY'
-          import csv
-          import json
-          from pathlib import Path
-
-          resolved_config = json.loads(Path("outputs/config_resolved.json").read_text())
-          driver_env = resolved_config["driver_environment"]
-          expected_env = {
-              "BELTMAP_IMAGE_DIR": "data/images",
-              "BELTMAP_OUTPUT_DIR": "outputs",
-              "BELT_VELOCITY_PX_PER_FRAME": "2",
-              "BELT_PERIOD_PX": "64",
-              "DETECTION_THRESHOLD": "3",
-              "MIN_AREA_PX": "2",
-              "MIN_TRACK_LENGTH": "2",
-              "MAX_FRAMES": "12",
-              "MAP_SAMPLE_FRAMES": "12",
-          }
-          for key, expected in expected_env.items():
-              assert driver_env[key] == expected, (key, driver_env)
-          assert resolved_config["options"]["belt_velocity_px_per_frame"]["source"] == "cli"
-
-          metadata = json.loads(Path("outputs/metadata.json").read_text())
-          assert metadata["n_images"] == 12, metadata
-          assert metadata["belt_velocity_px_per_frame"] == 2.0, metadata
-          assert metadata["n_detections"] > 0, metadata
-
-          rows = list(csv.DictReader(Path("outputs/detections.csv").open()))
-          assert rows, "No detections were written"
-          print(json.dumps(metadata, indent=2))
-          PY
+          poetry run python examples/synthetic_sequence/validate_outputs.py \
+            --output-dir outputs \
+            --expected-frames 12 \
+            --expected-velocity 2.0
 
       - name: Upload smoke outputs
         if: always()
