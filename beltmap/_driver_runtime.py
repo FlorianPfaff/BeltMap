@@ -116,6 +116,11 @@ def read_gray(path: Path) -> np.ndarray:
         return np.asarray(im.convert("L"), dtype=np.float32)
 
 
+def crop(frame: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
+    top, left, height, width = region
+    return frame[top: top + height, left: left + width]
+
+
 def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
