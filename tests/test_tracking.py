@@ -1,5 +1,6 @@
 import numpy as np
 
+import beltmap.tracking as tracking_module
 from beltmap import (
     ParticleComponentConfig,
     ParticleDetection,
@@ -37,6 +38,81 @@ def test_extract_particle_detections_finds_components_and_weighted_centroid():
     assert detection.bbox_bottom == 3
     np.testing.assert_allclose([detection.y, detection.x], [1.6, 2.8])
     assert detection.peak_signal == 5.0
+
+
+def test_extract_particle_detections_honors_connectivity():
+    mask = np.zeros((3, 3), dtype=bool)
+    mask[0, 0] = True
+    mask[1, 1] = True
+
+    detections_4 = extract_particle_detections(
+        mask,
+        config=ParticleComponentConfig(connectivity=4),
+    )
+    detections_8 = extract_particle_detections(
+        mask,
+        config=ParticleComponentConfig(connectivity=8),
+    )
+
+    assert [detection.area_px for detection in detections_4] == [1, 1]
+    assert [detection.area_px for detection in detections_8] == [2]
+
+
+def test_connected_components_prefers_accelerated_scipy_labeler(monkeypatch):
+    mask = np.array([[True]])
+    expected = [(np.array([0]), np.array([0]))]
+
+    def fake_scipy(observed_mask, *, connectivity):
+        assert observed_mask is mask
+        assert connectivity == 8
+        return expected
+
+    def unexpected_labeler(*_args, **_kwargs):
+        raise AssertionError("later labelers should not be called")
+
+    monkeypatch.setattr(tracking_module, "_connected_components_with_scipy", fake_scipy)
+    monkeypatch.setattr(tracking_module, "_connected_components_with_skimage", unexpected_labeler)
+    monkeypatch.setattr(tracking_module, "_connected_components_numpy", unexpected_labeler)
+
+    assert tracking_module._connected_components(mask, connectivity=8) is expected
+
+
+def test_connected_components_uses_skimage_when_scipy_is_unavailable(monkeypatch):
+    mask = np.array([[True]])
+    expected = [(np.array([0]), np.array([0]))]
+
+    def missing_scipy(_mask, *, connectivity):
+        assert connectivity == 4
+        return None
+
+    def fake_skimage(observed_mask, *, connectivity):
+        assert observed_mask is mask
+        assert connectivity == 4
+        return expected
+
+    def unexpected_labeler(*_args, **_kwargs):
+        raise AssertionError("NumPy fallback should not be called")
+
+    monkeypatch.setattr(tracking_module, "_connected_components_with_scipy", missing_scipy)
+    monkeypatch.setattr(tracking_module, "_connected_components_with_skimage", fake_skimage)
+    monkeypatch.setattr(tracking_module, "_connected_components_numpy", unexpected_labeler)
+
+    assert tracking_module._connected_components(mask, connectivity=4) is expected
+
+
+def test_connected_components_falls_back_to_numpy_when_speed_backends_are_unavailable(monkeypatch):
+    def missing_backend(_mask, *, connectivity):
+        return None
+
+    monkeypatch.setattr(tracking_module, "_connected_components_with_scipy", missing_backend)
+    monkeypatch.setattr(tracking_module, "_connected_components_with_skimage", missing_backend)
+
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[1, 1] = True
+    mask[2, 2] = True
+
+    assert len(tracking_module._connected_components(mask, connectivity=4)) == 2
+    assert len(tracking_module._connected_components(mask, connectivity=8)) == 1
 
 
 def test_track_particle_detections_uses_velocity_prior():
