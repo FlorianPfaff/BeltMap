@@ -216,6 +216,10 @@ def values_from_config(path: Path | None) -> tuple[dict[str, str], dict[str, str
             raise ValueError(f"Unknown config option {'.'.join(key_path)!r}")
         normalized = normalize_value(name, raw_value)
         if normalized is not None:
+            if name in values:
+                raise ValueError(
+                    f"Config option {name!r} was specified more than once"
+                )
             values[name] = normalized
             sources[name] = f"config:{path}"
     return values, sources
