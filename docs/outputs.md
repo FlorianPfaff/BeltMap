@@ -1,0 +1,323 @@
+# BeltMap output schemas
+
+This page documents the files written by the BeltMap image-sequence driver and
+by the `beltmap-apply` command. It is intended as the stable reference for
+post-processing, plotting, validation scripts, and external integrations.
+
+## Coordinate and unit conventions
+
+Unless stated otherwise, image coordinates in CSV outputs are **crop-local**.
+The origin `(y=0, x=0)` is the upper-left corner of the belt crop processed by
+BeltMap, not necessarily the upper-left corner of the original full frame.
+
+If `BELT_REGION` or `belt.region` is set to `top,left,height,width`, convert a
+crop-local coordinate to a full-frame coordinate with:
+
+```text
+full_frame_y = top + y
+full_frame_x = left + x
+```
+
+Bounding boxes use half-open NumPy/Python slicing convention:
+
+```text
+bbox_top <= y < bbox_bottom
+bbox_left <= x < bbox_right
+```
+
+The vertical belt-coordinate convention is:
+
+```text
+belt_coordinate_y = image_y + phase_px
+```
+
+Positive `belt_velocity_px_per_frame` means the belt texture moves downward in
+image coordinates. With the above convention, the belt phase decreases over
+time. Angles are reported in radians, phases and displacements in pixels, and
+velocities in pixels per frame.
+
+## Output directory overview
+
+A typical `beltmap-apply` run writes these files below the configured output
+directory:
+
+```text
+outputs/
+  belt_map.npy
+  belt_map.png
+  config_resolved.json
+  detections.csv
+  detections_per_frame.csv
+  metadata.json
+  phase_estimates.csv
+  progress.jsonl
+  progress_latest.json
+  residual_frame_000000.png
+  residual_frame_000001.png
+  residual_frame_000002.png
+  velocities.csv
+```
+
+`config_resolved.json` is produced by the `beltmap-apply` CLI before the legacy
+image driver is invoked. Running `scripts/apply_beltmap_to_images.py` directly
+writes the driver outputs, but not necessarily the resolved CLI configuration
+file.
+
+## `belt_map.npy`
+
+Purpose: stores the reconstructed particle-free conveyor-belt texture.
+
+Format: NumPy `.npy` array.
+
+Shape: `(belt_map_height_px, crop_width_px)`.
+
+Dtype: currently written from a `float32` image array.
+
+Coordinates:
+
+- axis 0 is belt-coordinate row `belt_coordinate_y`;
+- axis 1 is crop-local image column `x`;
+- rows wrap cyclically when a belt period is known or supplied.
+
+Interpretation: row `phase_px + image_y` in this array is the clean belt value
+expected at crop-local image row `image_y` for the corresponding frame.
+
+## `belt_map.png`
+
+Purpose: quick-look visualization of `belt_map.npy`.
+
+Format: 8-bit grayscale PNG.
+
+Scaling: display-only robust percentile scaling. Do not use this file for
+quantitative analysis because the pixel values are contrast-normalized for
+inspection.
+
+Coordinates: same row and column layout as `belt_map.npy`.
+
+## `phase_estimates.csv`
+
+Purpose: one phase estimate per processed frame.
+
+Format: CSV with a header row.
+
+Coordinates: phases are in belt-map pixels. Image paths are relative to the
+input image directory.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `frame_index` | frame | Zero-based processed-frame index after sorting, striding, and truncation. |
+| `image` | path | Input image path relative to the configured image directory. |
+| `phase_px` | px | Final corrected belt phase for the frame. |
+| `phase_fraction` | 1 | `phase_px / belt_map_height_px` for the driver-created motion model. |
+| `phase_rad` | rad | `phase_fraction * 2*pi`. |
+| `predicted_phase_px` | px | Phase predicted by the signed constant-speed motion model before local correction. |
+| `correction_px` | px | Registration offset added to the predicted phase. |
+| `loss` | 1 | Trimmed mean-square registration loss; empty if no registration loss was computed. |
+| `score` | 1 | Dimensionless registration score; empty if no registration score was computed. |
+| `method` | text | Phase-estimation method, usually `registration` for image-driver residuals. |
+
+Notes:
+
+- `correction_px = phase_px - predicted_phase_px` modulo wrapping effects.
+- `loss` is useful for diagnosing poor registration or weak belt texture.
+- `score` is relative to the candidate-loss distribution and is not a calibrated
+  probability.
+
+## `detections.csv`
+
+Purpose: one row per connected particle component detected in a processed frame.
+
+Format: CSV with a header row.
+
+Coordinates: centroids and bounding boxes are crop-local image coordinates.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `frame_index` | frame | Zero-based processed-frame index after sorting, striding, and truncation. |
+| `image` | path | Input image path relative to the configured image directory. |
+| `label` | 1 | Connected-component label within the frame after thresholding. |
+| `y` | px | Crop-local particle centroid row. |
+| `x` | px | Crop-local particle centroid column. |
+| `area_px` | px | Number of pixels in the connected component. |
+| `bbox_top` | px | Top edge of the half-open crop-local bounding box. |
+| `bbox_left` | px | Left edge of the half-open crop-local bounding box. |
+| `bbox_bottom` | px | Bottom edge of the half-open crop-local bounding box. |
+| `bbox_right` | px | Right edge of the half-open crop-local bounding box. |
+| `mean_signal` | z | Mean normalized residual over the component. |
+| `peak_signal` | z | Maximum normalized residual over the component. |
+
+Notes:
+
+- The detector is tuned for bright particles on a darker belt and thresholds the
+  normalized residual image.
+- `mean_signal` and `peak_signal` use the residual normalization of the current
+  run. They are useful for ranking detections, but they are not calibrated
+  physical intensities.
+- Convert bounding boxes to full-frame coordinates by adding `top` to vertical
+  fields and `left` to horizontal fields from the configured belt region.
+
+## `detections_per_frame.csv`
+
+Purpose: compact per-frame detection counts.
+
+Format: CSV with a header row.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `frame_index` | frame | Zero-based processed-frame index. |
+| `n_detections` | count | Number of particle detections found in the frame. |
+
+Use this file for quick time-series plots, sanity checks, and monitoring changes
+in threshold or mask settings.
+
+## `velocities.csv`
+
+Purpose: one row per particle track with an estimated velocity and comparison to
+belt motion.
+
+Format: CSV with a header row.
+
+Coordinates: velocities are estimated from crop-local detection centroids.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `track_id` | 1 | Zero-based track identifier assigned by the greedy tracker. |
+| `n_detections` | count | Number of detections associated with this track. |
+| `frame_start` | frame | First frame index in the track. |
+| `frame_end` | frame | Last frame index in the track. |
+| `velocity_y_px_per_frame` | px/frame | Linear-slope estimate of vertical particle velocity in crop coordinates. |
+| `velocity_x_px_per_frame` | px/frame | Linear-slope estimate of horizontal particle velocity in crop coordinates. |
+| `speed_px_per_frame` | px/frame | Euclidean image-plane speed from the horizontal and vertical components. |
+| `belt_velocity_y_px_per_frame` | px/frame | Signed vertical belt texture velocity used by the run. |
+| `velocity_ratio_y` | 1 | `velocity_y_px_per_frame / belt_velocity_y_px_per_frame`. |
+| `belt_minus_particle_velocity_y_px_per_frame` | px/frame | Difference between belt velocity and vertical particle velocity. |
+
+Notes:
+
+- A ratio between 0 and 1 means the particle moves in the belt direction but
+  more slowly than the belt texture.
+- Negative ratios indicate motion opposite to the signed belt direction.
+- Tracks shorter than `MIN_TRACK_LENGTH` or `tracking.min_track_length` are not
+  written as velocity rows.
+
+## `metadata.json`
+
+Purpose: driver-level summary of the processed run.
+
+Format: JSON object.
+
+Important fields:
+
+| Field | Unit | Meaning |
+|---|---:|---|
+| `n_images` | count | Number of selected images processed by the driver. |
+| `discovered_frame_count` | count | Number of image files found before striding and truncation. |
+| `frame_stride` | frames | Stride applied after natural sorting. |
+| `first_image_shape` | px | `[height, width]` shape of the first original grayscale frame. |
+| `belt_region` | px | Object with `top`, `left`, `height`, and `width` for the processed crop. |
+| `belt_velocity_px_per_frame` | px/frame | Signed belt image velocity used by the run. |
+| `belt_period_px_input` | px | User-supplied belt period, or `null` when no period was supplied. |
+| `belt_map_height_px` | px | Height of the reconstructed belt map. |
+| `reference_phase_px` | px | Phase assigned to the reference frame by the map builder. |
+| `detection_threshold` | z | Threshold applied to the normalized residual image. |
+| `min_area_px` | px | Minimum connected-component area for detection output. |
+| `map_mask_iterations` | count | Number of particle-mask refinement iterations used for map building. |
+| `map_particle_mask_threshold` | z | Threshold used for particle masking during map reconstruction. |
+| `map_particle_mask_margin_px` | px | Bounding-box margin used when excluding particle pixels from the map. |
+| `map_particle_mask_min_area_px` | px | Minimum component area used for map-building particle masks. |
+| `n_phase_estimates` | count | Number of rows written to `phase_estimates.csv`. |
+| `n_detections` | count | Number of rows written to `detections.csv`. |
+| `n_tracks` | count | Number of particle tracks created by the tracker. |
+| `n_velocity_estimates` | count | Number of rows written to `velocities.csv`. |
+| `auto_velocity_pair_shifts` | px/frame | List of adjacent-frame shifts used for automatic belt-velocity estimation. |
+| `elapsed_s` | s | Total elapsed runtime reported by the driver. |
+
+The metadata file is the recommended place to recover run-level configuration
+and dimensions when post-processing CSV outputs.
+
+## `config_resolved.json`
+
+Purpose: records the effective values passed from `beltmap-apply` to the image
+driver after resolving config-file values, environment variables, and CLI flags.
+
+Format: JSON object written by the CLI before processing starts.
+
+Top-level fields:
+
+| Field | Meaning |
+|---|---|
+| `precedence` | Ordered list of configuration layers, currently `config`, `environment`, `cli`. |
+| `options` | Object keyed by normalized option name. Each entry records the environment variable, value, and source. |
+| `driver_environment` | Object of environment variables and values applied before invoking the driver. |
+
+Example entry in `options`:
+
+```json
+{
+  "belt_velocity_px_per_frame": {
+    "env_var": "BELT_VELOCITY_PX_PER_FRAME",
+    "value": "59.3",
+    "source": "cli"
+  }
+}
+```
+
+Use this file to check what the driver actually received, especially when config
+files, environment variables, and explicit CLI flags are mixed.
+
+## `progress.jsonl`
+
+Purpose: append-only progress log for long runs.
+
+Format: newline-delimited JSON, one JSON object per event.
+
+Stable common fields:
+
+| Field | Unit | Meaning |
+|---|---:|---|
+| `timestamp` | ISO 8601 | UTC timestamp when the event was emitted. |
+| `elapsed_s` | s | Elapsed seconds since driver startup. |
+| `stage` | text | Coarse processing stage, such as `startup`, `images`, `velocity`, `belt_map`, `detect`, `track`, or `done`. |
+| `message` | text | Human-readable progress message. |
+| `rss_mb` | MB | Peak resident set size when available on the platform. |
+
+Additional fields are stage-specific and may include paths, frame counts,
+detection counts, map coverage statistics, frame rate, remaining-frame estimates,
+or current input image names. Consumers should tolerate unknown extra fields.
+
+## `progress_latest.json`
+
+Purpose: latest progress event as a single JSON object.
+
+Format: JSON object with the same schema as one line of `progress.jsonl`.
+
+Use this file for dashboards or workflow monitors that only need the most recent
+status without reading the whole JSONL log.
+
+## `residual_frame_*.png`
+
+Purpose: visual debug previews of selected normalized residual frames.
+
+Format: 8-bit grayscale PNG.
+
+Shape: same height and width as the processed crop, not necessarily the original
+full frame.
+
+Scaling: display-only robust percentile scaling of the normalized residual. Do
+not use these PNGs for quantitative thresholding or measurement; use the driver
+CSV outputs or rerun residual generation in Python when numerical residual
+values are needed.
+
+When written:
+
+- the first `DEBUG_RESIDUAL_PREVIEW_FRAMES` frames are saved;
+- if `DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES > 0`, additional previews are saved
+  at that interval.
