@@ -269,7 +269,9 @@ jobs:
               echo "Local dataset zip cache hit: $CACHE_ZIP"
             fi
             echo "Extracting dataset atomically to $CACHE_IMAGES"
-            poetry run python -c 'from zipfile import ZipFile; ZipFile("'$CACHE_ZIP'").extractall("'$CACHE_TMP'")'
+            poetry run python -c \
+              'import sys; from zipfile import ZipFile; ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$CACHE_ZIP" "$CACHE_TMP"
             rm -rf "$CACHE_IMAGES"
             mv "$CACHE_TMP" "$CACHE_IMAGES"
           fi
