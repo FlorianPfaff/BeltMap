@@ -5,6 +5,10 @@
 
 Tools for reconstructing conveyor-belt background maps and using them to improve particle localization.
 
+For a concise description of the implemented coordinate convention, phase model,
+registration step, belt-map reconstruction, residual normalization, particle
+detection, and tracking assumptions, see the [algorithm note](docs/algorithm.md).
+
 The first implemented piece is belt phase estimation:
 
 - predict the belt phase from a signed constant-speed model
