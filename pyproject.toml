@@ -17,6 +17,10 @@ dependencies = [
 test = [
     "pytest>=7",
 ]
+speed = [
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+]
 
 [tool.poetry]
 packages = [{ include = "beltmap" }]
