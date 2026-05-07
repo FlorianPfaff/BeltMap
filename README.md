@@ -1,5 +1,8 @@
 # BeltMap
 
+[![CI](https://github.com/IPS-Stuttgart/BeltMap/actions/workflows/ci.yml/badge.svg)](https://github.com/IPS-Stuttgart/BeltMap/actions/workflows/ci.yml)
+[![Smoke test BeltMap image driver](https://github.com/IPS-Stuttgart/BeltMap/actions/workflows/smoke-beltmap-driver.yml/badge.svg)](https://github.com/IPS-Stuttgart/BeltMap/actions/workflows/smoke-beltmap-driver.yml)
+
 Tools for reconstructing conveyor-belt background maps and using them to improve particle localization.
 
 The first implemented piece is belt phase estimation:
