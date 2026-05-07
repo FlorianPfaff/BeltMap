@@ -265,15 +265,16 @@ def _uniform_filter_axis(image: FloatArray, radius: int, axis: int) -> FloatArra
     pad_width[axis] = (radius, radius)
     padded = np.pad(image, pad_width, mode="edge")
     moved = np.moveaxis(padded, axis, 0)
-    csum = np.cumsum(moved, axis=0, dtype=np.float64)
+    csum = np.concatenate(
+        [
+            np.zeros((1,) + moved.shape[1:], dtype=np.float64),
+            np.cumsum(moved, axis=0, dtype=np.float64),
+        ],
+        axis=0,
+    )
     window = 2 * radius + 1
-    summed = csum[window:] - csum[:-window]
-    first = np.take(moved, [0], axis=0) * window
-    summed = np.concatenate([first, summed], axis=0)
-    result = summed / window
-    trim = [slice(None), slice(None)]
-    trim[axis] = slice(0, image.shape[axis])
-    return np.moveaxis(result, 0, axis)[tuple(trim)]
+    result = (csum[window:] - csum[:-window]) / window
+    return np.moveaxis(result, 0, axis)
 
 
 def _trimmed_mean_square(
