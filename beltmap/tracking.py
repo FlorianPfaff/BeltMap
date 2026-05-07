@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import hypot
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -13,6 +13,11 @@ from .residual import ResidualImage
 
 
 FloatArray = NDArray[np.floating]
+
+_IMPORT_UNCHECKED = object()
+_IMPORT_MISSING = object()
+_SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
+_SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 
 
 @dataclass(frozen=True)
@@ -361,6 +366,120 @@ def _component_centroid(
 
 
 def _connected_components(
+    mask: NDArray[np.bool_],
+    *,
+    connectivity: int,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]]:
+    """Return connected components using optional accelerated labelers if available."""
+
+    for implementation in (
+        _connected_components_with_scipy,
+        _connected_components_with_skimage,
+    ):
+        components = implementation(mask, connectivity=connectivity)
+        if components is not None:
+            return components
+    return _connected_components_numpy(mask, connectivity=connectivity)
+
+
+def _connected_components_with_scipy(
+    mask: NDArray[np.bool_],
+    *,
+    connectivity: int,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]] | None:
+    ndimage = _load_scipy_ndimage()
+    if ndimage is None:
+        return None
+
+    labels, component_count = ndimage.label(
+        mask,
+        structure=_component_structure(connectivity),
+    )
+    return _components_from_labels(np.asarray(labels), int(component_count))
+
+
+def _connected_components_with_skimage(
+    mask: NDArray[np.bool_],
+    *,
+    connectivity: int,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]] | None:
+    measure = _load_skimage_measure()
+    if measure is None:
+        return None
+
+    labels, component_count = measure.label(
+        mask,
+        connectivity=1 if connectivity == 4 else 2,
+        background=0,
+        return_num=True,
+    )
+    return _components_from_labels(np.asarray(labels), int(component_count))
+
+
+def _load_scipy_ndimage() -> Any | None:
+    global _SCIPY_NDIMAGE
+
+    if _SCIPY_NDIMAGE is _IMPORT_UNCHECKED:
+        try:
+            from scipy import ndimage
+        except ImportError:
+            _SCIPY_NDIMAGE = _IMPORT_MISSING
+        else:
+            _SCIPY_NDIMAGE = ndimage
+    return None if _SCIPY_NDIMAGE is _IMPORT_MISSING else _SCIPY_NDIMAGE
+
+
+def _load_skimage_measure() -> Any | None:
+    global _SKIMAGE_MEASURE
+
+    if _SKIMAGE_MEASURE is _IMPORT_UNCHECKED:
+        try:
+            from skimage import measure
+        except ImportError:
+            _SKIMAGE_MEASURE = _IMPORT_MISSING
+        else:
+            _SKIMAGE_MEASURE = measure
+    return None if _SKIMAGE_MEASURE is _IMPORT_MISSING else _SKIMAGE_MEASURE
+
+
+def _component_structure(connectivity: int) -> NDArray[np.bool_]:
+    if connectivity == 4:
+        return np.array(
+            [
+                [False, True, False],
+                [True, True, True],
+                [False, True, False],
+            ],
+            dtype=bool,
+        )
+    if connectivity == 8:
+        return np.ones((3, 3), dtype=bool)
+    raise ValueError("connectivity must be 4 or 8")
+
+
+def _components_from_labels(
+    labels: NDArray[np.integer],
+    component_count: int,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]]:
+    if component_count <= 0:
+        return []
+    rows, cols = np.nonzero(labels)
+    if rows.size == 0:
+        return []
+
+    label_values = labels[rows, cols]
+    order = np.argsort(label_values, kind="stable")
+    rows = rows[order]
+    cols = cols[order]
+    label_values = label_values[order]
+    boundaries = np.r_[0, np.flatnonzero(np.diff(label_values)) + 1, label_values.size]
+    return [
+        (rows[start:end], cols[start:end])
+        for start, end in zip(boundaries[:-1], boundaries[1:])
+    ]
+
+
+def _connected_components_numpy(
     mask: NDArray[np.bool_],
     *,
     connectivity: int,
