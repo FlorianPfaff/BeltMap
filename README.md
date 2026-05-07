@@ -54,6 +54,17 @@ normalized residual:
 particle_mask = detect_particles_from_residual(residual, threshold=5.0)
 ```
 
+Connected-component extraction is implemented with a pure NumPy fallback. For
+large residual masks, install the optional acceleration dependencies:
+
+```bash
+python -m pip install ".[speed]"
+```
+
+When available, BeltMap uses `scipy.ndimage.label` first, then
+`skimage.measure.label`, and falls back to the pure NumPy implementation when
+neither optional backend is installed.
+
 Particle velocities can be extracted from a sequence of particle masks and
 compared to the signed belt image velocity:
 
