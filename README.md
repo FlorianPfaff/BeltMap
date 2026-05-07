@@ -32,6 +32,72 @@ The public clean-belt renderer is `render_expected_clean_belt`. It can render a
 full-frame expected background with a validity mask so subtraction ignores the
 camera background outside the belt crop.
 
+## Command-line use
+
+Install the package from a checkout and run the image-sequence driver with the
+`beltmap-apply` command:
+
+```bash
+python -m pip install -e ".[test]"
+beltmap-apply \
+  --image-dir data/images \
+  --output-dir outputs \
+  --belt-region 0,220,1330,1800 \
+  --belt-velocity-px-per-frame 59.3 \
+  --belt-period-px 14723
+```
+
+The CLI keeps compatibility with the original environment variables. Runtime
+configuration is resolved in this order, with later sources taking precedence:
+
+1. values from `--config`
+2. existing environment variables such as `BELT_REGION` or `MAX_FRAMES`
+3. explicit CLI flags
+
+The resolved values passed to the driver are written to
+`outputs/config_resolved.json` before processing starts. The driver still writes
+its run metadata to `outputs/metadata.json`.
+
+Generate a TOML template with:
+
+```bash
+beltmap-apply --write-config-template beltmap.toml
+```
+
+A minimal config file can be flat or sectioned. For example:
+
+```toml
+[paths]
+image_dir = "data/images"
+output_dir = "outputs"
+
+[belt]
+region = [0, 220, 1330, 1800]
+velocity_px_per_frame = 59.3
+period_px = 14723
+
+[detection]
+threshold = 5.0
+min_area_px = 4
+
+[map]
+sample_frames = 120
+mask_iterations = 1
+
+[progress]
+interval_frames = 25
+partial_output_interval_frames = 250
+```
+
+Run it with:
+
+```bash
+beltmap-apply --config beltmap.toml
+```
+
+Use `beltmap-apply --dry-run --config beltmap.toml` to print the resolved
+settings without running the image driver.
+
 Residual images for particle localization are generated with
 `generate_residual_image` or the convenience wrapper
 `render_clean_belt_residual`:
