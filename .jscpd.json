@@ -1,0 +1,6 @@
+{
+  "ignore": [
+    "scripts/apply_beltmap_to_images.py",
+    "beltmap/_driver_map.py"
+  ]
+}
