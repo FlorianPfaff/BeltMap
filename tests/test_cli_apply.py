@@ -78,6 +78,14 @@ period_px = 64
 threshold = 5.5
 min_area_px = 4
 
+[map]
+particle_mask_mode = "hysteresis_abs"
+particle_mask_threshold = 4.0
+particle_mask_grow_threshold = 1.5
+particle_mask_dilation_px = 24
+particle_mask_margin_px = 16
+particle_mask_min_area_px = 8
+
 [auto_velocity]
 allow_full_frame = true
 """.strip(),
@@ -98,6 +106,12 @@ allow_full_frame = true
         "BELT_VELOCITY_PX_PER_FRAME": "auto",
         "DETECTION_THRESHOLD": "5.5",
         "FRAME_STRIDE": "3",
+        "MAP_PARTICLE_MASK_DILATION_PX": "24",
+        "MAP_PARTICLE_MASK_GROW_THRESHOLD": "1.5",
+        "MAP_PARTICLE_MASK_MARGIN_PX": "16",
+        "MAP_PARTICLE_MASK_MIN_AREA_PX": "8",
+        "MAP_PARTICLE_MASK_MODE": "hysteresis_abs",
+        "MAP_PARTICLE_MASK_THRESHOLD": "4",
         "MIN_AREA_PX": "4",
     }
     assert report["driver_environment"] == env_updates
@@ -180,6 +194,7 @@ def test_normalize_value_accepts_expected_shapes_and_rejects_bad_values():
     assert cli.normalize_value("belt_region", "1, 2, 3, 4") == "1,2,3,4"
     assert cli.normalize_value("belt_velocity_px_per_frame", "auto") == "auto"
     assert cli.normalize_value("belt_velocity_px_per_frame", 2.0) == "2"
+    assert cli.normalize_value("map_particle_mask_mode", "hysteresis_abs") == "hysteresis_abs"
     assert cli.normalize_value("allow_full_frame_auto_velocity", "yes") == "1"
     assert cli.normalize_value("allow_full_frame_auto_velocity", "no") == "0"
 
@@ -201,6 +216,9 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["paths"]["output_dir"] == "outputs"
     assert parsed["belt"]["region"] == [0, 220, 1330, 1800]
     assert parsed["belt"]["velocity_px_per_frame"] == "auto"
+    assert parsed["map"]["particle_mask_mode"] == "positive"
+    assert parsed["map"]["particle_mask_grow_threshold"] == 2.0
+    assert parsed["map"]["particle_mask_dilation_px"] == 0
 
 
 def test_main_write_config_template_exits_without_running_driver(tmp_path, monkeypatch):
@@ -231,6 +249,12 @@ def test_dry_run_prints_report_and_does_not_run_driver(monkeypatch, capsys):
             "data/images",
             "--belt-region",
             "1,2,3,4",
+            "--map-particle-mask-mode",
+            "hysteresis_abs",
+            "--map-particle-mask-grow-threshold",
+            "1.5",
+            "--map-particle-mask-dilation-px",
+            "24",
             "--allow-full-frame-auto-velocity",
         ]
     )
@@ -241,6 +265,9 @@ def test_dry_run_prints_report_and_does_not_run_driver(monkeypatch, capsys):
         "ALLOW_FULL_FRAME_AUTO_VELOCITY": "1",
         "BELTMAP_IMAGE_DIR": "data/images",
         "BELT_REGION": "1,2,3,4",
+        "MAP_PARTICLE_MASK_DILATION_PX": "24",
+        "MAP_PARTICLE_MASK_GROW_THRESHOLD": "1.5",
+        "MAP_PARTICLE_MASK_MODE": "hysteresis_abs",
     }
     assert report["options"]["image_dir"]["source"] == "cli"
 
