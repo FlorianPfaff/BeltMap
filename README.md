@@ -112,6 +112,24 @@ beltmap-apply --config beltmap.toml
 Use `beltmap-apply --dry-run --config beltmap.toml` to print the resolved
 settings without running the image driver.
 
+After a run, create a Markdown validation report and diagnostic plots with:
+
+```bash
+beltmap-validate --output-dir outputs
+```
+
+The validation command reads the standard driver outputs and writes:
+
+```text
+outputs/
+  validation_report.md
+  phase_corrections.png
+  phase_correction_timeseries.png
+  registration_score.png
+  detections_per_frame.png
+  velocity_ratio_histogram.png
+```
+
 Residual images for particle localization are generated with
 `generate_residual_image` or the convenience wrapper
 `render_clean_belt_residual`:
