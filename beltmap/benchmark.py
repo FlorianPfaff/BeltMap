@@ -10,6 +10,8 @@ from typing import Any, Iterable
 
 import numpy as np
 
+EVENT_ID_KEYS = ("event_id", "particle_id", "track_id", "id")
+
 
 @dataclass(frozen=True)
 class BenchmarkArtifacts:
@@ -87,11 +89,7 @@ def source_frame_index(row: dict[str, Any]) -> int | None:
     return finite_int(row.get("frame_index"))
 
 
-def summary_errors(
-    values: Iterable[float],
-    *,
-    unit: str,
-) -> dict[str, float | int | None]:
+def summary_errors(values: Iterable[float], *, unit: str) -> dict[str, float | int | None]:
     """Summarize signed errors with absolute-error and RMSE statistics."""
 
     arr = np.asarray(list(values), dtype=np.float64)
@@ -138,10 +136,7 @@ def true_phase_px(truth: dict[str, Any], frame_index: int, period_px: float) -> 
     return float((-belt_shift * frame_index) % period_px)
 
 
-def phase_metrics(
-    phase_rows: list[dict[str, str]],
-    truth: dict[str, Any],
-) -> dict[str, Any]:
+def phase_metrics(phase_rows: list[dict[str, str]], truth: dict[str, Any]) -> dict[str, Any]:
     """Compute circular phase-estimation errors against synthetic truth."""
 
     period = finite_float(truth.get("belt_period_px", truth.get("height")))
@@ -180,11 +175,7 @@ def resolve_truth_path(truth_path: Path, value: Any, fallback_name: str) -> Path
     return truth_path.parent / fallback_name
 
 
-def map_metrics(
-    output_dir: Path,
-    truth_path: Path,
-    truth: dict[str, Any],
-) -> dict[str, Any]:
+def map_metrics(output_dir: Path, truth_path: Path, truth: dict[str, Any]) -> dict[str, Any]:
     """Compare reconstructed and true belt maps with cyclic row-shift invariance."""
 
     reconstructed_path = output_dir / "belt_map.npy"
@@ -258,12 +249,7 @@ def bbox_from_detection(row: dict[str, Any]) -> dict[str, float] | None:
     top, left, bottom, right = values
     assert top is not None and left is not None
     assert bottom is not None and right is not None
-    box = {
-        "top": top,
-        "left": left,
-        "bottom": bottom,
-        "right": right,
-    }
+    box = {"top": top, "left": left, "bottom": bottom, "right": right}
     y = finite_float(row.get("y"))
     x = finite_float(row.get("x"))
     if y is not None and x is not None:
@@ -305,6 +291,337 @@ def predicted_center(box: dict[str, float]) -> tuple[float, float]:
     return truth_center(box)
 
 
+def center_distance_px(a: dict[str, float], b: dict[str, float]) -> float:
+    """Return Euclidean distance between two box centroids."""
+
+    ay, ax = predicted_center(a)
+    by, bx = predicted_center(b)
+    return float(math.hypot(ay - by, ax - bx))
+
+
+def box_diagonal_px(box: dict[str, float]) -> float:
+    """Return the diagonal length of a half-open box."""
+
+    return float(
+        math.hypot(
+            max(0.0, box["bottom"] - box["top"]),
+            max(0.0, box["right"] - box["left"]),
+        )
+    )
+
+
+def event_id_from_row(row: dict[str, Any]) -> str | None:
+    """Return an explicit event/particle identifier when present."""
+
+    for key in EVENT_ID_KEYS:
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def truth_event_boxes(truth: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return synthetic truth boxes with frame and optional event identifiers."""
+
+    boxes: list[dict[str, Any]] = []
+    for particle in truth.get("particles", []):
+        if not isinstance(particle, dict):
+            continue
+        frame_index = finite_int(particle.get("frame_index"))
+        if frame_index is None:
+            continue
+        try:
+            box: dict[str, Any] = bbox_from_truth(particle)
+        except KeyError:
+            continue
+        box["frame_index"] = frame_index
+        event_id = event_id_from_row(particle)
+        if event_id is not None:
+            box["event_id"] = event_id
+        boxes.append(box)
+    return boxes
+
+
+def predicted_event_boxes(detection_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Return prediction boxes with frame and optional event identifiers."""
+
+    boxes: list[dict[str, Any]] = []
+    for row in detection_rows:
+        frame_index = source_frame_index(row)
+        box = bbox_from_detection(row)
+        if frame_index is None or box is None:
+            continue
+        event_box: dict[str, Any] = dict(box)
+        event_box["frame_index"] = frame_index
+        event_id = event_id_from_row(row)
+        if event_id is not None:
+            event_box["event_id"] = event_id
+        boxes.append(event_box)
+    return boxes
+
+
+def event_center_link_threshold_px(boxes: list[dict[str, Any]]) -> float:
+    """Infer a conservative center-distance threshold for auto-linking boxes."""
+
+    diagonals = [box_diagonal_px(box) for box in boxes]
+    if not diagonals:
+        return 0.0
+    return float(max(1.5, 1.5 * np.median(np.asarray(diagonals, dtype=np.float64))))
+
+
+def box_link_score(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    iou_threshold: float,
+    center_threshold_px: float,
+) -> float | None:
+    """Return a link score for adjacent event boxes, or ``None`` if not linked."""
+
+    iou = bbox_iou(previous, current)
+    distance = center_distance_px(previous, current)
+    if iou >= iou_threshold or distance <= center_threshold_px:
+        distance_score = max(0.0, 1.0 - distance / max(center_threshold_px, 1e-9))
+        return float(max(iou, distance_score))
+    return None
+
+
+def make_event(event_id: str, boxes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create an event dictionary from per-frame boxes."""
+
+    event = {
+        "event_id": event_id,
+        "boxes": sorted(boxes, key=lambda item: int(item["frame_index"])),
+    }
+    update_event_summary(event)
+    return event
+
+
+def update_event_summary(event: dict[str, Any]) -> None:
+    """Update cached event summary fields in place."""
+
+    frames = [int(box["frame_index"]) for box in event["boxes"]]
+    event["frame_start"] = min(frames)
+    event["frame_end"] = max(frames)
+    event["n_frames"] = len(set(frames))
+    event["duration_frames"] = event["frame_end"] - event["frame_start"] + 1
+
+
+def build_events_from_boxes(
+    boxes: list[dict[str, Any]],
+    *,
+    prefix: str,
+    iou_threshold: float,
+    max_frame_gap: int = 1,
+) -> list[dict[str, Any]]:
+    """Group per-frame boxes into temporally linked events.
+
+    Explicit identifiers such as ``event_id``, ``particle_id``, or ``track_id``
+    are honored when present. Boxes without explicit identifiers are linked with
+    greedy nearest-neighbor matching between adjacent frames.
+    """
+
+    if max_frame_gap < 1:
+        raise ValueError("max_frame_gap must be at least 1")
+
+    explicit: dict[str, list[dict[str, Any]]] = {}
+    unassigned: list[dict[str, Any]] = []
+    for box in boxes:
+        event_id = box.get("event_id")
+        if event_id is None:
+            unassigned.append(box)
+        else:
+            explicit.setdefault(str(event_id), []).append(box)
+
+    events: list[dict[str, Any]] = []
+    for event_id, event_boxes in sorted(explicit.items()):
+        events.append(make_event(f"{prefix}:{event_id}", event_boxes))
+
+    center_threshold_px = event_center_link_threshold_px(unassigned)
+    active_event_indices: list[int] = []
+    by_frame: dict[int, list[dict[str, Any]]] = {}
+    for box in unassigned:
+        frame_index = finite_int(box.get("frame_index"))
+        if frame_index is not None:
+            by_frame.setdefault(frame_index, []).append(box)
+
+    for frame_index in sorted(by_frame):
+        current = sorted(by_frame[frame_index], key=lambda item: predicted_center(item))
+        active_event_indices = [
+            event_index
+            for event_index in active_event_indices
+            if frame_index - int(events[event_index]["frame_end"]) <= max_frame_gap
+        ]
+        candidates: list[tuple[float, int, int]] = []
+        for event_index in active_event_indices:
+            previous = events[event_index]["boxes"][-1]
+            dt = frame_index - int(previous["frame_index"])
+            if dt <= 0 or dt > max_frame_gap:
+                continue
+            for box_index, box in enumerate(current):
+                score = box_link_score(
+                    previous,
+                    box,
+                    iou_threshold=iou_threshold,
+                    center_threshold_px=center_threshold_px,
+                )
+                if score is not None:
+                    candidates.append((score, event_index, box_index))
+
+        assigned_events: set[int] = set()
+        assigned_boxes: set[int] = set()
+        for _score, event_index, box_index in sorted(candidates, reverse=True):
+            if event_index in assigned_events or box_index in assigned_boxes:
+                continue
+            events[event_index]["boxes"].append(current[box_index])
+            update_event_summary(events[event_index])
+            assigned_events.add(event_index)
+            assigned_boxes.add(box_index)
+
+        for box_index, box in enumerate(current):
+            if box_index in assigned_boxes:
+                continue
+            events.append(make_event(f"{prefix}:auto-{len(events)}", [box]))
+            active_event_indices.append(len(events) - 1)
+
+    return events
+
+
+def event_boxes_by_frame(event: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Group one event's boxes by frame."""
+
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for box in event["boxes"]:
+        grouped.setdefault(int(box["frame_index"]), []).append(box)
+    return grouped
+
+
+def compare_events(
+    predicted: dict[str, Any],
+    target: dict[str, Any],
+    *,
+    iou_threshold: float,
+) -> dict[str, Any]:
+    """Compare one predicted event with one truth event."""
+
+    pred_by_frame = event_boxes_by_frame(predicted)
+    truth_by_frame = event_boxes_by_frame(target)
+    common_frames = sorted(set(pred_by_frame) & set(truth_by_frame))
+    matched_frames = 0
+    matched_ious: list[float] = []
+    first_matched_frame: int | None = None
+
+    for frame_index in common_frames:
+        best_iou = max(
+            bbox_iou(pred, truth)
+            for pred in pred_by_frame[frame_index]
+            for truth in truth_by_frame[frame_index]
+        )
+        if best_iou >= iou_threshold:
+            matched_frames += 1
+            matched_ious.append(best_iou)
+            if first_matched_frame is None:
+                first_matched_frame = frame_index
+
+    union_frames = set(pred_by_frame) | set(truth_by_frame)
+    truth_frames = max(1, int(target["n_frames"]))
+    pred_frames = max(1, int(predicted["n_frames"]))
+    return {
+        "pred_event_id": predicted["event_id"],
+        "truth_event_id": target["event_id"],
+        "matched_frames": matched_frames,
+        "union_frames": len(union_frames),
+        "truth_frames": truth_frames,
+        "predicted_frames": pred_frames,
+        "temporal_iou": matched_frames / len(union_frames) if union_frames else 0.0,
+        "truth_frame_coverage": matched_frames / truth_frames,
+        "predicted_frame_precision": matched_frames / pred_frames,
+        "mean_frame_iou": float(np.mean(matched_ious)) if matched_ious else None,
+        "first_matched_frame": first_matched_frame,
+        "latency_frames": None if first_matched_frame is None else first_matched_frame - int(target["frame_start"]),
+        "duration_error_frames": int(predicted["duration_frames"]) - int(target["duration_frames"]),
+    }
+
+
+def event_metrics(
+    detection_rows: list[dict[str, str]],
+    truth: dict[str, Any],
+    *,
+    iou_threshold: float = 0.25,
+) -> dict[str, Any]:
+    """Compute event-level precision/recall against synthetic particle events."""
+
+    if not 0 <= iou_threshold <= 1:
+        raise ValueError("iou_threshold must be in [0, 1]")
+
+    truth_events = build_events_from_boxes(
+        truth_event_boxes(truth),
+        prefix="truth",
+        iou_threshold=iou_threshold,
+    )
+    predicted_events = build_events_from_boxes(
+        predicted_event_boxes(detection_rows),
+        prefix="pred",
+        iou_threshold=iou_threshold,
+    )
+
+    candidates: list[tuple[float, int, int, dict[str, Any]]] = []
+    for pred_index, predicted in enumerate(predicted_events):
+        for truth_index, target in enumerate(truth_events):
+            comparison = compare_events(predicted, target, iou_threshold=iou_threshold)
+            if comparison["matched_frames"] > 0:
+                candidates.append((float(comparison["temporal_iou"]), pred_index, truth_index, comparison))
+
+    matched_predictions: set[int] = set()
+    matched_truths: set[int] = set()
+    matches: list[dict[str, Any]] = []
+    for _score, pred_index, truth_index, comparison in sorted(candidates, reverse=True):
+        if pred_index in matched_predictions or truth_index in matched_truths:
+            continue
+        matched_predictions.add(pred_index)
+        matched_truths.add(truth_index)
+        matches.append(comparison)
+
+    true_positives = len(matches)
+    false_positives = len(predicted_events) - true_positives
+    false_negatives = len(truth_events) - true_positives
+    precision = true_positives / len(predicted_events) if predicted_events else None
+    recall = true_positives / len(truth_events) if truth_events else None
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if precision is not None and recall is not None and precision + recall > 0
+        else None
+    )
+
+    def mean_field(name: str) -> float | None:
+        values = [finite_float(match.get(name)) for match in matches]
+        finite = [value for value in values if value is not None]
+        return None if not finite else float(np.mean(finite))
+
+    return {
+        "available": bool(truth_events or predicted_events),
+        "iou_threshold": iou_threshold,
+        "truth_events": len(truth_events),
+        "predicted_events": len(predicted_events),
+        "matched_events": true_positives,
+        "false_positive_events": false_positives,
+        "false_negative_events": false_negatives,
+        "precision": None if precision is None else float(precision),
+        "recall": None if recall is None else float(recall),
+        "f1": None if f1 is None else float(f1),
+        "mean_temporal_iou": mean_field("temporal_iou"),
+        "mean_truth_frame_coverage": mean_field("truth_frame_coverage"),
+        "mean_predicted_frame_precision": mean_field("predicted_frame_precision"),
+        "mean_frame_iou": mean_field("mean_frame_iou"),
+        "mean_latency_frames": mean_field("latency_frames"),
+        "mean_duration_error_frames": mean_field("duration_error_frames"),
+        "matches": matches,
+    }
+
+
 def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]]:
     """Group synthetic particle boxes by source frame."""
 
@@ -322,9 +639,7 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
     return grouped
 
 
-def group_detection_boxes(
-    detection_rows: list[dict[str, str]],
-) -> dict[int, list[dict[str, float]]]:
+def group_detection_boxes(detection_rows: list[dict[str, str]]) -> dict[int, list[dict[str, float]]]:
     """Group predicted detection boxes by source frame."""
 
     grouped: dict[int, list[dict[str, float]]] = {}
@@ -384,16 +699,8 @@ def detection_metrics(
         false_positives += len(preds) - len(matched_preds)
         false_negatives += len(truths) - len(matched_truths)
 
-    precision = (
-        true_positives / (true_positives + false_positives)
-        if true_positives + false_positives
-        else None
-    )
-    recall = (
-        true_positives / (true_positives + false_negatives)
-        if true_positives + false_negatives
-        else None
-    )
+    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives else None
+    recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives else None
     f1 = (
         2 * precision * recall / (precision + recall)
         if precision is not None and recall is not None and precision + recall > 0
@@ -420,10 +727,7 @@ def detection_metrics(
     }
 
 
-def choose_velocity_row(
-    velocity_rows: list[dict[str, str]],
-    true_ratio: float | None,
-) -> dict[str, str] | None:
+def choose_velocity_row(velocity_rows: list[dict[str, str]], true_ratio: float | None) -> dict[str, str] | None:
     """Choose the representative velocity row for the simple synthetic benchmark."""
 
     if not velocity_rows:
@@ -432,20 +736,13 @@ def choose_velocity_row(
     def key(row: dict[str, str]) -> tuple[int, float]:
         detections = finite_int(row.get("n_detections")) or 0
         ratio = finite_float(row.get("velocity_ratio_y"))
-        ratio_penalty = (
-            abs(ratio - true_ratio)
-            if ratio is not None and true_ratio is not None
-            else float("inf")
-        )
+        ratio_penalty = abs(ratio - true_ratio) if ratio is not None and true_ratio is not None else float("inf")
         return detections, -ratio_penalty
 
     return max(velocity_rows, key=key)
 
 
-def velocity_metrics(
-    velocity_rows: list[dict[str, str]],
-    truth: dict[str, Any],
-) -> dict[str, Any]:
+def velocity_metrics(velocity_rows: list[dict[str, str]], truth: dict[str, Any]) -> dict[str, Any]:
     """Compare estimated track velocity against synthetic particle truth."""
 
     true_velocity = finite_float(
@@ -483,18 +780,10 @@ def velocity_metrics(
         "representative_track_detections": finite_int(representative.get("n_detections")),
         "truth_velocity_y_px_per_frame": true_velocity,
         "estimated_velocity_y_px_per_frame": estimated_velocity,
-        "velocity_y_error_px_per_frame": (
-            None
-            if true_velocity is None or estimated_velocity is None
-            else float(estimated_velocity - true_velocity)
-        ),
+        "velocity_y_error_px_per_frame": None if true_velocity is None or estimated_velocity is None else float(estimated_velocity - true_velocity),
         "truth_velocity_ratio_y": true_ratio,
         "estimated_velocity_ratio_y": estimated_ratio,
-        "velocity_ratio_error": (
-            None
-            if true_ratio is None or estimated_ratio is None
-            else float(estimated_ratio - true_ratio)
-        ),
+        "velocity_ratio_error": None if true_ratio is None or estimated_ratio is None else float(estimated_ratio - true_ratio),
     }
 
 
@@ -578,11 +867,8 @@ def compute_benchmark_metrics(
         },
         "phase": phase_metrics(phase_rows, truth),
         "belt_map": map_metrics(output_dir, truth_path, truth),
-        "detections": detection_metrics(
-            detection_rows,
-            truth,
-            iou_threshold=iou_threshold,
-        ),
+        "detections": detection_metrics(detection_rows, truth, iou_threshold=iou_threshold),
+        "events": event_metrics(detection_rows, truth, iou_threshold=iou_threshold),
         "velocity": velocity_metrics(velocity_rows, truth),
         "runtime": runtime_metrics(output_dir),
     }
@@ -606,6 +892,7 @@ def markdown_report(metrics: dict[str, Any]) -> str:
     phase = metrics["phase"]
     belt_map = metrics["belt_map"]
     detections = metrics["detections"]
+    events = metrics["events"]
     velocity = metrics["velocity"]
     runtime = metrics["runtime"]
 
@@ -623,15 +910,7 @@ def markdown_report(metrics: dict[str, Any]) -> str:
     for key, value in metrics["case"].items():
         lines.append(f"| `{key}` | {format_value(value)} |")
 
-    lines.extend(
-        [
-            "",
-            "## Run summary",
-            "",
-            "| Quantity | Value |",
-            "| --- | ---: |",
-        ]
-    )
+    lines.extend(["", "## Run summary", "", "| Quantity | Value |", "| --- | ---: |"])
     for key, value in metrics["run"].items():
         lines.append(f"| `{key}` | {format_value(value)} |")
 
@@ -651,6 +930,15 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| detection recall | {format_value(detections.get('recall'))} |",
             f"| detection F1 | {format_value(detections.get('f1'))} |",
             f"| mean centroid error [px] | {format_value(detections.get('mean_centroid_error_px'))} |",
+            f"| event precision | {format_value(events.get('precision'))} |",
+            f"| event recall | {format_value(events.get('recall'))} |",
+            f"| event F1 | {format_value(events.get('f1'))} |",
+            f"| matched events | {format_value(events.get('matched_events'))} |",
+            f"| truth events | {format_value(events.get('truth_events'))} |",
+            f"| predicted events | {format_value(events.get('predicted_events'))} |",
+            f"| mean event temporal IoU | {format_value(events.get('mean_temporal_iou'))} |",
+            f"| mean event truth-frame coverage | {format_value(events.get('mean_truth_frame_coverage'))} |",
+            f"| mean event latency [frames] | {format_value(events.get('mean_latency_frames'))} |",
             f"| velocity y error [px/frame] | {format_value(velocity.get('velocity_y_error_px_per_frame'))} |",
             f"| velocity-ratio error | {format_value(velocity.get('velocity_ratio_error'))} |",
             f"| elapsed [s] | {format_value(runtime.get('elapsed_s'))} |",
@@ -663,6 +951,8 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             "- Belt-map RMSE is minimized over cyclic vertical shifts, so a constant phase offset",
             "  in the reconstructed map is not counted as a reconstruction error.",
             "- Detection scores use greedy per-frame IoU matching against synthetic particle boxes.",
+            "- Event scores first group per-frame truth and predicted boxes into temporally linked",
+            "  particle events, then greedily match events with at least one IoU-qualified frame.",
             "- Velocity metrics use the representative output track with the most detections.",
             "",
         ]
@@ -672,6 +962,7 @@ def markdown_report(metrics: dict[str, Any]) -> str:
         ("belt map", belt_map),
         ("phase", phase),
         ("detections", detections),
+        ("events", events),
         ("velocity", velocity),
         ("runtime", runtime),
     ]
