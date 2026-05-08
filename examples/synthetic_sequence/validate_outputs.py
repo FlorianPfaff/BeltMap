@@ -68,6 +68,7 @@ def validate_outputs(
             [
                 "validation_report.md",
                 "phase_corrections.png",
+                "phase_correction_timeseries.png",
                 "registration_score.png",
                 "detections_per_frame.png",
                 "velocity_ratio_histogram.png",
