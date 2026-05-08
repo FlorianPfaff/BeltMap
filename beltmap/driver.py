@@ -125,6 +125,9 @@ def main() -> None:
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
+    map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
+    map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
+    map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     rt.emit(
@@ -137,6 +140,9 @@ def main() -> None:
         min_track_length=min_track_length,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
+        map_particle_mask_mode=map_particle_mask_mode,
+        map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
+        map_particle_mask_dilation_px=map_particle_mask_dilation_px,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
     )
@@ -148,6 +154,9 @@ def main() -> None:
         period_px,
         mask_iterations=map_mask_iterations,
         mask_threshold=map_particle_mask_threshold,
+        mask_mode=map_particle_mask_mode,
+        mask_grow_threshold=map_particle_mask_grow_threshold,
+        mask_dilation_px=map_particle_mask_dilation_px,
         mask_margin_px=map_particle_mask_margin_px,
         mask_min_area_px=map_particle_mask_min_area_px,
     )
@@ -262,6 +271,9 @@ def main() -> None:
         "min_area_px": min_area_px,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
+        "map_particle_mask_mode": map_particle_mask_mode,
+        "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
+        "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
         "n_phase_estimates": len(phase_rows),
