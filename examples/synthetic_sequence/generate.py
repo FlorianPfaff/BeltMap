@@ -102,6 +102,12 @@ def make_base_texture(height: int, width: int) -> np.ndarray:
     )
 
 
+def to_saved_gray(image: np.ndarray) -> np.ndarray:
+    """Return the exact grayscale values written to generated PNG frames."""
+
+    return np.clip(image, 0, 255).astype(np.uint8).astype(np.float32)
+
+
 def particle_box(args: argparse.Namespace, frame_index: int) -> tuple[int, int, int, int]:
     top = min(
         args.height - args.particle_size_px,
@@ -113,23 +119,52 @@ def particle_box(args: argparse.Namespace, frame_index: int) -> tuple[int, int, 
     return top, left, bottom, right
 
 
+def particle_centroid(box: tuple[int, int, int, int]) -> dict[str, float]:
+    top, left, bottom, right = box
+    return {
+        "y": 0.5 * (top + bottom - 1),
+        "x": 0.5 * (left + right - 1),
+    }
+
+
 def generate_sequence(args: argparse.Namespace) -> dict[str, Any]:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if not args.no_clear:
-        for path in args.output_dir.glob("frame_*.png"):
-            path.unlink()
+        for pattern in ("frame_*.png", "true_clean_frame_*.png"):
+            for path in args.output_dir.glob(pattern):
+                path.unlink()
 
-    base = make_base_texture(args.height, args.width)
-    particles: list[dict[str, int]] = []
+    base = to_saved_gray(make_base_texture(args.height, args.width))
+    np.save(args.output_dir / "true_belt_map.npy", base)
+    Image.fromarray(base.astype(np.uint8)).save(args.output_dir / "true_belt_map.png")
+
+    particles: list[dict[str, Any]] = []
+    true_phase_px_by_frame: list[float] = []
+    true_particle_centroid_by_frame: list[dict[str, float | int]] = []
 
     for frame_index in range(args.frames):
-        frame = np.roll(
+        phase_px = float((-args.belt_shift_px_per_frame * frame_index) % args.height)
+        true_phase_px_by_frame.append(phase_px)
+
+        clean_frame = np.roll(
             base,
             shift=args.belt_shift_px_per_frame * frame_index,
             axis=0,
-        ).copy()
-        top, left, bottom, right = particle_box(args, frame_index)
+        )
+        frame = clean_frame.copy()
+        box = particle_box(args, frame_index)
+        top, left, bottom, right = box
         frame[top:bottom, left:right] += args.particle_signal
+        frame = to_saved_gray(frame)
+
+        centroid = particle_centroid(box)
+        true_particle_centroid_by_frame.append(
+            {
+                "frame_index": frame_index,
+                "y": centroid["y"],
+                "x": centroid["x"],
+            }
+        )
         particles.append(
             {
                 "frame_index": frame_index,
@@ -137,12 +172,23 @@ def generate_sequence(args: argparse.Namespace) -> dict[str, Any]:
                 "left": left,
                 "bottom": bottom,
                 "right": right,
+                "centroid_y": centroid["y"],
+                "centroid_x": centroid["x"],
             }
         )
-        Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)).save(
+
+        Image.fromarray(frame.astype(np.uint8)).save(
             args.output_dir / f"frame_{frame_index:03d}.png"
         )
+        Image.fromarray(clean_frame.astype(np.uint8)).save(
+            args.output_dir / f"true_clean_frame_{frame_index:03d}.png"
+        )
 
+    true_velocity_ratio = (
+        args.particle_shift_y_px_per_frame / args.belt_shift_px_per_frame
+        if args.belt_shift_px_per_frame != 0
+        else None
+    )
     metadata: dict[str, Any] = {
         "description": "Synthetic periodic conveyor-belt texture with one bright particle.",
         "frames": args.frames,
@@ -150,9 +196,17 @@ def generate_sequence(args: argparse.Namespace) -> dict[str, Any]:
         "width": args.width,
         "belt_shift_px_per_frame": args.belt_shift_px_per_frame,
         "belt_period_px": args.height,
+        "true_belt_velocity_y_px_per_frame": args.belt_shift_px_per_frame,
+        "true_phase_px_by_frame": true_phase_px_by_frame,
+        "true_belt_map_npy": "true_belt_map.npy",
+        "true_belt_map_png": "true_belt_map.png",
+        "true_clean_frames_pattern": "true_clean_frame_{frame_index:03d}.png",
         "particle_shift_y_px_per_frame": args.particle_shift_y_px_per_frame,
+        "true_particle_velocity_y_px_per_frame": args.particle_shift_y_px_per_frame,
+        "true_velocity_ratio_y": true_velocity_ratio,
         "particle_size_px": args.particle_size_px,
         "particle_signal": args.particle_signal,
+        "true_particle_centroid_by_frame": true_particle_centroid_by_frame,
         "particles": particles,
     }
     (args.output_dir / "synthetic_metadata.json").write_text(
@@ -179,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
                 "image_shape": [metadata["height"], metadata["width"]],
                 "belt_shift_px_per_frame": metadata["belt_shift_px_per_frame"],
                 "belt_period_px": metadata["belt_period_px"],
+                "true_belt_map": str(args.output_dir / "true_belt_map.npy"),
                 "metadata": str(args.output_dir / "synthetic_metadata.json"),
             },
             indent=2,
