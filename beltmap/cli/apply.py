@@ -29,7 +29,10 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
-    ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Threshold used for particle masking during map building.", "Z"),
+    ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
+    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, absolute, or hysteresis_abs.", "MODE"),
+    ("map_particle_mask_grow_threshold", "MAP_PARTICLE_MASK_GROW_THRESHOLD", "float", (("map_particle_mask_grow_threshold",), ("map", "particle_mask_grow_threshold")), "Lower absolute-residual threshold used to grow hysteresis map masks.", "Z"),
+    ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
     ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
     ("map_particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX", "int", (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px")), "Minimum component area for map-building particle masks.", "PX"),
     ("velocity_search_radius_px", "VELOCITY_SEARCH_RADIUS_PX", "int", (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")), "Max vertical shift searched during automatic belt-velocity estimation.", "PX"),
@@ -76,7 +79,10 @@ min_track_length = 2
 [map]
 sample_frames = 120
 mask_iterations = 1
+particle_mask_mode = "positive"
 particle_mask_threshold = 5.0
+particle_mask_grow_threshold = 2.0
+particle_mask_dilation_px = 0
 particle_mask_margin_px = 8
 particle_mask_min_area_px = 4
 
