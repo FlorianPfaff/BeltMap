@@ -67,22 +67,41 @@ on:
         description: "Particle-mask refinement iterations while building the belt map"
         required: true
         type: string
-        default: "1"
+        default: "2"
+      map_particle_mask_mode:
+        description: "Map-building mask mode: positive, absolute, or hysteresis_abs"
+        required: true
+        type: choice
+        options:
+          - positive
+          - absolute
+          - hysteresis_abs
+        default: "hysteresis_abs"
       map_particle_mask_threshold:
-        description: "Threshold on provisional map residuals for masking particle pixels"
+        description: "Strong threshold on provisional map residuals for masking particle pixels"
         required: true
         type: string
-        default: "5.0"
+        default: "4.0"
+      map_particle_mask_grow_threshold:
+        description: "Lower abs-residual threshold used to grow hysteresis masks"
+        required: true
+        type: string
+        default: "1.5"
+      map_particle_mask_dilation_px:
+        description: "Morphological dilation radius for grown map-building masks"
+        required: true
+        type: string
+        default: "24"
       map_particle_mask_margin_px:
-        description: "Safety margin added around detected particle bounding boxes during map building"
+        description: "Safety margin added around detected/grown particle masks during map building"
         required: true
         type: string
-        default: "8"
+        default: "16"
       map_particle_mask_min_area_px:
         description: "Minimum component area for map-building particle masks"
         required: true
         type: string
-        default: "4"
+        default: "8"
       velocity_search_radius_px:
         description: "Max vertical shift searched for auto velocity"
         required: true
@@ -149,7 +168,7 @@ jobs:
 
       - name: Install and test package
         run: |
-          poetry install --with test
+          poetry install --with test --extras speed
           poetry run pytest -q
 
       - name: Validate driver imports and configuration parsing
@@ -165,7 +184,10 @@ jobs:
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
+          MAP_PARTICLE_MASK_MODE: ${{ inputs.map_particle_mask_mode }}
           MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
+          MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
+          MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
@@ -177,18 +199,19 @@ jobs:
           poetry run python - <<'PY'
           import json
           import os
-          import scripts.apply_beltmap_to_images as driver
+          import beltmap.driver as driver
 
           checks = {
-              "data_dir": str(driver.DATA),
-              "output_dir": str(driver.OUT),
-              "extensions": sorted(driver.EXTS),
+              "driver": driver.__name__,
               "belt_velocity_px_per_frame": os.environ["BELT_VELOCITY_PX_PER_FRAME"],
               "max_frames": int(os.environ["MAX_FRAMES"]),
               "frame_stride": int(os.environ["FRAME_STRIDE"]),
               "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
               "map_mask_iterations": int(os.environ["MAP_MASK_ITERATIONS"]),
+              "map_particle_mask_mode": os.environ["MAP_PARTICLE_MASK_MODE"],
               "map_particle_mask_threshold": float(os.environ["MAP_PARTICLE_MASK_THRESHOLD"]),
+              "map_particle_mask_grow_threshold": float(os.environ["MAP_PARTICLE_MASK_GROW_THRESHOLD"]),
+              "map_particle_mask_dilation_px": int(os.environ["MAP_PARTICLE_MASK_DILATION_PX"]),
               "map_particle_mask_margin_px": int(os.environ["MAP_PARTICLE_MASK_MARGIN_PX"]),
               "map_particle_mask_min_area_px": int(os.environ["MAP_PARTICLE_MASK_MIN_AREA_PX"]),
               "velocity_search_radius_px": int(os.environ["VELOCITY_SEARCH_RADIUS_PX"]),
@@ -236,7 +259,7 @@ jobs:
 
       - name: Install BeltMap and runtime dependencies
         run: |
-          poetry install --with test
+          poetry install --with test --extras speed
           poetry run pytest -q
 
       - name: Prepare Zenodo dataset from local runner dataset cache
@@ -302,7 +325,10 @@ jobs:
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
+          MAP_PARTICLE_MASK_MODE: ${{ inputs.map_particle_mask_mode }}
           MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
+          MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
+          MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
@@ -358,7 +384,10 @@ jobs:
           lines.append("[map]")
           append_value(lines, "sample_frames", "MAP_SAMPLE_FRAMES")
           append_value(lines, "mask_iterations", "MAP_MASK_ITERATIONS")
+          append_value(lines, "particle_mask_mode", "MAP_PARTICLE_MASK_MODE")
           append_value(lines, "particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD")
+          append_value(lines, "particle_mask_grow_threshold", "MAP_PARTICLE_MASK_GROW_THRESHOLD")
+          append_value(lines, "particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX")
           append_value(lines, "particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX")
           append_value(lines, "particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX")
           lines.append("")
