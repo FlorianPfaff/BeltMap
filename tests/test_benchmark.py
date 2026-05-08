@@ -9,6 +9,7 @@ from beltmap.benchmark import (
     bbox_iou,
     circular_signed_error_px,
     compute_benchmark_metrics,
+    event_metrics,
     generate_benchmark_report,
 )
 
@@ -164,10 +165,60 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     assert metrics["detections"]["precision"] == pytest.approx(1.0)
     assert metrics["detections"]["recall"] == pytest.approx(1.0)
     assert metrics["detections"]["f1"] == pytest.approx(1.0)
+    assert metrics["events"]["precision"] == pytest.approx(1.0)
+    assert metrics["events"]["recall"] == pytest.approx(1.0)
+    assert metrics["events"]["f1"] == pytest.approx(1.0)
+    assert metrics["events"]["truth_events"] == 1
+    assert metrics["events"]["predicted_events"] == 1
+    assert metrics["events"]["matched_events"] == 1
+    assert metrics["events"]["mean_truth_frame_coverage"] == pytest.approx(1.0)
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(0.05)
     assert metrics["velocity"]["velocity_ratio_error"] == pytest.approx(0.025)
     assert metrics["runtime"]["frames_per_second"] == pytest.approx(2.0)
     assert metrics["runtime"]["peak_rss_mb"] == pytest.approx(123.4)
+
+
+def test_event_metrics_distinguishes_frame_coverage_from_event_recall():
+    truth = {
+        "particles": [
+            {"event_id": "a", "frame_index": 0, "top": 1, "left": 1, "bottom": 3, "right": 3},
+            {"event_id": "a", "frame_index": 1, "top": 2, "left": 1, "bottom": 4, "right": 3},
+            {"event_id": "a", "frame_index": 2, "top": 3, "left": 1, "bottom": 5, "right": 3},
+            {"event_id": "b", "frame_index": 0, "top": 8, "left": 8, "bottom": 10, "right": 10},
+        ]
+    }
+    detections = [
+        {
+            "track_id": "det-a",
+            "frame_index": "1",
+            "bbox_top": "2",
+            "bbox_left": "1",
+            "bbox_bottom": "4",
+            "bbox_right": "3",
+            "y": "2.5",
+            "x": "1.5",
+        },
+        {
+            "track_id": "false-positive",
+            "frame_index": "2",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "22",
+            "bbox_right": "22",
+            "y": "20.5",
+            "x": "20.5",
+        },
+    ]
+
+    metrics = event_metrics(detections, truth, iou_threshold=0.25)
+
+    assert metrics["truth_events"] == 2
+    assert metrics["predicted_events"] == 2
+    assert metrics["matched_events"] == 1
+    assert metrics["precision"] == pytest.approx(0.5)
+    assert metrics["recall"] == pytest.approx(0.5)
+    assert metrics["mean_truth_frame_coverage"] == pytest.approx(1 / 3)
+    assert metrics["mean_latency_frames"] == pytest.approx(1.0)
 
 
 def test_generate_benchmark_report_writes_json_and_markdown(tmp_path):
@@ -179,4 +230,7 @@ def test_generate_benchmark_report_writes_json_and_markdown(tmp_path):
     assert artifacts.report.is_file()
     loaded = json.loads(artifacts.metrics.read_text(encoding="utf-8"))
     assert loaded["benchmark"]["type"] == "synthetic_ground_truth"
-    assert "phase RMSE" in artifacts.report.read_text(encoding="utf-8")
+    assert loaded["events"]["truth_events"] == 1
+    report = artifacts.report.read_text(encoding="utf-8")
+    assert "phase RMSE" in report
+    assert "event F1" in report
