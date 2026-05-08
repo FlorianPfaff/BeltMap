@@ -21,7 +21,11 @@ from . import (
     track_particle_detections,
 )
 from . import _driver_runtime as rt
-from ._driver_map import build_belt_map
+from ._driver_map import (
+    PHASE_REFINEMENT_FIELDS,
+    PhaseFeedbackConfig,
+    build_belt_map_result,
+)
 from ._driver_motion import estimate_velocity, parse_region, validate_auto_velocity_region
 
 DETECTION_FIELDS = [
@@ -47,6 +51,11 @@ def optional_positive_int(name: str) -> int | None:
         return None
     parsed = int(value)
     return parsed if parsed > 0 else None
+
+
+def optional_positive_float(name: str, default: float = 0.0) -> float | None:
+    value = rt.env_float(name, default, minimum=0.0)
+    return None if value <= 0 else value
 
 
 def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> dict:
@@ -79,6 +88,10 @@ def write_detection_outputs(detections_by_frame: list, detection_rows: list[dict
 
 def write_phase_outputs(phase_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_estimates.csv", phase_rows, PHASE_FIELDS)
+
+
+def write_phase_refinement_outputs(phase_refinement_rows: list[dict]) -> None:
+    rt.write_csv(rt.OUT / "phase_refinement.csv", phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
 
 
 def should_save_residual_preview(frame_index: int, preview_frames: int, preview_interval: int) -> bool:
@@ -125,8 +138,26 @@ def main() -> None:
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
+    map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
+    map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
+    map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    registration_config = PhaseRegistrationConfig(
+        search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
+        search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
+    )
+    phase_refinement_iterations = rt.env_int("PHASE_REFINEMENT_ITERATIONS", 0, minimum=0)
+    phase_refinement_min_score = rt.env_float("PHASE_REFINEMENT_MIN_SCORE", 0.0, minimum=0.0)
+    phase_refinement_max_abs_correction_px = optional_positive_float(
+        "PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX",
+        0.0,
+    )
+    phase_refinement_smoothing_window_frames = rt.env_int(
+        "PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES",
+        25,
+        minimum=0,
+    )
     rt.emit(
         "config",
         "runtime parameters",
@@ -137,20 +168,43 @@ def main() -> None:
         min_track_length=min_track_length,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
+        map_particle_mask_mode=map_particle_mask_mode,
+        map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
+        map_particle_mask_dilation_px=map_particle_mask_dilation_px,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
+        registration_search_radius_px=registration_config.search_radius_px,
+        registration_search_step_px=registration_config.search_step_px,
+        phase_refinement_iterations=phase_refinement_iterations,
+        phase_refinement_min_score=phase_refinement_min_score,
+        phase_refinement_max_abs_correction_px=phase_refinement_max_abs_correction_px,
+        phase_refinement_smoothing_window_frames=phase_refinement_smoothing_window_frames,
     )
 
-    belt_map, reference_phase, map_height = build_belt_map(
-        paths,
-        region,
-        belt_velocity,
-        period_px,
+    build_result = build_belt_map_result(
+        paths=paths,
+        region=region,
+        velocity=belt_velocity,
+        supplied_period=period_px,
         mask_iterations=map_mask_iterations,
         mask_threshold=map_particle_mask_threshold,
+        mask_mode=map_particle_mask_mode,
+        mask_grow_threshold=map_particle_mask_grow_threshold,
+        mask_dilation_px=map_particle_mask_dilation_px,
         mask_margin_px=map_particle_mask_margin_px,
         mask_min_area_px=map_particle_mask_min_area_px,
+        phase_feedback_config=PhaseFeedbackConfig(
+            iterations=phase_refinement_iterations,
+            min_score=phase_refinement_min_score,
+            max_abs_correction_px=phase_refinement_max_abs_correction_px,
+            smoothing_window_frames=phase_refinement_smoothing_window_frames,
+            registration_config=registration_config,
+        ),
     )
+    belt_map = build_result.belt_map
+    reference_phase = build_result.reference_phase
+    map_height = build_result.map_height
+    write_phase_refinement_outputs(build_result.phase_refinement_rows)
     np.save(rt.OUT / "belt_map.npy", belt_map)
     rt.save_png(belt_map, rt.OUT / "belt_map.png")
     rt.emit(
@@ -159,6 +213,8 @@ def main() -> None:
         belt_map_shape=list(belt_map.shape),
         belt_map_npy=rt.OUT / "belt_map.npy",
         belt_map_png=rt.OUT / "belt_map.png",
+        phase_refinement_csv=rt.OUT / "phase_refinement.csv",
+        phase_refinement_rows=len(build_result.phase_refinement_rows),
     )
 
     motion_model = BeltMotionModel(
@@ -166,10 +222,6 @@ def main() -> None:
         period_px=float(map_height),
         reference_frame=0.0,
         reference_phase_px=reference_phase,
-    )
-    registration_config = PhaseRegistrationConfig(
-        search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
-        search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
     )
     component_config = ParticleComponentConfig(min_area_px=min_area_px)
     residual_config = ResidualConfig()
@@ -262,8 +314,17 @@ def main() -> None:
         "min_area_px": min_area_px,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
+        "map_particle_mask_mode": map_particle_mask_mode,
+        "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
+        "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
+        "phase_refinement_iterations": phase_refinement_iterations,
+        "phase_refinement_min_score": phase_refinement_min_score,
+        "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,
+        "phase_refinement_smoothing_window_frames": phase_refinement_smoothing_window_frames,
+        "n_phase_refinement_rows": len(build_result.phase_refinement_rows),
+        "n_phase_refinement_used": sum(1 for row in build_result.phase_refinement_rows if row.get("used_for_refinement")),
         "n_phase_estimates": len(phase_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
