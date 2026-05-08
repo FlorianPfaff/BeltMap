@@ -9,7 +9,8 @@ creates a small grayscale conveyor-belt image sequence with:
 
 The example is intentionally tiny so it can run in CI and on a laptop while
 exercising BeltMap's map reconstruction, residual rendering, particle detection,
-tracking, velocity output path, and validation-report generation.
+tracking, velocity output path, validation-report generation, and synthetic
+ground-truth benchmarking.
 
 ## Run from an installed checkout
 
@@ -22,7 +23,8 @@ bash examples/synthetic_sequence/run.sh
 
 The script generates frames below `data/images`, runs `beltmap-apply` with
 `examples/synthetic_sequence/beltmap.toml`, writes a validation report with
-`beltmap-validate`, and validates the expected outputs.
+`beltmap-validate`, writes quantitative ground-truth metrics with
+`beltmap-benchmark`, and validates the expected outputs.
 
 ## Run step by step
 
@@ -30,10 +32,11 @@ The script generates frames below `data/images`, runs `beltmap-apply` with
 python examples/synthetic_sequence/generate.py --output-dir data/images --frames 12
 beltmap-apply --config examples/synthetic_sequence/beltmap.toml --print-config
 beltmap-validate --output-dir outputs
+beltmap-benchmark --output-dir outputs --truth-path data/images/synthetic_metadata.json
 python examples/synthetic_sequence/validate_outputs.py --output-dir outputs
 ```
 
-Expected generated inputs:
+Expected generated inputs and truth artifacts:
 
 ```text
 data/images/
@@ -42,6 +45,7 @@ data/images/
   ...
   frame_011.png
   synthetic_metadata.json
+  true_belt_map.npy
 ```
 
 Expected BeltMap outputs:
@@ -73,6 +77,14 @@ outputs/
   registration_score.png
   detections_per_frame.png
   velocity_ratio_histogram.png
+```
+
+Expected benchmark outputs:
+
+```text
+outputs/
+  benchmark_metrics.json
+  benchmark_report.md
 ```
 
 ## Configuration
