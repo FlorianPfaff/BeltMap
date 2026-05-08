@@ -10,6 +10,8 @@ registration step, belt-map reconstruction, residual normalization, particle
 detection, and tracking assumptions, see the [algorithm note](docs/algorithm.md).
 For a file-by-file and column-by-column description of driver outputs, see the
 [output schema reference](docs/outputs.md).
+For all runtime configuration keys, environment variables, CLI flags, defaults,
+and units, see the [configuration reference](docs/configuration.md).
 
 Try the self-contained synthetic sequence example without downloading external
 data:
