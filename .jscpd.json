@@ -1,5 +1,6 @@
 {
   "ignore": [
+    "**/.github/workflows/**",
     "scripts/apply_beltmap_to_images.py",
     "beltmap/_driver_map.py",
     "beltmap/visual_qc.py"
