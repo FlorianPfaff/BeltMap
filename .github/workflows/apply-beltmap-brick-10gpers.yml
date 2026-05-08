@@ -1,7 +1,8 @@
 name: Apply BeltMap to Brick 10g/s Zenodo images
 
 run-name: >-
-  Brick 10g/s max_frames=${{ inputs.max_frames || '0' }}
+  Brick 10g/s implementation=${{ inputs.implementation || 'scikit-image' }}
+  max_frames=${{ inputs.max_frames || '0' }}
   stride=${{ inputs.frame_stride || '1' }}
   velocity=${{ inputs.belt_velocity_px_per_frame || 'auto' }}
 
@@ -28,6 +29,14 @@ on:
         required: false
         type: string
         default: "14723"
+      implementation:
+        description: "Implementation/dependency set: NumPy-only fallback or scikit-image accelerated path."
+        required: true
+        type: choice
+        options:
+          - numpy
+          - scikit-image
+        default: "scikit-image"
       detection_threshold:
         description: "Threshold on normalized residual for bright brick particles"
         required: true
@@ -167,8 +176,43 @@ jobs:
           curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
 
       - name: Install and test package
+        env:
+          BELTMAP_IMPLEMENTATION: ${{ inputs.implementation }}
         run: |
-          poetry install --with test --extras speed
+          rm -rf .venv
+          case "$BELTMAP_IMPLEMENTATION" in
+            scikit-image)
+              poetry install --with test --extras speed
+              ;;
+            numpy)
+              poetry install --with test
+              ;;
+            *)
+              echo "Unsupported implementation: $BELTMAP_IMPLEMENTATION" >&2
+              exit 64
+              ;;
+          esac
+          poetry run python - <<'PY'
+          import importlib.util
+          import os
+
+          import numpy as np
+
+          implementation = os.environ["BELTMAP_IMPLEMENTATION"]
+          skimage_spec = importlib.util.find_spec("skimage")
+          print(f"selected implementation: {implementation}")
+          print(f"numpy {np.__version__}")
+          if skimage_spec is None:
+              print("scikit-image not installed")
+          else:
+              import skimage
+
+              print(f"scikit-image {skimage.__version__}")
+          if implementation == "scikit-image" and skimage_spec is None:
+              raise SystemExit("scikit-image implementation selected, but scikit-image is not installed")
+          if implementation == "numpy" and skimage_spec is not None:
+              raise SystemExit("numpy implementation selected, but scikit-image is unexpectedly installed")
+          PY
           poetry run pytest -q
 
       - name: Validate driver imports and configuration parsing
@@ -258,8 +302,43 @@ jobs:
           .poetry-bootstrap/bin/poetry --version
 
       - name: Install BeltMap and runtime dependencies
+        env:
+          BELTMAP_IMPLEMENTATION: ${{ inputs.implementation }}
         run: |
-          poetry install --with test --extras speed
+          rm -rf .venv
+          case "$BELTMAP_IMPLEMENTATION" in
+            scikit-image)
+              poetry install --with test --extras speed
+              ;;
+            numpy)
+              poetry install --with test
+              ;;
+            *)
+              echo "Unsupported implementation: $BELTMAP_IMPLEMENTATION" >&2
+              exit 64
+              ;;
+          esac
+          poetry run python - <<'PY'
+          import importlib.util
+          import os
+
+          import numpy as np
+
+          implementation = os.environ["BELTMAP_IMPLEMENTATION"]
+          skimage_spec = importlib.util.find_spec("skimage")
+          print(f"selected implementation: {implementation}")
+          print(f"numpy {np.__version__}")
+          if skimage_spec is None:
+              print("scikit-image not installed")
+          else:
+              import skimage
+
+              print(f"scikit-image {skimage.__version__}")
+          if implementation == "scikit-image" and skimage_spec is None:
+              raise SystemExit("scikit-image implementation selected, but scikit-image is not installed")
+          if implementation == "numpy" and skimage_spec is not None:
+              raise SystemExit("numpy implementation selected, but scikit-image is unexpectedly installed")
+          PY
           poetry run pytest -q
 
       - name: Prepare Zenodo dataset from local runner dataset cache
@@ -416,7 +495,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: beltmap-brick-10gpers-results
+          name: beltmap-brick-10gpers-${{ inputs.implementation }}-results
           path: outputs/**
           if-no-files-found: warn
           retention-days: 14
