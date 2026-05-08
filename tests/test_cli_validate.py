@@ -91,9 +91,11 @@ def test_generate_validation_report_writes_markdown_and_plots(tmp_path):
     assert "# BeltMap validation report" in report
     assert "| selected frames | 3 |" in report
     assert "phase_corrections.png" in report
+    assert "phase_correction_timeseries.png" in report
     assert "velocity_ratio_histogram.png" in report
     assert set(artifacts.plots) == {
         "phase_corrections",
+        "phase_correction_timeseries",
         "registration_score",
         "detections_per_frame",
         "velocity_ratio_histogram",
@@ -114,3 +116,4 @@ def test_validate_main_supports_no_plots(tmp_path, capsys):
     assert payload["plots"] == {}
     assert (tmp_path / "validation_report.md").is_file()
     assert not (tmp_path / "phase_corrections.png").exists()
+    assert not (tmp_path / "phase_correction_timeseries.png").exists()
