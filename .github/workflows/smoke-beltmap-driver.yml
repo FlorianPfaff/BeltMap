@@ -67,6 +67,13 @@ jobs:
       - name: Generate validation report
         run: poetry run beltmap-validate --output-dir outputs --quiet
 
+      - name: Generate ground-truth benchmark report
+        run: |
+          poetry run beltmap-benchmark \
+            --output-dir outputs \
+            --truth-path data/images/synthetic_metadata.json \
+            --quiet
+
       - name: Validate expected outputs
         run: |
           poetry run python examples/synthetic_sequence/validate_outputs.py \
@@ -74,6 +81,8 @@ jobs:
             --expected-frames 12 \
             --expected-velocity 2.0 \
             --require-validation-report
+          test -s outputs/benchmark_metrics.json
+          test -s outputs/benchmark_report.md
 
       - name: Upload smoke outputs
         if: always()
