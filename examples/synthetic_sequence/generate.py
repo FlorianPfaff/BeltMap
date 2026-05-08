@@ -130,13 +130,11 @@ def particle_centroid(box: tuple[int, int, int, int]) -> dict[str, float]:
 def generate_sequence(args: argparse.Namespace) -> dict[str, Any]:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if not args.no_clear:
-        for pattern in ("frame_*.png", "true_clean_frame_*.png"):
-            for path in args.output_dir.glob(pattern):
-                path.unlink()
+        for path in args.output_dir.glob("frame_*.png"):
+            path.unlink()
 
     base = to_saved_gray(make_base_texture(args.height, args.width))
     np.save(args.output_dir / "true_belt_map.npy", base)
-    Image.fromarray(base.astype(np.uint8)).save(args.output_dir / "true_belt_map.png")
 
     particles: list[dict[str, Any]] = []
     true_phase_px_by_frame: list[float] = []
@@ -180,9 +178,6 @@ def generate_sequence(args: argparse.Namespace) -> dict[str, Any]:
         Image.fromarray(frame.astype(np.uint8)).save(
             args.output_dir / f"frame_{frame_index:03d}.png"
         )
-        Image.fromarray(clean_frame.astype(np.uint8)).save(
-            args.output_dir / f"true_clean_frame_{frame_index:03d}.png"
-        )
 
     true_velocity_ratio = (
         args.particle_shift_y_px_per_frame / args.belt_shift_px_per_frame
@@ -199,8 +194,6 @@ def generate_sequence(args: argparse.Namespace) -> dict[str, Any]:
         "true_belt_velocity_y_px_per_frame": args.belt_shift_px_per_frame,
         "true_phase_px_by_frame": true_phase_px_by_frame,
         "true_belt_map_npy": "true_belt_map.npy",
-        "true_belt_map_png": "true_belt_map.png",
-        "true_clean_frames_pattern": "true_clean_frame_{frame_index:03d}.png",
         "particle_shift_y_px_per_frame": args.particle_shift_y_px_per_frame,
         "true_particle_velocity_y_px_per_frame": args.particle_shift_y_px_per_frame,
         "true_velocity_ratio_y": true_velocity_ratio,
