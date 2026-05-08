@@ -336,12 +336,12 @@ def _morphological_cleanup(
     if not np.any(cleaned):
         return cleaned
 
+    cleaned = _remove_small_components(cleaned, min_area_px=min_area_px)
+    if not np.any(cleaned):
+        return cleaned
+
     morphology = _load_skimage_morphology()
     if morphology is not None:
-        cleaned = morphology.remove_small_objects(
-            cleaned,
-            min_size=max(1, int(min_area_px)),
-        )
         cleaned = morphology.remove_small_holes(
             cleaned,
             area_threshold=max(1, int(min_area_px)),
@@ -353,7 +353,6 @@ def _morphological_cleanup(
             )
         return np.asarray(cleaned, dtype=bool)
 
-    cleaned = _remove_small_components(cleaned, min_area_px=min_area_px)
     ndimage = _load_scipy_ndimage()
     if ndimage is not None:
         cleaned = ndimage.binary_fill_holes(cleaned)
