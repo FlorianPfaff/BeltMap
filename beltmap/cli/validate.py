@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 
 PLOT_FILENAMES = {
     "phase_corrections": "phase_corrections.png",
+    "phase_correction_timeseries": "phase_correction_timeseries.png",
     "registration_score": "registration_score.png",
     "detections_per_frame": "detections_per_frame.png",
     "velocity_ratio_histogram": "velocity_ratio_histogram.png",
@@ -322,6 +323,19 @@ def write_plots(output_dir: Path, data: dict[str, Any]) -> dict[str, Path]:
         values=finite_values(phase_rows, "correction_px"),
         x_label="correction_px",
     )
+    correction_xs, correction_ys = paired_values(
+        phase_rows,
+        x_field="frame_index",
+        y_field="correction_px",
+    )
+    draw_line_plot(
+        paths["phase_correction_timeseries"],
+        title="Phase correction over time",
+        xs=correction_xs,
+        ys=correction_ys,
+        x_label="frame_index",
+        y_label="correction_px",
+    )
     score_xs, score_ys = paired_values(
         phase_rows,
         x_field="frame_index",
@@ -465,6 +479,7 @@ def build_markdown_report(
             f"| max | {format_value(correction_stats['max'])} | {format_value(score_stats['max'])} |",
             "",
             plot_line("phase_corrections", "Phase correction histogram"),
+            plot_line("phase_correction_timeseries", "Phase correction over time"),
             plot_line("registration_score", "Registration score over time"),
             "## Detections",
             "",
