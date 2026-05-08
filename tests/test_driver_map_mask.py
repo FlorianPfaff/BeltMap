@@ -76,6 +76,35 @@ def test_hysteresis_abs_map_mask_can_dilate_grown_components():
     assert dilated[7, 9]
 
 
+def test_hysteresis_abs_map_mask_fills_small_internal_holes():
+    z = np.zeros((9, 9), dtype=np.float64)
+    z[2:7, 2:7] = 5.0
+    z[4, 4] = 0.0
+    residual = make_residual(z)
+
+    unfilled = detect_map_particle_mask(
+        residual,
+        mode="hysteresis_abs",
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=0,
+        margin_px=0,
+        min_area_px=1,
+    )
+    filled = detect_map_particle_mask(
+        residual,
+        mode="hysteresis_abs",
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=0,
+        margin_px=0,
+        min_area_px=2,
+    )
+
+    assert not unfilled[4, 4]
+    assert filled[2:7, 2:7].all()
+
+
 def test_absolute_map_mask_catches_dark_components_that_positive_mode_misses():
     z = np.zeros((12, 12), dtype=np.float64)
     z[4:8, 4:8] = -5.0
