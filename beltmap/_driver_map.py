@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
@@ -531,10 +532,13 @@ def _morphological_cleanup(mask: np.ndarray, *, min_area_px: int, dilation_px: i
         return cleaned
     morphology = _load_skimage_morphology()
     if morphology is not None:
-        cleaned = morphology.remove_small_objects(cleaned, min_size=max(1, int(min_area_px)))
-        cleaned = morphology.remove_small_holes(cleaned, area_threshold=max(1, int(min_area_px)))
+        min_area = max(1, int(min_area_px))
+        if min_area > 1:
+            cleaned = _remove_small_objects_skimage(morphology, cleaned, min_area=min_area)
+            cleaned = _remove_small_holes_skimage(morphology, cleaned, min_area=min_area)
         if dilation_px > 0:
-            cleaned = morphology.binary_dilation(cleaned, morphology.disk(int(dilation_px)))
+            dilation = getattr(morphology, "dilation", morphology.binary_dilation)
+            cleaned = dilation(cleaned, morphology.disk(int(dilation_px)))
         return np.asarray(cleaned, dtype=bool)
     cleaned = _remove_small_components(cleaned, min_area_px=min_area_px)
     ndimage = _load_scipy_ndimage()
@@ -544,6 +548,20 @@ def _morphological_cleanup(mask: np.ndarray, *, min_area_px: int, dilation_px: i
             cleaned = ndimage.binary_dilation(cleaned, structure=np.ones((3, 3), dtype=bool), iterations=int(dilation_px))
         return np.asarray(cleaned, dtype=bool)
     return _binary_dilation_numpy(cleaned, iterations=int(dilation_px))
+
+
+def _remove_small_objects_skimage(morphology: Any, mask: np.ndarray, *, min_area: int) -> np.ndarray:
+    parameters = inspect.signature(morphology.remove_small_objects).parameters
+    if "max_size" in parameters:
+        return morphology.remove_small_objects(mask, max_size=min_area - 1)
+    return morphology.remove_small_objects(mask, min_size=min_area)
+
+
+def _remove_small_holes_skimage(morphology: Any, mask: np.ndarray, *, min_area: int) -> np.ndarray:
+    parameters = inspect.signature(morphology.remove_small_holes).parameters
+    if "max_size" in parameters:
+        return morphology.remove_small_holes(mask, max_size=min_area - 1)
+    return morphology.remove_small_holes(mask, area_threshold=min_area)
 
 
 def _remove_small_components(mask: np.ndarray, *, min_area_px: int) -> np.ndarray:
