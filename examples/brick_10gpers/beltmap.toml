@@ -1,0 +1,38 @@
+[paths]
+image_dir = "data/images"
+output_dir = "outputs"
+
+[frames]
+max_frames = 0
+stride = 1
+
+[belt]
+region = [0, 220, 1330, 1800]
+velocity_px_per_frame = 59.3
+period_px = 14723
+
+[detection]
+threshold = 5.0
+min_area_px = 4
+
+[tracking]
+min_track_length = 2
+
+[map]
+sample_frames = 120
+mask_iterations = 1
+particle_mask_threshold = 5.0
+particle_mask_margin_px = 8
+particle_mask_min_area_px = 4
+
+[registration]
+search_radius_px = 8.0
+search_step_px = 0.5
+
+[progress]
+interval_frames = 25
+partial_output_interval_frames = 250
+
+[debug]
+residual_preview_frames = 3
+residual_preview_interval_frames = 0
