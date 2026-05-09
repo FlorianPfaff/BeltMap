@@ -42,6 +42,10 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("allow_full_frame_auto_velocity", "ALLOW_FULL_FRAME_AUTO_VELOCITY", "bool", (("allow_full_frame_auto_velocity",), ("auto_velocity", "allow_full_frame")), "Allow automatic belt-velocity estimation on a full-frame belt region.", None),
     ("registration_search_radius_px", "REGISTRATION_SEARCH_RADIUS_PX", "float", (("registration_search_radius_px",), ("registration", "search_radius_px")), "Phase-registration search radius in pixels.", "PX"),
     ("registration_search_step_px", "REGISTRATION_SEARCH_STEP_PX", "float", (("registration_search_step_px",), ("registration", "search_step_px")), "Phase-registration search step in pixels.", "PX"),
+    ("phase_refinement_iterations", "PHASE_REFINEMENT_ITERATIONS", "int", (("phase_refinement_iterations",), ("phase_refinement", "iterations")), "Phase-feedback map-refinement iterations. Use 0 to disable.", "N"),
+    ("phase_refinement_min_score", "PHASE_REFINEMENT_MIN_SCORE", "float", (("phase_refinement_min_score",), ("phase_refinement", "min_score")), "Minimum registration score accepted for phase-feedback refinement.", "SCORE"),
+    ("phase_refinement_max_abs_correction_px", "PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX", "float", (("phase_refinement_max_abs_correction_px",), ("phase_refinement", "max_abs_correction_px")), "Maximum absolute registration correction accepted for phase-feedback refinement. Use 0 to disable this gate.", "PX"),
+    ("phase_refinement_smoothing_window_frames", "PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES", "int", (("phase_refinement_smoothing_window_frames",), ("phase_refinement", "smoothing_window_frames")), "Rolling-median smoothing window for accepted phase corrections.", "N"),
     ("progress_interval_frames", "PROGRESS_INTERVAL_FRAMES", "int", (("progress_interval_frames",), ("progress", "interval_frames")), "Print progress every N frames during long stages.", "N"),
     ("partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES", "int", (("partial_output_interval_frames",), ("progress", "partial_output_interval_frames")), "Write partial CSV outputs every N processed frames. Use 0 for final only.", "N"),
     ("debug_residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES", "int", (("debug_residual_preview_frames",), ("debug", "residual_preview_frames")), "Save residual PNG previews for the first N frames.", "N"),
@@ -96,6 +100,12 @@ allow_full_frame = false
 [registration]
 search_radius_px = 8.0
 search_step_px = 0.5
+
+[phase_refinement]
+iterations = 0
+min_score = 0.0
+max_abs_correction_px = 0.0
+smoothing_window_frames = 25
 
 [progress]
 interval_frames = 25
