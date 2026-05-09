@@ -111,6 +111,16 @@ on:
         required: true
         type: string
         default: "8"
+      registration_search_radius_px:
+        description: "Local phase-registration search radius around the motion-model prediction"
+        required: true
+        type: string
+        default: "8.0"
+      registration_search_step_px:
+        description: "Local phase-registration candidate spacing"
+        required: true
+        type: string
+        default: "0.5"
       velocity_search_radius_px:
         description: "Max vertical shift searched for auto velocity"
         required: true
@@ -234,6 +244,8 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
+          REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
+          REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
           PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
@@ -258,6 +270,8 @@ jobs:
               "map_particle_mask_dilation_px": int(os.environ["MAP_PARTICLE_MASK_DILATION_PX"]),
               "map_particle_mask_margin_px": int(os.environ["MAP_PARTICLE_MASK_MARGIN_PX"]),
               "map_particle_mask_min_area_px": int(os.environ["MAP_PARTICLE_MASK_MIN_AREA_PX"]),
+              "registration_search_radius_px": float(os.environ["REGISTRATION_SEARCH_RADIUS_PX"]),
+              "registration_search_step_px": float(os.environ["REGISTRATION_SEARCH_STEP_PX"]),
               "velocity_search_radius_px": int(os.environ["VELOCITY_SEARCH_RADIUS_PX"]),
               "progress_interval_frames": int(os.environ["PROGRESS_INTERVAL_FRAMES"]),
               "partial_output_interval_frames": int(os.environ["PARTIAL_OUTPUT_INTERVAL_FRAMES"]),
@@ -410,6 +424,8 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
+          REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
+          REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           VELOCITY_SEARCH_RADIUS_PX: ${{ inputs.velocity_search_radius_px }}
           PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
@@ -469,6 +485,11 @@ jobs:
           append_value(lines, "particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX")
           append_value(lines, "particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX")
           append_value(lines, "particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX")
+          lines.append("")
+
+          lines.append("[registration]")
+          append_value(lines, "search_radius_px", "REGISTRATION_SEARCH_RADIUS_PX")
+          append_value(lines, "search_step_px", "REGISTRATION_SEARCH_STEP_PX")
           lines.append("")
 
           lines.append("[auto_velocity]")
