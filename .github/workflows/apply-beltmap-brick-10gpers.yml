@@ -301,7 +301,8 @@ jobs:
     name: Apply BeltMap
     needs: preflight
     runs-on: [self-hosted, linux]
-    timeout-minutes: 360
+    # Keep below 24 hours while giving a safety margin over expected full phase-refined runs.
+    timeout-minutes: 1320
 
     steps:
       - name: Check out BeltMap
