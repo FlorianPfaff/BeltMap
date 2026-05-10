@@ -10,11 +10,6 @@ run-name: >-
 on:
   workflow_dispatch:
     inputs:
-      dataset_url:
-        description: "Zenodo image zip URL"
-        required: true
-        type: string
-        default: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
       belt_region:
         description: "Crop: top,left,height,width. Default is the known Brick belt ROI."
         required: false
@@ -53,11 +48,6 @@ on:
         required: true
         type: string
         default: "2"
-      max_match_distance_px:
-        description: "Optional tracking max distance. Empty = auto from belt speed."
-        required: false
-        type: string
-        default: ""
       max_frames:
         description: "Optional limit on processed frames. 0 = all selected frames."
         required: true
@@ -92,6 +82,21 @@ on:
         required: true
         type: string
         default: "4.0"
+      map_particle_mask_grow_threshold:
+        description: "Lower absolute-residual threshold used to grow hysteresis map masks"
+        required: true
+        type: string
+        default: "1.5"
+      map_particle_mask_dilation_px:
+        description: "Morphological dilation radius for map-building particle masks"
+        required: true
+        type: string
+        default: "24"
+      map_particle_mask_margin_px:
+        description: "Safety margin around detected particle boxes during map building"
+        required: true
+        type: string
+        default: "16"
       registration_search_radius_px:
         description: "Local phase-registration search radius around the motion-model prediction"
         required: true
@@ -132,11 +137,6 @@ on:
         required: true
         type: string
         default: "250"
-      debug_residual_preview_frames:
-        description: "Save residual PNG previews for the first N frames"
-        required: true
-        type: string
-        default: "3"
       debug_residual_preview_interval_frames:
         description: "Also save residual previews every N frames. 0 = disabled."
         required: true
@@ -177,7 +177,7 @@ jobs:
 
       - name: Validate Zenodo URL is reachable
         env:
-          DATASET_URL: ${{ inputs.dataset_url }}
+          DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
         run: |
           curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
 
@@ -229,16 +229,16 @@ jobs:
           DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
           MIN_AREA_PX: ${{ inputs.min_area_px }}
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
-          MAX_MATCH_DISTANCE_PX: ${{ inputs.max_match_distance_px }}
+          MAX_MATCH_DISTANCE_PX: ""
           MAX_FRAMES: ${{ inputs.max_frames }}
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
           MAP_PARTICLE_MASK_MODE: ${{ inputs.map_particle_mask_mode }}
           MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
-          MAP_PARTICLE_MASK_GROW_THRESHOLD: "1.5"
-          MAP_PARTICLE_MASK_DILATION_PX: "24"
-          MAP_PARTICLE_MASK_MARGIN_PX: "16"
+          MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
+          MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
+          MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
@@ -249,7 +249,7 @@ jobs:
           VELOCITY_SEARCH_RADIUS_PX: "90"
           PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
-          DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
+          DEBUG_RESIDUAL_PREVIEW_FRAMES: "3"
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
           poetry run python - <<'PY'
@@ -363,7 +363,7 @@ jobs:
 
       - name: Prepare Zenodo dataset from local runner dataset cache
         env:
-          DATASET_URL: ${{ inputs.dataset_url }}
+          DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
         run: |
           set -euo pipefail
 
@@ -419,16 +419,16 @@ jobs:
           DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
           MIN_AREA_PX: ${{ inputs.min_area_px }}
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
-          MAX_MATCH_DISTANCE_PX: ${{ inputs.max_match_distance_px }}
+          MAX_MATCH_DISTANCE_PX: ""
           MAX_FRAMES: ${{ inputs.max_frames }}
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
           MAP_PARTICLE_MASK_MODE: ${{ inputs.map_particle_mask_mode }}
           MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
-          MAP_PARTICLE_MASK_GROW_THRESHOLD: "1.5"
-          MAP_PARTICLE_MASK_DILATION_PX: "24"
-          MAP_PARTICLE_MASK_MARGIN_PX: "16"
+          MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
+          MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
+          MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
@@ -439,7 +439,7 @@ jobs:
           VELOCITY_SEARCH_RADIUS_PX: "90"
           PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
           PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
-          DEBUG_RESIDUAL_PREVIEW_FRAMES: ${{ inputs.debug_residual_preview_frames }}
+          DEBUG_RESIDUAL_PREVIEW_FRAMES: "3"
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
           poetry run python - <<'PY'
