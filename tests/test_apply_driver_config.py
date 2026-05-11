@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 
 from beltmap import BeltRegion, CleanBeltRender, PhaseEstimate, ResidualImage, render_belt_view
+from beltmap.driver import load_phase_estimates, validate_reused_phase_estimates
 from scripts.apply_beltmap_to_images import (
     DATA,
     build_belt_map,
@@ -82,6 +83,48 @@ def test_phase_estimate_row_reports_circular_coordinates():
     assert row["loss"] == 0.5
     assert row["score"] == 0.75
     assert row["method"] == "registration"
+
+
+def test_load_phase_estimates_for_reuse_mode(tmp_path):
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "frame_index,image,phase_px,phase_fraction,phase_rad,predicted_phase_px,correction_px,loss,score,method",
+                "0,frame0.bmp,1.5,0.15,0.94,1.0,0.5,0.2,0.8,registration",
+                "1,frame1.bmp,9.5,0.95,5.97,10.0,-0.5,,,motion_model",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    estimates = load_phase_estimates(path)
+
+    assert estimates[0].phase_px == 1.5
+    assert estimates[0].loss == 0.2
+    assert estimates[0].score == 0.8
+    assert estimates[1].correction_px == -0.5
+    assert estimates[1].loss is None
+    assert estimates[1].score is None
+
+
+def test_validate_reused_phase_estimates_reports_missing_frames():
+    estimates = {
+        0: PhaseEstimate(
+            phase_px=0.0,
+            frame_index=0.0,
+            predicted_phase_px=0.0,
+        ),
+        2: PhaseEstimate(
+            phase_px=2.0,
+            frame_index=2.0,
+            predicted_phase_px=2.0,
+        ),
+    }
+
+    with pytest.raises(ValueError, match="missing 1 selected frames"):
+        validate_reused_phase_estimates(estimates, frame_count=3)
 
 
 def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monkeypatch):

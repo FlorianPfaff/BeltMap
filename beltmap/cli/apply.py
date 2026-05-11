@@ -18,6 +18,8 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str | None], ...] = (
     ("image_dir", "BELTMAP_IMAGE_DIR", "path", (("image_dir",), ("paths", "image_dir")), "Directory containing input images.", "DIR"),
     ("output_dir", "BELTMAP_OUTPUT_DIR", "path", (("output_dir",), ("paths", "output_dir")), "Directory where BeltMap outputs are written.", "DIR"),
+    ("reuse_belt_map_path", "REUSE_BELT_MAP_PATH", "path", (("reuse_belt_map_path",), ("reuse", "belt_map_path")), "Optional existing belt_map.npy to reuse instead of rebuilding the belt map.", "NPY"),
+    ("reuse_phase_estimates_path", "REUSE_PHASE_ESTIMATES_PATH", "path", (("reuse_phase_estimates_path",), ("reuse", "phase_estimates_path")), "Optional existing phase_estimates.csv to reuse with a reused belt map.", "CSV"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
     ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity in pixels per frame, or 'auto'.", "PX_PER_FRAME|auto"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
@@ -62,6 +64,10 @@ CONFIG_TEMPLATE = """# BeltMap image-sequence driver configuration.
 [paths]
 image_dir = "data/images"
 output_dir = "outputs"
+
+[reuse]
+# belt_map_path = "outputs/belt_map.npy"
+# phase_estimates_path = "outputs/phase_estimates.csv"
 
 [frames]
 max_frames = 0

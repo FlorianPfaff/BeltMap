@@ -86,6 +86,11 @@ Shape: `(belt_map_height_px, crop_width_px)`.
 
 Dtype: currently written from a `float32` image array.
 
+When detection-only reuse mode is enabled with `REUSE_BELT_MAP_PATH` or
+`reuse.belt_map_path`, this file is a copy of the loaded map in the new output
+directory. Detection, tracking, velocity, phase, progress, and metadata outputs
+then correspond to the new run configuration.
+
 Coordinates:
 
 - axis 0 is belt-coordinate row `belt_coordinate_y`;

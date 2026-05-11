@@ -82,6 +82,8 @@ underscores.
 |---|---|---|---:|---|---|
 | `paths.image_dir` | `BELTMAP_IMAGE_DIR` | `--image-dir` | `data/images` | path | Directory searched recursively for input images. Supported extensions are `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, and `.bmp`. |
 | `paths.output_dir` | `BELTMAP_OUTPUT_DIR` | `--output-dir` | `outputs` | path | Directory where maps, CSV files, metadata, progress logs, previews, and validation artifacts are written. |
+| `reuse.belt_map_path` | `REUSE_BELT_MAP_PATH` | `--reuse-belt-map-path` | unset | path | Existing `belt_map.npy` to reuse instead of rebuilding the belt map. The driver writes a copy plus fresh detection, tracking, velocity, metadata, and preview outputs into `paths.output_dir`. |
+| `reuse.phase_estimates_path` | `REUSE_PHASE_ESTIMATES_PATH` | `--reuse-phase-estimates-path` | unset | path | Existing `phase_estimates.csv` to reuse with `reuse.belt_map_path`. If unset, phases are recomputed by local registration against the reused map. |
 | `frames.max_frames` | `MAX_FRAMES` | `--max-frames` | `0` | frames | Maximum number of selected frames to process after sorting and striding. `0` means process all selected frames. |
 | `frames.stride` | `FRAME_STRIDE` | `--frame-stride` | `1` | frames | Process every Nth frame after natural filename sorting. Must be at least 1. |
 | `belt.region` | `BELT_REGION` | `--belt-region` | full frame | px | Belt crop as `top,left,height,width`. Coordinates are full-frame image coordinates. Omit only when the full frame is belt texture. |
@@ -144,6 +146,34 @@ particle_mask_grow_threshold = 2.0
 particle_mask_dilation_px = 2
 particle_mask_margin_px = 8
 ```
+
+## Detection-only reuse mode
+
+Use reuse mode when the belt map is already good and you only want to retune
+particle detection, tracking, and velocity extraction:
+
+```toml
+[paths]
+image_dir = "data/images"
+output_dir = "outputs-threshold-3p5"
+
+[reuse]
+belt_map_path = "outputs-threshold-5/belt_map.npy"
+phase_estimates_path = "outputs-threshold-5/phase_estimates.csv"
+
+[detection]
+threshold = 3.5
+```
+
+When `reuse.belt_map_path` is set, BeltMap skips map reconstruction and loads
+the existing `belt_map.npy`. If a sibling `metadata.json` exists next to that
+map, the driver reuses `reference_phase_px` from it; otherwise the reference
+phase defaults to `0`.
+
+When `reuse.phase_estimates_path` is also set, the driver uses those per-frame
+phases directly. Otherwise it recomputes per-frame phases by registering each
+selected frame against the reused map, then proceeds with residual rendering,
+detection, tracking, and velocity estimation.
 
 ## Common configurations
 

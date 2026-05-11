@@ -66,6 +66,10 @@ def test_sectioned_toml_config_is_resolved_to_driver_environment(tmp_path):
 image_dir = "data/images"
 output_dir = "outputs"
 
+[reuse]
+belt_map_path = "previous/belt_map.npy"
+phase_estimates_path = "previous/phase_estimates.csv"
+
 [frames]
 stride = 3
 
@@ -113,6 +117,8 @@ allow_full_frame = true
         "MAP_PARTICLE_MASK_MODE": "hysteresis_abs",
         "MAP_PARTICLE_MASK_THRESHOLD": "4",
         "MIN_AREA_PX": "4",
+        "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
+        "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
     }
     assert report["driver_environment"] == env_updates
 

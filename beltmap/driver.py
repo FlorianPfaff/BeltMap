@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 
 from . import (
     BeltMotionModel,
+    PhaseEstimate,
     ParticleComponentConfig,
     ParticleTrackingConfig,
     PhaseRegistrationConfig,
@@ -56,6 +59,57 @@ def optional_positive_int(name: str) -> int | None:
 def optional_positive_float(name: str, default: float = 0.0) -> float | None:
     value = rt.env_float(name, default, minimum=0.0)
     return None if value <= 0 else value
+
+
+def optional_path(name: str) -> Path | None:
+    value = os.getenv(name, "").strip()
+    return Path(value) if value else None
+
+
+def optional_csv_float(row: dict[str, str], key: str) -> float | None:
+    value = row.get(key, "").strip()
+    return None if value == "" else float(value)
+
+
+def load_reuse_metadata(belt_map_path: Path) -> tuple[dict, Path | None]:
+    metadata_path = belt_map_path.with_name("metadata.json")
+    if not metadata_path.exists():
+        return {}, None
+    return json.loads(metadata_path.read_text(encoding="utf-8")), metadata_path
+
+
+def load_phase_estimates(path: Path) -> dict[int, PhaseEstimate]:
+    estimates: dict[int, PhaseEstimate] = {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            frame_index = int(row["frame_index"])
+            if frame_index in estimates:
+                raise ValueError(f"duplicate phase estimate for frame {frame_index}")
+            estimates[frame_index] = PhaseEstimate(
+                phase_px=float(row["phase_px"]),
+                frame_index=float(row["frame_index"]),
+                predicted_phase_px=float(row["predicted_phase_px"]),
+                correction_px=float(row["correction_px"]),
+                loss=optional_csv_float(row, "loss"),
+                score=optional_csv_float(row, "score"),
+                method=row.get("method", "loaded_phase_estimate") or "loaded_phase_estimate",
+            )
+    if not estimates:
+        raise ValueError(f"no phase estimates found in {path}")
+    return estimates
+
+
+def validate_reused_phase_estimates(
+    estimates: dict[int, PhaseEstimate],
+    *,
+    frame_count: int,
+) -> None:
+    missing = [index for index in range(frame_count) if index not in estimates]
+    if missing:
+        preview = ", ".join(str(index) for index in missing[:8])
+        raise ValueError(
+            f"phase estimates are missing {len(missing)} selected frames; first missing: {preview}"
+        )
 
 
 def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> dict:
@@ -143,6 +197,10 @@ def main() -> None:
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    reuse_belt_map_path = optional_path("REUSE_BELT_MAP_PATH")
+    reuse_phase_estimates_path = optional_path("REUSE_PHASE_ESTIMATES_PATH")
+    if reuse_phase_estimates_path is not None and reuse_belt_map_path is None:
+        raise ValueError("REUSE_PHASE_ESTIMATES_PATH requires REUSE_BELT_MAP_PATH")
     registration_config = PhaseRegistrationConfig(
         search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
@@ -173,6 +231,8 @@ def main() -> None:
         map_particle_mask_dilation_px=map_particle_mask_dilation_px,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
+        reuse_belt_map_path=reuse_belt_map_path,
+        reuse_phase_estimates_path=reuse_phase_estimates_path,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
         phase_refinement_iterations=phase_refinement_iterations,
@@ -181,30 +241,63 @@ def main() -> None:
         phase_refinement_smoothing_window_frames=phase_refinement_smoothing_window_frames,
     )
 
-    build_result = build_belt_map_result(
-        paths=paths,
-        region=region,
-        velocity=belt_velocity,
-        supplied_period=period_px,
-        mask_iterations=map_mask_iterations,
-        mask_threshold=map_particle_mask_threshold,
-        mask_mode=map_particle_mask_mode,
-        mask_grow_threshold=map_particle_mask_grow_threshold,
-        mask_dilation_px=map_particle_mask_dilation_px,
-        mask_margin_px=map_particle_mask_margin_px,
-        mask_min_area_px=map_particle_mask_min_area_px,
-        phase_feedback_config=PhaseFeedbackConfig(
-            iterations=phase_refinement_iterations,
-            min_score=phase_refinement_min_score,
-            max_abs_correction_px=phase_refinement_max_abs_correction_px,
-            smoothing_window_frames=phase_refinement_smoothing_window_frames,
-            registration_config=registration_config,
-        ),
-    )
-    belt_map = build_result.belt_map
-    reference_phase = build_result.reference_phase
-    map_height = build_result.map_height
-    write_phase_refinement_outputs(build_result.phase_refinement_rows)
+    reuse_metadata: dict = {}
+    reuse_metadata_path: Path | None = None
+    phase_refinement_rows: list[dict] = []
+    if reuse_belt_map_path is not None:
+        belt_map = np.load(reuse_belt_map_path)
+        if belt_map.ndim != 2:
+            raise ValueError("REUSE_BELT_MAP_PATH must point to a 2-D belt_map.npy")
+        if belt_map.shape[1] != region[3]:
+            raise ValueError(
+                "reused belt map width does not match BELT_REGION width: "
+                f"{belt_map.shape[1]} != {region[3]}"
+            )
+        map_height = int(belt_map.shape[0])
+        reuse_metadata, reuse_metadata_path = load_reuse_metadata(reuse_belt_map_path)
+        reference_phase = float(reuse_metadata.get("reference_phase_px", 0.0))
+        if period_px is not None and period_px != map_height:
+            rt.emit(
+                "belt_map",
+                "reused belt-map height differs from supplied BELT_PERIOD_PX; using loaded map height",
+                supplied_period_px=period_px,
+                belt_map_height_px=map_height,
+            )
+        write_phase_refinement_outputs(phase_refinement_rows)
+        rt.emit(
+            "belt_map",
+            "loaded reused belt-map outputs",
+            source_belt_map_npy=reuse_belt_map_path,
+            source_metadata_json=reuse_metadata_path,
+            belt_map_shape=list(belt_map.shape),
+            reference_phase_px=reference_phase,
+        )
+    else:
+        build_result = build_belt_map_result(
+            paths=paths,
+            region=region,
+            velocity=belt_velocity,
+            supplied_period=period_px,
+            mask_iterations=map_mask_iterations,
+            mask_threshold=map_particle_mask_threshold,
+            mask_mode=map_particle_mask_mode,
+            mask_grow_threshold=map_particle_mask_grow_threshold,
+            mask_dilation_px=map_particle_mask_dilation_px,
+            mask_margin_px=map_particle_mask_margin_px,
+            mask_min_area_px=map_particle_mask_min_area_px,
+            phase_feedback_config=PhaseFeedbackConfig(
+                iterations=phase_refinement_iterations,
+                min_score=phase_refinement_min_score,
+                max_abs_correction_px=phase_refinement_max_abs_correction_px,
+                smoothing_window_frames=phase_refinement_smoothing_window_frames,
+                registration_config=registration_config,
+            ),
+        )
+        belt_map = build_result.belt_map
+        reference_phase = build_result.reference_phase
+        map_height = build_result.map_height
+        phase_refinement_rows = build_result.phase_refinement_rows
+        write_phase_refinement_outputs(phase_refinement_rows)
     np.save(rt.OUT / "belt_map.npy", belt_map)
     rt.save_png(belt_map, rt.OUT / "belt_map.png")
     rt.emit(
@@ -214,7 +307,7 @@ def main() -> None:
         belt_map_npy=rt.OUT / "belt_map.npy",
         belt_map_png=rt.OUT / "belt_map.png",
         phase_refinement_csv=rt.OUT / "phase_refinement.csv",
-        phase_refinement_rows=len(build_result.phase_refinement_rows),
+        phase_refinement_rows=len(phase_refinement_rows),
     )
 
     motion_model = BeltMotionModel(
@@ -243,15 +336,34 @@ def main() -> None:
     detections_by_frame = []
     detection_rows: list[dict] = []
     phase_rows: list[dict] = []
+    reused_phase_estimates = (
+        load_phase_estimates(reuse_phase_estimates_path)
+        if reuse_phase_estimates_path is not None
+        else None
+    )
+    if reused_phase_estimates is not None:
+        validate_reused_phase_estimates(reused_phase_estimates, frame_count=len(paths))
+        rt.emit(
+            "detect",
+            "loaded reused phase estimates",
+            source_phase_estimates_csv=reuse_phase_estimates_path,
+            phase_estimates=len(reused_phase_estimates),
+        )
     detection_start = rt.time.perf_counter()
     for frame_index, path in enumerate(paths):
         frame = rt.crop(rt.read_gray(path), region)
+        phase_estimate = (
+            reused_phase_estimates[frame_index]
+            if reused_phase_estimates is not None
+            else None
+        )
         residual = render_clean_belt_residual(
             image=frame,
             belt_map=belt_map,
             frame_index=float(frame_index),
             motion_model=motion_model,
             belt_region=None,
+            phase_estimate=phase_estimate,
             registration_config=registration_config,
             residual_config=residual_config,
         )
@@ -323,8 +435,13 @@ def main() -> None:
         "phase_refinement_min_score": phase_refinement_min_score,
         "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,
         "phase_refinement_smoothing_window_frames": phase_refinement_smoothing_window_frames,
-        "n_phase_refinement_rows": len(build_result.phase_refinement_rows),
-        "n_phase_refinement_used": sum(1 for row in build_result.phase_refinement_rows if row.get("used_for_refinement")),
+        "reused_belt_map": reuse_belt_map_path is not None,
+        "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
+        "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
+        "reuse_metadata_path": "" if reuse_metadata_path is None else str(reuse_metadata_path),
+        "phase_estimate_source": "loaded" if reused_phase_estimates is not None else "registration",
+        "n_phase_refinement_rows": len(phase_refinement_rows),
+        "n_phase_refinement_used": sum(1 for row in phase_refinement_rows if row.get("used_for_refinement")),
         "n_phase_estimates": len(phase_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
