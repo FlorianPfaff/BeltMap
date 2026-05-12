@@ -54,6 +54,10 @@ outputs/
   phase_estimates.csv
   progress.jsonl
   progress_latest.json
+  recurrent_artifact_counts.npy  # only when recurrent artifact filtering is enabled
+  recurrent_artifact_counts.png  # only when recurrent artifact filtering is enabled
+  recurrent_artifact_map.npy     # only when recurrent artifact filtering is enabled
+  recurrent_artifact_map.png     # only when recurrent artifact filtering is enabled
   residual_frame_000000.png
   residual_frame_000001.png
   residual_frame_000002.png
@@ -167,6 +171,45 @@ Purpose: quick-look visualization of `static_noise.npy`.
 Format: 8-bit grayscale PNG.
 
 Scaling: display-only robust percentile scaling. Do not use this file for
+quantitative analysis.
+
+## `recurrent_artifact_map.npy`
+
+Purpose: optional belt-coordinate mask of detection artifacts that recur across
+multiple belt revolutions.
+
+Format: NumPy `.npy` boolean array.
+
+Shape: `(belt_map_height_px, crop_width_px)`.
+
+Coordinates: same belt-coordinate row and crop-local column layout as
+`belt_map.npy`.
+
+This file is written only when `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` or
+`recurrent_artifact.min_revolutions` is positive. Final `detections.csv`,
+`tracks.csv`, and velocity outputs are written after rejecting detections whose
+belt-coordinate bounding boxes overlap this map too strongly.
+
+## `recurrent_artifact_counts.npy`
+
+Purpose: stores the distinct-revolution recurrence count used to build
+`recurrent_artifact_map.npy`.
+
+Format: NumPy `.npy` integer array.
+
+Shape: `(belt_map_height_px, crop_width_px)`.
+
+Interpretation: each pixel value is the number of distinct belt revolutions in
+which at least one first-pass detection touched that belt-coordinate pixel.
+
+## `recurrent_artifact_map.png` and `recurrent_artifact_counts.png`
+
+Purpose: quick-look visualizations of the recurrent artifact mask and count
+map.
+
+Format: 8-bit grayscale PNG.
+
+Scaling: display-only robust percentile scaling. Do not use these files for
 quantitative analysis.
 
 ## `phase_estimates.csv`
@@ -330,6 +373,13 @@ Important fields:
 | `static_noise_mask_threshold` | z | Particle-mask threshold used while learning static noise, or `null` when disabled. |
 | `static_noise_mask_margin_px` | px | Particle-box margin used while learning static noise. |
 | `static_noise_mask_min_area_px` | px | Particle-mask minimum area used while learning static noise. |
+| `recurrent_artifact_filter_used` | bool | Whether recurrent artifact suppression was enabled. |
+| `recurrent_artifact_min_revolutions` | revolutions | Distinct-revolution threshold used to build the artifact map. |
+| `recurrent_artifact_margin_px` | px | Detection-box margin used while accumulating recurrent artifact counts. |
+| `recurrent_artifact_max_overlap_fraction` | fraction | Per-detection overlap threshold used for rejection. |
+| `recurrent_artifact_revolutions` | count | Number of distinct revolution bins represented in the processed frame sequence. |
+| `recurrent_artifact_pixels` | px | Number of belt-coordinate pixels marked as recurrent artifacts. |
+| `n_recurrent_artifact_rejected` | count | Number of first-pass detections rejected by recurrent artifact suppression. |
 | `n_phase_estimates` | count | Number of rows written to `phase_estimates.csv`. |
 | `n_detections` | count | Number of rows written to `detections.csv`. |
 | `n_tracks` | count | Number of particle tracks created by the tracker. |

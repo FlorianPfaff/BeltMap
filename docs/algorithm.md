@@ -99,6 +99,27 @@ particle_mask = normalized_residual > threshold
 
 Invalid pixels, non-finite pixels, and pixels excluded by a user mask are always returned as non-particle pixels.
 
+## Recurrent artifact suppression
+
+When enabled, recurrent artifact suppression runs after the first-pass detector
+and before tracking. It maps each detection bounding box from image coordinates
+to belt coordinates with
+
+```text
+belt_y = image_y + phase_px
+```
+
+and counts how many distinct belt revolutions touched each belt-coordinate
+pixel. Pixels reached in at least `recurrent_artifact.min_revolutions` distinct
+revolutions form a recurrent artifact map. Detections whose belt-coordinate
+bounding boxes overlap that map above
+`recurrent_artifact.max_overlap_fraction` are removed before writing final
+detection, tracking, and velocity outputs.
+
+This targets belt-fixed scratches and map ghosts. It should not remove ordinary
+loose particles unless they repeatedly appear at the same belt-coordinate
+location across separate revolutions.
+
 ## Connected components, tracks, and velocities
 
 Particle detections are extracted as connected components of the particle mask. Components can use 4- or 8-neighborhood connectivity, are filtered by area, and receive either unweighted or residual-weighted centroids.

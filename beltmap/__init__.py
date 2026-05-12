@@ -21,6 +21,13 @@ from .residual import (
     generate_residual_image,
     render_clean_belt_residual,
 )
+from .recurrent_artifacts import (
+    RecurrentArtifactConfig,
+    RecurrentArtifactMap,
+    belt_revolution_indices,
+    build_recurrent_artifact_map,
+    filter_recurrent_artifact_detections,
+)
 from .tracking import (
     ParticleComponentConfig,
     ParticleDetection,
@@ -51,13 +58,18 @@ __all__ = [
     "ParticleVelocity",
     "ResidualConfig",
     "ResidualImage",
+    "RecurrentArtifactConfig",
+    "RecurrentArtifactMap",
     "TrackFilterConfig",
+    "belt_revolution_indices",
+    "build_recurrent_artifact_map",
     "detect_particles_from_residual",
     "estimate_particle_velocities_vs_belt",
     "estimate_local_noise",
     "estimate_phase",
     "extract_particle_detections",
     "extract_particle_velocities_vs_belt",
+    "filter_recurrent_artifact_detections",
     "filter_particle_velocities",
     "generate_residual_image",
     "refine_phase_by_registration",

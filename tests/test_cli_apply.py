@@ -113,6 +113,11 @@ mask_threshold = 4.0
 mask_margin_px = 12
 mask_min_area_px = 6
 
+[recurrent_artifact]
+min_revolutions = 3
+margin_px = 4
+max_overlap_fraction = 0.35
+
 [auto_velocity]
 allow_full_frame = true
 """.strip(),
@@ -150,6 +155,9 @@ allow_full_frame = true
         "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
         "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
         "REUSE_STATIC_NOISE_PATH": "previous/static_noise.npy",
+        "RECURRENT_ARTIFACT_MARGIN_PX": "4",
+        "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION": "0.35",
+        "RECURRENT_ARTIFACT_MIN_REVOLUTIONS": "3",
         "STATIC_NOISE_MASK_MARGIN_PX": "12",
         "STATIC_NOISE_MASK_MIN_AREA_PX": "6",
         "STATIC_NOISE_MASK_THRESHOLD": "4",
@@ -267,6 +275,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["particle_mask_dilation_px"] == 0
     assert parsed["static_noise"]["sample_frames"] == 0
     assert parsed["static_noise"]["mask_margin_px"] == 8
+    assert parsed["recurrent_artifact"]["min_revolutions"] == 0
+    assert parsed["recurrent_artifact"]["max_overlap_fraction"] == 0.3
 
 
 def test_main_write_config_template_exits_without_running_driver(tmp_path, monkeypatch):

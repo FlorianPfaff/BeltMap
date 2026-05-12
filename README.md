@@ -260,6 +260,16 @@ max_bbox_aspect_ratio = 4.0
 min_bbox_extent = 0.15
 ```
 
+To suppress belt-fixed scratches or map ghosts that recur at the same belt
+phase, enable recurrent artifact filtering:
+
+```toml
+[recurrent_artifact]
+min_revolutions = 3
+margin_px = 2
+max_overlap_fraction = 0.3
+```
+
 Particle velocities can be extracted from a sequence of particle masks and
 compared to the signed belt image velocity:
 

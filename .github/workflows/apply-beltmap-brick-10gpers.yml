@@ -99,16 +99,16 @@ on:
         required: true
         type: string
         default: "0,0,0,8,4"
-      registration_search_radius_px:
-        description: "Local phase-registration search radius around the motion-model prediction"
+      recurrent_artifact_options:
+        description: "Recurrent artifact options as min_revolutions,margin,max_overlap. 0,2,0.3 disables."
         required: true
         type: string
-        default: "8.0"
-      registration_search_step_px:
-        description: "Local phase-registration search step in pixels"
+        default: "0,2,0.3"
+      registration_search:
+        description: "Local phase-registration search as radius,step in pixels"
         required: true
         type: string
-        default: "0.5"
+        default: "8.0,0.5"
       phase_refinement_iterations:
         description: "Phase-feedback map-refinement iterations. 0 = disabled."
         required: true
@@ -239,8 +239,8 @@ jobs:
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
-          REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
-          REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
+          RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
+          REGISTRATION_SEARCH: ${{ inputs.registration_search }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
           PHASE_REFINEMENT_MIN_SCORE: ${{ inputs.phase_refinement_min_score }}
           PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX: ${{ inputs.phase_refinement_max_abs_correction_px }}
@@ -263,6 +263,8 @@ jobs:
               return values
 
           static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)
+          recurrent_artifact = parse_csv_values("RECURRENT_ARTIFACT_OPTIONS", 3)
+          registration_search = parse_csv_values("REGISTRATION_SEARCH", 2)
           progress = parse_csv_values("PROGRESS_INTERVALS", 2)
           checks = {
               "driver": driver.__name__,
@@ -283,8 +285,11 @@ jobs:
               "static_noise_mask_threshold": float(static_noise[2]),
               "static_noise_mask_margin_px": int(static_noise[3]),
               "static_noise_mask_min_area_px": int(static_noise[4]),
-              "registration_search_radius_px": float(os.environ["REGISTRATION_SEARCH_RADIUS_PX"]),
-              "registration_search_step_px": float(os.environ["REGISTRATION_SEARCH_STEP_PX"]),
+              "recurrent_artifact_min_revolutions": int(recurrent_artifact[0]),
+              "recurrent_artifact_margin_px": int(recurrent_artifact[1]),
+              "recurrent_artifact_max_overlap_fraction": float(recurrent_artifact[2]),
+              "registration_search_radius_px": float(registration_search[0]),
+              "registration_search_step_px": float(registration_search[1]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
               "phase_refinement_min_score": float(os.environ["PHASE_REFINEMENT_MIN_SCORE"]),
               "phase_refinement_max_abs_correction_px": float(os.environ["PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX"]),
@@ -444,8 +449,8 @@ jobs:
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
-          REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
-          REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
+          RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
+          REGISTRATION_SEARCH: ${{ inputs.registration_search }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
           PHASE_REFINEMENT_MIN_SCORE: ${{ inputs.phase_refinement_min_score }}
           PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX: ${{ inputs.phase_refinement_max_abs_correction_px }}
@@ -554,9 +559,23 @@ jobs:
               lines.append(f"{key} = {json.dumps(value)}")
           lines.append("")
 
+          lines.append("[recurrent_artifact]")
+          recurrent_artifact = parse_csv_values("RECURRENT_ARTIFACT_OPTIONS", 3)
+          for key, value in zip(
+              [
+                  "min_revolutions",
+                  "margin_px",
+                  "max_overlap_fraction",
+              ],
+              recurrent_artifact,
+          ):
+              lines.append(f"{key} = {json.dumps(value)}")
+          lines.append("")
+
           lines.append("[registration]")
-          append_value(lines, "search_radius_px", "REGISTRATION_SEARCH_RADIUS_PX")
-          append_value(lines, "search_step_px", "REGISTRATION_SEARCH_STEP_PX")
+          registration_search = parse_csv_values("REGISTRATION_SEARCH", 2)
+          lines.append(f"search_radius_px = {json.dumps(registration_search[0])}")
+          lines.append(f"search_step_px = {json.dumps(registration_search[1])}")
           lines.append("")
 
           lines.append("[phase_refinement]")

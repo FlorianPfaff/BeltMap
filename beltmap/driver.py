@@ -20,6 +20,7 @@ from . import (
     PhaseRegistrationConfig,
     ResidualConfig,
     ResidualImage,
+    RecurrentArtifactConfig,
     TrackFilterConfig,
     detect_particles_from_residual,
     estimate_particle_velocities_vs_belt,
@@ -37,6 +38,11 @@ from ._driver_map import (
     sample_indices,
 )
 from ._driver_motion import estimate_velocity, parse_region, validate_auto_velocity_region
+from .recurrent_artifacts import (
+    belt_revolution_indices,
+    build_recurrent_artifact_map,
+    filter_recurrent_artifact_detections,
+)
 
 DETECTION_FIELDS = [
     "frame_index", "image", "label", "y", "x", "area_px",
@@ -166,6 +172,27 @@ def write_phase_outputs(phase_rows: list[dict]) -> None:
 
 def write_phase_refinement_outputs(phase_refinement_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_refinement.csv", phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
+
+
+def detection_rows_for_frame(detections: list, path: Path, frame_index: int) -> list[dict]:
+    rows: list[dict] = []
+    for detection in detections:
+        row = {
+            field: getattr(detection, field)
+            for field in DETECTION_FIELDS
+            if field != "image"
+        }
+        row["frame_index"] = frame_index
+        row["image"] = str(path.relative_to(rt.DATA))
+        rows.append(row)
+    return rows
+
+
+def detection_rows_from_frames(detections_by_frame: list, paths: list[Path]) -> list[dict]:
+    rows: list[dict] = []
+    for frame_index, detections in enumerate(detections_by_frame):
+        rows.extend(detection_rows_for_frame(detections, paths[frame_index], frame_index))
+    return rows
 
 
 def track_detection_rows(tracks: list, paths: list[Path]) -> list[dict]:
@@ -416,6 +443,17 @@ def main() -> None:
     static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", 0.0)
     static_noise_mask_margin_px = rt.env_int("STATIC_NOISE_MASK_MARGIN_PX", 8, minimum=0)
     static_noise_mask_min_area_px = rt.env_int("STATIC_NOISE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    recurrent_artifact_config = RecurrentArtifactConfig(
+        min_revolutions=rt.env_int("RECURRENT_ARTIFACT_MIN_REVOLUTIONS", 0, minimum=0),
+        margin_px=rt.env_int("RECURRENT_ARTIFACT_MARGIN_PX", 2, minimum=0),
+        max_overlap_fraction=rt.env_float(
+            "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION",
+            0.3,
+            minimum=0.0,
+        ),
+    )
+    if recurrent_artifact_config.max_overlap_fraction > 1:
+        raise ValueError("RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION must be in [0, 1]")
     registration_config = PhaseRegistrationConfig(
         search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
@@ -459,6 +497,9 @@ def main() -> None:
         static_noise_mask_threshold=static_noise_mask_threshold,
         static_noise_mask_margin_px=static_noise_mask_margin_px,
         static_noise_mask_min_area_px=static_noise_mask_min_area_px,
+        recurrent_artifact_min_revolutions=recurrent_artifact_config.min_revolutions,
+        recurrent_artifact_margin_px=recurrent_artifact_config.margin_px,
+        recurrent_artifact_max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
         phase_refinement_iterations=phase_refinement_iterations,
@@ -617,6 +658,7 @@ def main() -> None:
     partial_output_interval = rt.env_int("PARTIAL_OUTPUT_INTERVAL_FRAMES", 250, minimum=0)
     residual_preview_frames = rt.env_int("DEBUG_RESIDUAL_PREVIEW_FRAMES", 3, minimum=0)
     residual_preview_interval = rt.env_int("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", 0, minimum=0)
+    recurrent_artifact_enabled = recurrent_artifact_config.min_revolutions > 0
     rt.emit(
         "detect",
         "starting residual rendering and particle detection",
@@ -625,11 +667,13 @@ def main() -> None:
         partial_output_interval_frames=partial_output_interval,
         residual_preview_frames=residual_preview_frames,
         residual_preview_interval_frames=residual_preview_interval,
+        recurrent_artifact_filter_enabled=recurrent_artifact_enabled,
     )
 
     detections_by_frame = []
     detection_rows: list[dict] = []
     phase_rows: list[dict] = []
+    phase_px_by_frame: list[float] = []
     detection_start = rt.time.perf_counter()
     for frame_index, path in enumerate(paths):
         frame = rt.crop(rt.read_gray(path), region)
@@ -649,18 +693,21 @@ def main() -> None:
             residual_config=residual_config,
         )
         residual = apply_static_noise_floor(residual, static_noise_map)
-        phase_rows.append(phase_estimate_row(frame_index, path, residual, float(map_height)))
+        phase_row = phase_estimate_row(frame_index, path, residual, float(map_height))
+        phase_rows.append(phase_row)
+        phase_px_by_frame.append(float(phase_row["phase_px"]))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
         mask = detect_particles_from_residual(residual, threshold=detection_threshold)
         detections = extract_particle_detections(mask, residual=residual, frame_index=float(frame_index), config=component_config)
         detections_by_frame.append(detections)
-        for detection in detections:
-            detection_rows.append({field: getattr(detection, field) for field in DETECTION_FIELDS if field != "image"})
-            detection_rows[-1]["frame_index"] = frame_index
-            detection_rows[-1]["image"] = str(path.relative_to(rt.DATA))
+        detection_rows.extend(detection_rows_for_frame(detections, path, frame_index))
         processed = frame_index + 1
-        if partial_output_interval > 0 and (processed == 1 or processed % partial_output_interval == 0):
+        if (
+            not recurrent_artifact_enabled
+            and partial_output_interval > 0
+            and (processed == 1 or processed % partial_output_interval == 0)
+        ):
             write_detection_outputs(detections_by_frame, detection_rows)
             write_phase_outputs(phase_rows)
             rt.emit("detect", "wrote partial detection and phase outputs", processed_frames=processed, total_detections=len(detection_rows), phase_estimates=len(phase_rows))
@@ -670,6 +717,49 @@ def main() -> None:
             remaining = len(paths) - processed
             eta = remaining / fps if fps > 0 else float("inf")
             rt.emit("detect", f"processed {processed}/{len(paths)} frames", processed_frames=processed, remaining_frames=remaining, detections_this_frame=len(detections), total_detections=len(detection_rows), frames_per_second=round(fps, 4), eta_s=round(eta, 1) if np.isfinite(eta) else None, current_image=path)
+
+    recurrent_artifact_pixels = 0
+    recurrent_artifact_rejected = 0
+    recurrent_artifact_revolutions = 0
+    if recurrent_artifact_enabled:
+        rt.emit(
+            "recurrent_artifact",
+            "building recurrent belt-coordinate artifact map",
+            min_revolutions=recurrent_artifact_config.min_revolutions,
+            margin_px=recurrent_artifact_config.margin_px,
+            max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+        )
+        recurrent_result = build_recurrent_artifact_map(
+            detections_by_frame,
+            phase_px_by_frame,
+            belt_revolution_indices(len(paths), motion_model),
+            map_shape=(map_height, region[3]),
+            config=recurrent_artifact_config,
+        )
+        recurrent_artifact_pixels = recurrent_result.artifact_pixels
+        recurrent_artifact_revolutions = recurrent_result.revolution_count
+        np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_result.mask)
+        np.save(rt.OUT / "recurrent_artifact_counts.npy", recurrent_result.counts)
+        rt.save_png(recurrent_result.mask.astype(np.float32), rt.OUT / "recurrent_artifact_map.png")
+        rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
+        detections_by_frame, recurrent_artifact_rejected = filter_recurrent_artifact_detections(
+            detections_by_frame,
+            phase_px_by_frame,
+            recurrent_result.mask,
+            max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+        )
+        detection_rows = detection_rows_from_frames(detections_by_frame, paths)
+        rt.emit(
+            "recurrent_artifact",
+            "filtered recurrent belt-coordinate artifacts",
+            revolutions=recurrent_result.revolution_count,
+            candidate_detections=recurrent_result.candidate_detections,
+            artifact_pixels=recurrent_result.artifact_pixels,
+            rejected_detections=recurrent_artifact_rejected,
+            remaining_detections=len(detection_rows),
+            recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
+            recurrent_artifact_counts_npy=rt.OUT / "recurrent_artifact_counts.npy",
+        )
 
     write_detection_outputs(detections_by_frame, detection_rows)
     write_phase_outputs(phase_rows)
@@ -777,6 +867,13 @@ def main() -> None:
         "static_noise_mask_margin_px": static_noise_mask_margin_px,
         "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
         "static_noise_map_used": static_noise_map is not None,
+        "recurrent_artifact_min_revolutions": recurrent_artifact_config.min_revolutions,
+        "recurrent_artifact_margin_px": recurrent_artifact_config.margin_px,
+        "recurrent_artifact_max_overlap_fraction": recurrent_artifact_config.max_overlap_fraction,
+        "recurrent_artifact_filter_used": recurrent_artifact_enabled,
+        "recurrent_artifact_revolutions": recurrent_artifact_revolutions,
+        "recurrent_artifact_pixels": recurrent_artifact_pixels,
+        "n_recurrent_artifact_rejected": recurrent_artifact_rejected,
         "reuse_metadata_path": "" if reuse_metadata_path is None else str(reuse_metadata_path),
         "phase_estimate_source": "loaded" if reused_phase_estimates is not None else "registration",
         "n_phase_refinement_rows": len(phase_refinement_rows),
