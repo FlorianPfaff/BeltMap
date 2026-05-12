@@ -117,6 +117,8 @@ mask_min_area_px = 6
 min_revolutions = 3
 margin_px = 4
 max_overlap_fraction = 0.35
+mode = "soft"
+soft_penalty_weight = 1.5
 
 [auto_velocity]
 allow_full_frame = true
@@ -158,6 +160,8 @@ allow_full_frame = true
         "RECURRENT_ARTIFACT_MARGIN_PX": "4",
         "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION": "0.35",
         "RECURRENT_ARTIFACT_MIN_REVOLUTIONS": "3",
+        "RECURRENT_ARTIFACT_MODE": "soft",
+        "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT": "1.5",
         "STATIC_NOISE_MASK_MARGIN_PX": "12",
         "STATIC_NOISE_MASK_MIN_AREA_PX": "6",
         "STATIC_NOISE_MASK_THRESHOLD": "4",
@@ -277,6 +281,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["static_noise"]["mask_margin_px"] == 8
     assert parsed["recurrent_artifact"]["min_revolutions"] == 0
     assert parsed["recurrent_artifact"]["max_overlap_fraction"] == 0.3
+    assert parsed["recurrent_artifact"]["mode"] == "hard"
+    assert parsed["recurrent_artifact"]["soft_penalty_weight"] == 1.0
 
 
 def test_main_write_config_template_exits_without_running_driver(tmp_path, monkeypatch):

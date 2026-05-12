@@ -10,7 +10,7 @@ from beltmap import (
 )
 
 
-def detection(frame_index, top, left, bottom, right):
+def detection(frame_index, top, left, bottom, right, *, peak_signal=None):
     return ParticleDetection(
         frame_index=float(frame_index),
         label=1,
@@ -21,6 +21,7 @@ def detection(frame_index, top, left, bottom, right):
         bbox_left=left,
         bbox_bottom=bottom,
         bbox_right=right,
+        peak_signal=peak_signal,
     )
 
 
@@ -70,8 +71,37 @@ def test_recurrent_artifact_map_counts_distinct_revolutions_only():
         detections_by_frame,
         phase_px_by_frame=[0.0, 0.0, 0.0, 0.0],
         artifact_map=result.mask,
-        max_overlap_fraction=0.5,
+        config=RecurrentArtifactConfig(
+            min_revolutions=2,
+            margin_px=0,
+            max_overlap_fraction=0.5,
+        ),
     )
 
     assert rejected == 3
     assert [len(frame) for frame in filtered] == [0, 0, 0, 1]
+
+
+def test_soft_recurrent_filter_keeps_strong_peak_and_rejects_weak_peak():
+    artifact_map = np.zeros((12, 12), dtype=bool)
+    artifact_map[1:3, 2:4] = True
+    weak_recurring = detection(0, 1, 2, 3, 4, peak_signal=6.0)
+    strong_recurring = detection(0, 1, 2, 3, 4, peak_signal=12.0)
+    off_artifact = detection(0, 6, 2, 8, 4, peak_signal=6.0)
+
+    filtered, rejected = filter_recurrent_artifact_detections(
+        [[weak_recurring, strong_recurring, off_artifact]],
+        phase_px_by_frame=[0.0],
+        artifact_map=artifact_map,
+        config=RecurrentArtifactConfig(
+            min_revolutions=2,
+            margin_px=0,
+            max_overlap_fraction=0.3,
+            mode="soft",
+            soft_penalty_weight=1.0,
+        ),
+        detection_threshold=5.0,
+    )
+
+    assert rejected == 1
+    assert filtered == [[strong_recurring, off_artifact]]

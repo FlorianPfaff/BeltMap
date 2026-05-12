@@ -268,6 +268,8 @@ phase, enable recurrent artifact filtering:
 min_revolutions = 3
 margin_px = 2
 max_overlap_fraction = 0.3
+mode = "hard"
+soft_penalty_weight = 1.0
 ```
 
 Particle velocities can be extracted from a sequence of particle masks and

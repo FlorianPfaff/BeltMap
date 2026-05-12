@@ -100,7 +100,7 @@ on:
         type: string
         default: "0,0,0,8,4"
       recurrent_artifact_options:
-        description: "Recurrent artifact options as min_revolutions,margin,max_overlap. 0,2,0.3 disables."
+        description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty]. 0,2,0.3 disables."
         required: true
         type: string
         default: "0,2,0.3"
@@ -262,8 +262,24 @@ jobs:
                   raise SystemExit(f"{name} must contain {count} comma-separated values")
               return values
 
+          def parse_recurrent_artifact_options():
+              values = [part.strip() for part in os.environ["RECURRENT_ARTIFACT_OPTIONS"].split(",")]
+              if len(values) == 3:
+                  values.extend(["hard", "1.0"])
+              elif len(values) != 5:
+                  raise SystemExit(
+                      "RECURRENT_ARTIFACT_OPTIONS must contain "
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty]"
+                  )
+              values[3] = values[3].lower()
+              if values[3] not in {"hard", "soft"}:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS mode must be hard or soft")
+              if float(values[4]) < 0:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS soft_penalty must be non-negative")
+              return values
+
           static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)
-          recurrent_artifact = parse_csv_values("RECURRENT_ARTIFACT_OPTIONS", 3)
+          recurrent_artifact = parse_recurrent_artifact_options()
           registration_search = parse_csv_values("REGISTRATION_SEARCH", 2)
           progress = parse_csv_values("PROGRESS_INTERVALS", 2)
           checks = {
@@ -288,6 +304,8 @@ jobs:
               "recurrent_artifact_min_revolutions": int(recurrent_artifact[0]),
               "recurrent_artifact_margin_px": int(recurrent_artifact[1]),
               "recurrent_artifact_max_overlap_fraction": float(recurrent_artifact[2]),
+              "recurrent_artifact_mode": recurrent_artifact[3],
+              "recurrent_artifact_soft_penalty_weight": float(recurrent_artifact[4]),
               "registration_search_radius_px": float(registration_search[0]),
               "registration_search_step_px": float(registration_search[1]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
@@ -507,6 +525,22 @@ jobs:
                   raise SystemExit(f"{env_name} must contain {count} comma-separated values")
               return values
 
+          def parse_recurrent_artifact_options() -> list[str]:
+              values = [part.strip() for part in env_value("RECURRENT_ARTIFACT_OPTIONS").split(",")]
+              if len(values) == 3:
+                  values.extend(["hard", "1.0"])
+              elif len(values) != 5:
+                  raise SystemExit(
+                      "RECURRENT_ARTIFACT_OPTIONS must contain "
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty]"
+                  )
+              values[3] = values[3].lower()
+              if values[3] not in {"hard", "soft"}:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS mode must be hard or soft")
+              if float(values[4]) < 0:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS soft_penalty must be non-negative")
+              return values
+
           lines: list[str] = []
           lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
 
@@ -560,12 +594,14 @@ jobs:
           lines.append("")
 
           lines.append("[recurrent_artifact]")
-          recurrent_artifact = parse_csv_values("RECURRENT_ARTIFACT_OPTIONS", 3)
+          recurrent_artifact = parse_recurrent_artifact_options()
           for key, value in zip(
               [
                   "min_revolutions",
                   "margin_px",
                   "max_overlap_fraction",
+                  "mode",
+                  "soft_penalty_weight",
               ],
               recurrent_artifact,
           ):

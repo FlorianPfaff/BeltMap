@@ -119,6 +119,8 @@ underscores.
 | `recurrent_artifact.min_revolutions` | `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` | `--recurrent-artifact-min-revolutions` | `0` | revolutions | Minimum distinct belt revolutions in which a belt-coordinate neighborhood must fire before it is marked as recurrent artifact. `0` disables this filter. |
 | `recurrent_artifact.margin_px` | `RECURRENT_ARTIFACT_MARGIN_PX` | `--recurrent-artifact-margin-px` | `2` | px | Safety margin around detected component boxes when accumulating recurrent artifacts in belt coordinates. |
 | `recurrent_artifact.max_overlap_fraction` | `RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION` | `--recurrent-artifact-max-overlap-fraction` | `0.3` | fraction | Reject a detection when this fraction of its belt-coordinate bounding box overlaps the recurrent artifact map. |
+| `recurrent_artifact.mode` | `RECURRENT_ARTIFACT_MODE` | `--recurrent-artifact-mode` | `hard` | mode | `hard` rejects by overlap alone. `soft` rejects recurrent detections only when their peak residual is weak relative to the detection threshold. |
+| `recurrent_artifact.soft_penalty_weight` | `RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT` | `--recurrent-artifact-soft-penalty-weight` | `1.0` | weight | Additional soft-mode peak-signal requirement per artifact-overlap fraction. Ignored in `hard` mode. |
 | `auto_velocity.search_radius_px` | `VELOCITY_SEARCH_RADIUS_PX` | `--velocity-search-radius-px` | `50` | px | Maximum vertical shift searched for each adjacent-frame pair during automatic belt-velocity estimation. Increase if the belt moves farther than this between frames. |
 | `auto_velocity.estimation_pairs` | `VELOCITY_ESTIMATION_PAIRS` | `--velocity-estimation-pairs` | `100` | pairs | Number of adjacent-frame pairs used for automatic belt-velocity estimation, capped by the available sequence length. |
 | `auto_velocity.min_abs_px_per_frame` | `AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME` | `--auto-velocity-min-abs-px-per-frame` | `0.25` | px/frame | Minimum accepted absolute value of the auto-estimated belt velocity. Helps reject static-background-dominated crops. |
@@ -241,6 +243,8 @@ scratches or map ghosts that survive ordinary residual thresholding.
 min_revolutions = 3
 margin_px = 2
 max_overlap_fraction = 0.3
+mode = "hard"
+soft_penalty_weight = 1.0
 ```
 
 The driver first renders residuals and extracts ordinary detections. It then
@@ -250,6 +254,11 @@ and builds `recurrent_artifact_map.npy` from pixels reaching
 `min_revolutions`. Final detection outputs, tracks, and velocities are written
 after rejecting components whose belt-coordinate bounding box overlaps that map
 by more than `max_overlap_fraction`.
+
+In `mode = "hard"`, that overlap test rejects the detection directly. In
+`mode = "soft"`, recurring components are rejected only if their `peak_signal`
+does not clear `detection.threshold * (1 + soft_penalty_weight * overlap)`.
+This is useful when hard recurrent filtering removes too many strong particles.
 
 For short diagnostics with only about two revolutions, use `min_revolutions = 2`.
 For full runs with many revolutions, start with `min_revolutions = 3` or higher.

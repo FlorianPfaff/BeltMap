@@ -188,7 +188,9 @@ Coordinates: same belt-coordinate row and crop-local column layout as
 This file is written only when `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` or
 `recurrent_artifact.min_revolutions` is positive. Final `detections.csv`,
 `tracks.csv`, and velocity outputs are written after rejecting detections whose
-belt-coordinate bounding boxes overlap this map too strongly.
+belt-coordinate bounding boxes overlap this map too strongly. With
+`recurrent_artifact.mode = "soft"`, overlapping detections can survive if their
+peak residual is strong enough.
 
 ## `recurrent_artifact_counts.npy`
 
@@ -377,6 +379,8 @@ Important fields:
 | `recurrent_artifact_min_revolutions` | revolutions | Distinct-revolution threshold used to build the artifact map. |
 | `recurrent_artifact_margin_px` | px | Detection-box margin used while accumulating recurrent artifact counts. |
 | `recurrent_artifact_max_overlap_fraction` | fraction | Per-detection overlap threshold used for rejection. |
+| `recurrent_artifact_mode` | mode | Recurrent artifact rejection mode, either `hard` or `soft`. |
+| `recurrent_artifact_soft_penalty_weight` | weight | Soft-mode peak-signal penalty weight. |
 | `recurrent_artifact_revolutions` | count | Number of distinct revolution bins represented in the processed frame sequence. |
 | `recurrent_artifact_pixels` | px | Number of belt-coordinate pixels marked as recurrent artifacts. |
 | `n_recurrent_artifact_rejected` | count | Number of first-pass detections rejected by recurrent artifact suppression. |

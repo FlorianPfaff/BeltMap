@@ -116,6 +116,11 @@ bounding boxes overlap that map above
 `recurrent_artifact.max_overlap_fraction` are removed before writing final
 detection, tracking, and velocity outputs.
 
+The default `hard` mode removes those detections by overlap alone. The optional
+`soft` mode keeps strong peaks and rejects only weak recurring detections, using
+`detection.threshold * (1 + recurrent_artifact.soft_penalty_weight * overlap)`
+as the required peak residual.
+
 This targets belt-fixed scratches and map ghosts. It should not remove ordinary
 loose particles unless they repeatedly appear at the same belt-coordinate
 location across separate revolutions.

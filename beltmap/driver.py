@@ -39,6 +39,7 @@ from ._driver_map import (
 )
 from ._driver_motion import estimate_velocity, parse_region, validate_auto_velocity_region
 from .recurrent_artifacts import (
+    RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
     build_recurrent_artifact_map,
     filter_recurrent_artifact_detections,
@@ -451,9 +452,18 @@ def main() -> None:
             0.3,
             minimum=0.0,
         ),
+        mode=os.getenv("RECURRENT_ARTIFACT_MODE", "hard").strip().lower(),
+        soft_penalty_weight=rt.env_float(
+            "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT",
+            1.0,
+            minimum=0.0,
+        ),
     )
     if recurrent_artifact_config.max_overlap_fraction > 1:
         raise ValueError("RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION must be in [0, 1]")
+    if recurrent_artifact_config.mode not in RECURRENT_ARTIFACT_MODES:
+        choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
+        raise ValueError(f"RECURRENT_ARTIFACT_MODE must be one of {choices}")
     registration_config = PhaseRegistrationConfig(
         search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
@@ -500,6 +510,8 @@ def main() -> None:
         recurrent_artifact_min_revolutions=recurrent_artifact_config.min_revolutions,
         recurrent_artifact_margin_px=recurrent_artifact_config.margin_px,
         recurrent_artifact_max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+        recurrent_artifact_mode=recurrent_artifact_config.mode,
+        recurrent_artifact_soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
         phase_refinement_iterations=phase_refinement_iterations,
@@ -728,6 +740,8 @@ def main() -> None:
             min_revolutions=recurrent_artifact_config.min_revolutions,
             margin_px=recurrent_artifact_config.margin_px,
             max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+            mode=recurrent_artifact_config.mode,
+            soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
         )
         recurrent_result = build_recurrent_artifact_map(
             detections_by_frame,
@@ -746,7 +760,8 @@ def main() -> None:
             detections_by_frame,
             phase_px_by_frame,
             recurrent_result.mask,
-            max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+            config=recurrent_artifact_config,
+            detection_threshold=detection_threshold,
         )
         detection_rows = detection_rows_from_frames(detections_by_frame, paths)
         rt.emit(
@@ -870,6 +885,8 @@ def main() -> None:
         "recurrent_artifact_min_revolutions": recurrent_artifact_config.min_revolutions,
         "recurrent_artifact_margin_px": recurrent_artifact_config.margin_px,
         "recurrent_artifact_max_overlap_fraction": recurrent_artifact_config.max_overlap_fraction,
+        "recurrent_artifact_mode": recurrent_artifact_config.mode,
+        "recurrent_artifact_soft_penalty_weight": recurrent_artifact_config.soft_penalty_weight,
         "recurrent_artifact_filter_used": recurrent_artifact_enabled,
         "recurrent_artifact_revolutions": recurrent_artifact_revolutions,
         "recurrent_artifact_pixels": recurrent_artifact_pixels,

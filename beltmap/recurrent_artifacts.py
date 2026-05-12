@@ -11,6 +11,8 @@ from numpy.typing import NDArray
 from .phase import BeltMotionModel
 from .tracking import ParticleDetection
 
+RECURRENT_ARTIFACT_MODES = {"hard", "soft"}
+
 
 @dataclass(frozen=True)
 class RecurrentArtifactConfig:
@@ -19,6 +21,8 @@ class RecurrentArtifactConfig:
     min_revolutions: int = 0
     margin_px: int = 2
     max_overlap_fraction: float = 0.3
+    mode: str = "hard"
+    soft_penalty_weight: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -102,14 +106,20 @@ def filter_recurrent_artifact_detections(
     phase_px_by_frame: Sequence[float],
     artifact_map: NDArray[np.bool_],
     *,
-    max_overlap_fraction: float,
+    config: RecurrentArtifactConfig | None = None,
+    detection_threshold: float | None = None,
 ) -> tuple[list[list[ParticleDetection]], int]:
     """Reject detections whose belt-coordinate bbox mostly overlaps artifacts."""
 
+    cfg = config or RecurrentArtifactConfig(min_revolutions=1)
+    _validate_config(cfg)
+    mode = cfg.mode.strip().lower()
+    if mode == "soft" and detection_threshold is None:
+        raise ValueError("detection_threshold is required for soft recurrent filtering")
+    if detection_threshold is not None and not np.isfinite(detection_threshold):
+        raise ValueError("detection_threshold must be finite")
     if len(phase_px_by_frame) != len(detections_by_frame):
         raise ValueError("phase_px_by_frame must match detections_by_frame length")
-    if not 0 <= max_overlap_fraction <= 1:
-        raise ValueError("max_overlap_fraction must be in [0, 1]")
     artifact = np.asarray(artifact_map, dtype=bool)
     if artifact.ndim != 2 or artifact.size == 0:
         raise ValueError("artifact_map must be a non-empty 2-D array")
@@ -125,7 +135,12 @@ def filter_recurrent_artifact_detections(
                 phase_px=phase_px,
                 artifact_map=artifact,
             )
-            if overlap > max_overlap_fraction:
+            if _reject_detection(
+                detection,
+                overlap=overlap,
+                config=cfg,
+                detection_threshold=detection_threshold,
+            ):
                 rejected += 1
             else:
                 kept.append(detection)
@@ -156,6 +171,28 @@ def detection_artifact_overlap_fraction(
         return 0.0
     patch = artifact[rows, left:right]
     return float(np.count_nonzero(patch) / patch.size)
+
+
+def _reject_detection(
+    detection: ParticleDetection,
+    *,
+    overlap: float,
+    config: RecurrentArtifactConfig,
+    detection_threshold: float | None,
+) -> bool:
+    mode = config.mode.strip().lower()
+    if overlap <= config.max_overlap_fraction:
+        return False
+    if mode == "hard":
+        return True
+    assert detection_threshold is not None
+    peak_signal = detection.peak_signal
+    if peak_signal is None or not np.isfinite(peak_signal):
+        return True
+    required_peak = detection_threshold * (
+        1.0 + config.soft_penalty_weight * overlap
+    )
+    return peak_signal <= required_peak
 
 
 def _mark_detection_bbox(
@@ -202,6 +239,11 @@ def _validate_config(config: RecurrentArtifactConfig) -> None:
         raise ValueError("margin_px must be non-negative")
     if not 0 <= config.max_overlap_fraction <= 1:
         raise ValueError("max_overlap_fraction must be in [0, 1]")
+    if config.mode.strip().lower() not in RECURRENT_ARTIFACT_MODES:
+        choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
+        raise ValueError(f"mode must be one of {choices}")
+    if not np.isfinite(config.soft_penalty_weight) or config.soft_penalty_weight < 0:
+        raise ValueError("soft_penalty_weight must be finite and non-negative")
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
