@@ -48,6 +48,12 @@ VELOCITY_FIELDS = [
     "belt_velocity_y_px_per_frame", "velocity_ratio_y",
     "belt_minus_particle_velocity_y_px_per_frame",
 ]
+TRACK_DETECTION_FIELDS = [
+    "track_id", "track_detection_index",
+    "frame_index", "image", "label", "y", "x", "area_px",
+    "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
+    "mean_signal", "peak_signal",
+]
 TRACK_SCORE_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
     "velocity_y_px_per_frame", "velocity_x_px_per_frame",
@@ -155,6 +161,24 @@ def write_phase_outputs(phase_rows: list[dict]) -> None:
 
 def write_phase_refinement_outputs(phase_refinement_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_refinement.csv", phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
+
+
+def track_detection_rows(tracks: list, paths: list[Path]) -> list[dict]:
+    rows: list[dict] = []
+    for track in tracks:
+        for detection_index, detection in enumerate(track.detections):
+            frame_index = int(detection.frame_index)
+            row = {
+                field: getattr(detection, field)
+                for field in DETECTION_FIELDS
+                if field != "image"
+            }
+            row["track_id"] = track.track_id
+            row["track_detection_index"] = detection_index
+            row["frame_index"] = frame_index
+            row["image"] = str(paths[frame_index].relative_to(rt.DATA))
+            rows.append(row)
+    return rows
 
 
 def should_save_residual_preview(frame_index: int, preview_frames: int, preview_interval: int) -> bool:
@@ -410,6 +434,9 @@ def main() -> None:
     rt.emit("track", "starting particle tracking", frames=len(detections_by_frame), max_match_distance_px=tracking_config.max_match_distance_px, velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame)
     tracks = track_particle_detections(detections_by_frame, config=tracking_config, frame_indices=[float(i) for i in range(len(paths))])
     rt.emit("track", "finished particle tracking", tracks=len(tracks))
+    track_rows = track_detection_rows(tracks, paths)
+    rt.write_csv(rt.OUT / "tracks.csv", track_rows, TRACK_DETECTION_FIELDS)
+    rt.emit("track", "wrote track detection assignments", track_detection_rows=len(track_rows))
 
     velocity_rows = []
     velocity_objects = []
@@ -447,11 +474,16 @@ def main() -> None:
         TRACK_SCORE_FIELDS,
     )
     rt.write_csv(rt.OUT / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
+    filtered_track_rows = [
+        row for row in track_rows if row["track_id"] in accepted_track_ids
+    ]
+    rt.write_csv(rt.OUT / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
     rt.emit(
         "velocity",
         "wrote track-filter outputs",
         track_scores=len(track_scores),
         filtered_velocity_estimates=len(filtered_velocity_rows),
+        filtered_track_detection_rows=len(filtered_track_rows),
         track_filter_min_length=track_filter_config.min_track_length,
         track_filter_min_velocity_ratio_y=track_filter_config.min_velocity_ratio_y,
         track_filter_max_velocity_ratio_y=track_filter_config.max_velocity_ratio_y,

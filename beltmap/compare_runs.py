@@ -73,8 +73,10 @@ class RunData:
     detections_per_frame: list[dict[str, str]]
     velocities: list[dict[str, str]]
     filtered_velocities: list[dict[str, str]]
+    filtered_tracks: list[dict[str, str]]
     preview_paths: dict[int, Path]
     detections_by_frame: dict[int, list[DetectionRecord]]
+    filtered_detections_by_frame: dict[int, list[DetectionRecord]]
 
 
 @dataclass(frozen=True)
@@ -191,6 +193,8 @@ def load_run_data(spec: RunSpec) -> RunData:
 
     detections = read_csv_rows(spec.output_dir / "detections.csv")
     records = parse_detection_records(detections)
+    filtered_tracks = read_csv_rows(spec.output_dir / "filtered_tracks.csv")
+    filtered_records = parse_detection_records(filtered_tracks)
     return RunData(
         spec=spec,
         metadata=read_json(spec.output_dir / "metadata.json"),
@@ -198,8 +202,10 @@ def load_run_data(spec: RunSpec) -> RunData:
         detections_per_frame=read_csv_rows(spec.output_dir / "detections_per_frame.csv"),
         velocities=read_csv_rows(spec.output_dir / "velocities.csv"),
         filtered_velocities=read_csv_rows(spec.output_dir / "filtered_velocities.csv"),
+        filtered_tracks=filtered_tracks,
         preview_paths=find_preview_paths(spec.output_dir),
         detections_by_frame=group_detections_by_frame(records),
+        filtered_detections_by_frame=group_detections_by_frame(filtered_records),
     )
 
 
@@ -415,10 +421,11 @@ def draw_velocity_ratio_histogram(path: Path, runs: list[RunData]) -> None:
     )
 
 
-def detection_count_for_frame(data: RunData, frame_index: int) -> int:
+def detection_count_for_frame(data: RunData, frame_index: int, *, filtered: bool = False) -> int:
     """Return the loaded detection count for a frame."""
 
-    return len(data.detections_by_frame.get(frame_index, []))
+    detections = data.filtered_detections_by_frame if filtered else data.detections_by_frame
+    return len(detections.get(frame_index, []))
 
 
 def draw_detection_overlay_tile(
@@ -427,20 +434,27 @@ def draw_detection_overlay_tile(
     *,
     width: int,
     header_height: int,
+    filtered: bool = False,
 ) -> Image.Image:
     """Create a resized residual-preview tile with detection boxes."""
 
+    detections_by_frame = (
+        data.filtered_detections_by_frame
+        if filtered
+        else data.detections_by_frame
+    )
     preview = data.preview_paths.get(frame_index)
     if preview is None:
         tile = Image.new("RGB", (width, header_height + 220), (248, 248, 248))
         draw = ImageDraw.Draw(tile)
-        draw.text((10, 10), f"{data.spec.label} frame {frame_index}", fill="black")
+        prefix = "filtered " if filtered else ""
+        draw.text((10, 10), f"{data.spec.label} {prefix}frame {frame_index}", fill="black")
         draw.text((10, header_height + 82), "preview missing", fill=(90, 90, 90))
         return tile
 
     image = Image.open(preview).convert("RGB")
     draw = ImageDraw.Draw(image)
-    for detection in data.detections_by_frame.get(frame_index, []):
+    for detection in detections_by_frame.get(frame_index, []):
         box = (
             int(round(detection.bbox_left)),
             int(round(detection.bbox_top)),
@@ -456,7 +470,11 @@ def draw_detection_overlay_tile(
     tile.paste(image, (0, header_height))
     draw = ImageDraw.Draw(tile)
     draw.rectangle((0, 0, width - 1, header_height - 1), fill=(245, 245, 245), outline=(180, 180, 180))
-    label = f"{data.spec.label} | frame {frame_index} | n={detection_count_for_frame(data, frame_index)}"
+    prefix = "filtered | " if filtered else ""
+    label = (
+        f"{data.spec.label} | {prefix}frame {frame_index} | "
+        f"n={detection_count_for_frame(data, frame_index, filtered=filtered)}"
+    )
     draw.text((8, 8), label, fill="black")
     return tile
 
@@ -467,6 +485,7 @@ def draw_detection_contact_sheet(
     *,
     frames: list[int],
     tile_width: int = 420,
+    filtered: bool = False,
 ) -> None:
     """Write a side-by-side residual-preview contact sheet with detection boxes."""
 
@@ -480,7 +499,13 @@ def draw_detection_contact_sheet(
     for frame_index in frames:
         tiles.append(
             [
-                draw_detection_overlay_tile(run, frame_index, width=tile_width, header_height=header_height)
+                draw_detection_overlay_tile(
+                    run,
+                    frame_index,
+                    width=tile_width,
+                    header_height=header_height,
+                    filtered=filtered,
+                )
                 for run in runs
             ]
         )
@@ -507,6 +532,7 @@ def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path],
     }
     images = {
         "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
+        "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
     }
     series = []
     for run in runs:
@@ -587,6 +613,10 @@ def build_markdown_report(
             "",
             f"![Detection contact sheet]({markdown_link(images['detection_contact_sheet'], relative_to=report_dir)})",
             "",
+            "## Filtered-track visual comparison",
+            "",
+            f"![Filtered detection contact sheet]({markdown_link(images['filtered_detection_contact_sheet'], relative_to=report_dir)})",
+            "",
             "## Detection counts",
             "",
             f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
@@ -628,6 +658,12 @@ def generate_comparison_report(
         images["detection_contact_sheet"],
         runs,
         frames=[] if frames is None else frames,
+    )
+    draw_detection_contact_sheet(
+        images["filtered_detection_contact_sheet"],
+        runs,
+        frames=[] if frames is None else frames,
+        filtered=True,
     )
     report = report_dir / "comparison_report.md"
     report.write_text(

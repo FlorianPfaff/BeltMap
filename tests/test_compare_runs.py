@@ -72,6 +72,30 @@ def make_run(output_dir: Path, *, threshold: float, count_offset: int) -> None:
             {"track_id": 1, "n_detections": 10, "velocity_ratio_y": 1.4},
         ],
     )
+    write_csv(
+        output_dir / "filtered_velocities.csv",
+        [
+            {"track_id": 0, "n_detections": 5, "velocity_ratio_y": 0.5},
+        ],
+    )
+    write_csv(
+        output_dir / "filtered_tracks.csv",
+        [
+            {
+                "track_id": 0,
+                "track_detection_index": 0,
+                "frame_index": 0,
+                "label": 1,
+                "y": 2.0,
+                "x": 3.0,
+                "area_px": 6 + count_offset,
+                "bbox_top": 1,
+                "bbox_left": 2,
+                "bbox_bottom": 4,
+                "bbox_right": 5,
+            },
+        ],
+    )
     for frame_index in [0, 2]:
         Image.new("L", (8, 8), 32 + 40 * frame_index).save(
             output_dir / f"residual_frame_{frame_index:06d}.png"
@@ -98,7 +122,10 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     assert artifacts.report.is_file()
     assert artifacts.summary_csv.is_file()
     assert set(artifacts.plots) == {"detections_per_frame", "velocity_ratio_histogram"}
-    assert set(artifacts.images) == {"detection_contact_sheet"}
+    assert set(artifacts.images) == {
+        "detection_contact_sheet",
+        "filtered_detection_contact_sheet",
+    }
     for path in [*artifacts.plots.values(), *artifacts.images.values()]:
         assert path.is_file()
         assert path.stat().st_size > 0
@@ -107,6 +134,7 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     assert "T4.0" in report
     assert "T3.5" in report
     assert "Detection contact sheet" in report
+    assert "Filtered detection contact sheet" in report
     rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
     assert rows[0]["label"] == "T4.0"
     assert rows[0]["detection_threshold"] == "4.0"

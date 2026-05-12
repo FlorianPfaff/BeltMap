@@ -48,6 +48,7 @@ outputs/
   config_resolved.json
   detections.csv
   detections_per_frame.csv
+  filtered_tracks.csv
   filtered_velocities.csv
   metadata.json
   phase_estimates.csv
@@ -56,6 +57,7 @@ outputs/
   residual_frame_000000.png
   residual_frame_000001.png
   residual_frame_000002.png
+  tracks.csv
   track_scores.csv
   velocities.csv
 ```
@@ -83,6 +85,7 @@ comparison_report/
   detections_per_frame_comparison.png
   velocity_ratio_histogram_comparison.png
   detection_contact_sheet.png
+  filtered_detection_contact_sheet.png
 ```
 
 `config_resolved.json` is produced by the `beltmap-apply` CLI before the legacy
@@ -240,6 +243,16 @@ Notes:
 - Tracks shorter than `MIN_TRACK_LENGTH` or `tracking.min_track_length` are not
   written as velocity rows.
 
+## `tracks.csv`
+
+Purpose: one row per detection assigned to a raw tracker trajectory.
+
+Format: CSV with a header row.
+
+Columns: `track_id`, `track_detection_index`, and the same crop-local detection
+columns as `detections.csv`. Use this file when you need trajectory membership
+for individual detections rather than one velocity row per track.
+
 ## `metadata.json`
 
 Purpose: driver-level summary of the processed run.
@@ -374,6 +387,16 @@ Default filter: at least five detections and
 `0 <= velocity_ratio_y <= 1.1`. The raw `velocities.csv` file is not modified.
 Existing runs can be post-processed with `beltmap-filter-tracks`.
 
+## `filtered_tracks.csv`
+
+Purpose: subset of `tracks.csv` whose `track_id` is accepted by
+`track_scores.csv`.
+
+Format: same columns and units as `tracks.csv`.
+
+This is useful for visual overlays or downstream analysis that should ignore
+short fragments and physically implausible velocity rows.
+
 ## `residual_frame_*.png`
 
 Purpose: visual debug previews of selected normalized residual frames.
@@ -437,6 +460,7 @@ Files:
 | `detections_per_frame_comparison.png` | Detection-count time series for all runs. |
 | `velocity_ratio_histogram_comparison.png` | Overlaid velocity-ratio histograms. |
 | `detection_contact_sheet.png` | Side-by-side residual preview images with detection boxes. |
+| `filtered_detection_contact_sheet.png` | Side-by-side residual previews with detections from accepted filtered tracks. |
 
 The comparison command tolerates partial runs. If `metadata.json` is absent, it
 falls back to currently available CSV rows and preview images.
