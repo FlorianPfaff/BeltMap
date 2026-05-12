@@ -71,6 +71,18 @@ outputs/
   velocity_ratio_histogram.png
 ```
 
+Running `beltmap-compare` on multiple output directories adds a comparison report
+outside the individual run directories:
+
+```text
+comparison_report/
+  comparison_report.md
+  summary.csv
+  detections_per_frame_comparison.png
+  velocity_ratio_histogram_comparison.png
+  detection_contact_sheet.png
+```
+
 `config_resolved.json` is produced by the `beltmap-apply` CLI before the legacy
 image driver is invoked. Running `scripts/apply_beltmap_to_images.py` directly
 writes the driver outputs, but not necessarily the resolved CLI configuration
@@ -358,3 +370,31 @@ Files:
 
 These PNGs are diagnostic plots, not measurement data. Use the corresponding
 CSV files for quantitative post-processing.
+
+## Comparison report
+
+Purpose: compare two or more BeltMap output directories, especially
+detection-only threshold sweeps that reuse the same reconstructed belt map.
+
+Example:
+
+```bash
+beltmap-compare \
+  --run T4.0=outputs/T4p0 \
+  --run T3.5=outputs/T3p5 \
+  --frames 0,248,496 \
+  --report-dir outputs/threshold_comparison
+```
+
+Files:
+
+| File | Meaning |
+|---|---|
+| `comparison_report.md` | Markdown summary table, visual contact sheet, and interpretation checklist. |
+| `summary.csv` | Machine-readable summary metrics for each compared run. |
+| `detections_per_frame_comparison.png` | Detection-count time series for all runs. |
+| `velocity_ratio_histogram_comparison.png` | Overlaid velocity-ratio histograms. |
+| `detection_contact_sheet.png` | Side-by-side residual preview images with detection boxes. |
+
+The comparison command tolerates partial runs. If `metadata.json` is absent, it
+falls back to currently available CSV rows and preview images.

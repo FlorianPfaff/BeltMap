@@ -47,6 +47,7 @@ Issues = "https://github.com/IPS-Stuttgart/BeltMap/issues"
 beltmap-apply = "beltmap.cli.apply:main"
 beltmap-validate = "beltmap.cli.validate_visual:main"
 beltmap-benchmark = "beltmap.cli.benchmark:main"
+beltmap-compare = "beltmap.cli.compare:main"
 
 [project.optional-dependencies]
 test = [
