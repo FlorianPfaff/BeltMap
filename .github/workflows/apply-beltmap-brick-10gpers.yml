@@ -43,6 +43,31 @@ on:
         required: true
         type: string
         default: "4"
+      detection_max_area_px:
+        description: "Optional maximum connected-component particle area. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
+      detection_min_bbox_width_px:
+        description: "Optional minimum detection bounding-box width. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
+      detection_min_bbox_height_px:
+        description: "Optional minimum detection bounding-box height. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
+      detection_max_bbox_aspect_ratio:
+        description: "Optional maximum detection bounding-box aspect ratio. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
+      detection_min_bbox_extent:
+        description: "Optional minimum detection extent area/bbox_area. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
       min_track_length:
         description: "Minimum detections per track for velocity output"
         required: true
@@ -97,6 +122,11 @@ on:
         required: true
         type: string
         default: "16"
+      map_particle_mask_min_area_px:
+        description: "Minimum component area for map-building particle masks"
+        required: true
+        type: string
+        default: "8"
       registration_search_radius_px:
         description: "Local phase-registration search radius around the motion-model prediction"
         required: true
@@ -228,6 +258,11 @@ jobs:
           BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
           DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
           MIN_AREA_PX: ${{ inputs.min_area_px }}
+          DETECTION_MAX_AREA_PX: ${{ inputs.detection_max_area_px }}
+          DETECTION_MIN_BBOX_WIDTH_PX: ${{ inputs.detection_min_bbox_width_px }}
+          DETECTION_MIN_BBOX_HEIGHT_PX: ${{ inputs.detection_min_bbox_height_px }}
+          DETECTION_MAX_BBOX_ASPECT_RATIO: ${{ inputs.detection_max_bbox_aspect_ratio }}
+          DETECTION_MIN_BBOX_EXTENT: ${{ inputs.detection_min_bbox_extent }}
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
           MAX_MATCH_DISTANCE_PX: ""
           MAX_FRAMES: ${{ inputs.max_frames }}
@@ -239,7 +274,7 @@ jobs:
           MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
-          MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
+          MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -265,6 +300,11 @@ jobs:
               "frame_stride": int(os.environ["FRAME_STRIDE"]),
               "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
               "map_mask_iterations": int(os.environ["MAP_MASK_ITERATIONS"]),
+              "detection_max_area_px": int(os.environ["DETECTION_MAX_AREA_PX"]),
+              "detection_min_bbox_width_px": int(os.environ["DETECTION_MIN_BBOX_WIDTH_PX"]),
+              "detection_min_bbox_height_px": int(os.environ["DETECTION_MIN_BBOX_HEIGHT_PX"]),
+              "detection_max_bbox_aspect_ratio": float(os.environ["DETECTION_MAX_BBOX_ASPECT_RATIO"]),
+              "detection_min_bbox_extent": float(os.environ["DETECTION_MIN_BBOX_EXTENT"]),
               "map_particle_mask_mode": os.environ["MAP_PARTICLE_MASK_MODE"],
               "map_particle_mask_threshold": float(os.environ["MAP_PARTICLE_MASK_THRESHOLD"]),
               "map_particle_mask_grow_threshold": float(os.environ["MAP_PARTICLE_MASK_GROW_THRESHOLD"]),
@@ -418,6 +458,11 @@ jobs:
           BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
           DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
           MIN_AREA_PX: ${{ inputs.min_area_px }}
+          DETECTION_MAX_AREA_PX: ${{ inputs.detection_max_area_px }}
+          DETECTION_MIN_BBOX_WIDTH_PX: ${{ inputs.detection_min_bbox_width_px }}
+          DETECTION_MIN_BBOX_HEIGHT_PX: ${{ inputs.detection_min_bbox_height_px }}
+          DETECTION_MAX_BBOX_ASPECT_RATIO: ${{ inputs.detection_max_bbox_aspect_ratio }}
+          DETECTION_MIN_BBOX_EXTENT: ${{ inputs.detection_min_bbox_extent }}
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
           MAX_MATCH_DISTANCE_PX: ""
           MAX_FRAMES: ${{ inputs.max_frames }}
@@ -429,7 +474,7 @@ jobs:
           MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
-          MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
+          MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -479,6 +524,11 @@ jobs:
           lines.append("[detection]")
           append_value(lines, "threshold", "DETECTION_THRESHOLD")
           append_value(lines, "min_area_px", "MIN_AREA_PX")
+          append_value(lines, "max_area_px", "DETECTION_MAX_AREA_PX")
+          append_value(lines, "min_bbox_width_px", "DETECTION_MIN_BBOX_WIDTH_PX")
+          append_value(lines, "min_bbox_height_px", "DETECTION_MIN_BBOX_HEIGHT_PX")
+          append_value(lines, "max_bbox_aspect_ratio", "DETECTION_MAX_BBOX_ASPECT_RATIO")
+          append_value(lines, "min_bbox_extent", "DETECTION_MIN_BBOX_EXTENT")
           lines.append("")
 
           lines.append("[tracking]")
