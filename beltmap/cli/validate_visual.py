@@ -130,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "report": str(standard_artifacts.report),
+                    "summary": str(standard_artifacts.summary),
                     "plots": {
                         **{key: str(path) for key, path in standard_artifacts.plots.items()},
                         **{key: str(path) for key, path in visual_artifacts.plots.items()},

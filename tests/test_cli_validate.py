@@ -87,6 +87,13 @@ def test_generate_validation_report_writes_markdown_and_plots(tmp_path):
 
     assert artifacts.report == tmp_path / "validation_report.md"
     assert artifacts.report.is_file()
+    assert artifacts.summary == tmp_path / "validation_summary.json"
+    assert artifacts.summary.is_file()
+    summary = json.loads(artifacts.summary.read_text(encoding="utf-8"))
+    assert summary["run"]["n_images"] == 3
+    assert summary["detections"]["zero_detection_frames"] == 1
+    assert summary["velocities"]["velocity_ratio_0_to_1_share"] == 1.0
+    assert summary["track_lengths"]["tracks_ge_5"] == 1
     report = artifacts.report.read_text(encoding="utf-8")
     assert "# BeltMap validation report" in report
     assert "| selected frames | 3 |" in report
@@ -116,7 +123,9 @@ def test_validate_main_supports_no_plots(tmp_path, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["report"] == str(tmp_path / "validation_report.md")
+    assert payload["summary"] == str(tmp_path / "validation_summary.json")
     assert payload["plots"] == {}
     assert (tmp_path / "validation_report.md").is_file()
+    assert (tmp_path / "validation_summary.json").is_file()
     assert not (tmp_path / "phase_corrections.png").exists()
     assert not (tmp_path / "phase_correction_timeseries.png").exists()

@@ -74,6 +74,7 @@ report and diagnostic plots:
 ```text
 outputs/
   validation_report.md
+  validation_summary.json
   phase_corrections.png
   phase_correction_timeseries.png
   registration_score.png
@@ -547,6 +548,7 @@ Files:
 | File | Meaning |
 |---|---|
 | `validation_report.md` | Markdown summary of run metadata, missing expected files, phase-registration statistics, detection counts, velocity-ratio statistics, track-length statistics, and belt-map progress. |
+| `validation_summary.json` | Machine-readable validation metrics for dashboards, workflow checks, and run comparisons. |
 | `phase_corrections.png` | Histogram of finite `correction_px` values from `phase_estimates.csv`. |
 | `phase_correction_timeseries.png` | Time series of `correction_px` versus `frame_index`; useful for spotting drift, periodic failures, or search-boundary clipping. |
 | `registration_score.png` | Time series of finite registration `score` values from `phase_estimates.csv`. |

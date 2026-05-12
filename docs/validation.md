@@ -5,6 +5,12 @@ make an image-sequence run auditable without requiring a separate benchmark
 framework: every diagnostic below can be derived from the standard driver
 outputs in `outputs/`.
 
+`beltmap-validate` writes both `validation_report.md` for humans and
+`validation_summary.json` for scripts, dashboards, and workflow checks. The JSON
+summary includes the same core statistics used by the report: phase correction
+and score distributions, detection counts, velocity-ratio distribution,
+track-length counts, missing files, and final belt-map progress.
+
 Use this document for two kinds of checks:
 
 1. **Synthetic sanity checks** with known motion and known particle placement.

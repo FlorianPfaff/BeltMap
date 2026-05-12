@@ -42,6 +42,7 @@ class PlotGeometry:
 @dataclass(frozen=True)
 class ValidationArtifacts:
     report: Path
+    summary: Path
     plots: dict[str, Path]
 
 
@@ -162,6 +163,10 @@ def describe(values: Iterable[float]) -> dict[str, float | int | None]:
         "q25": float(np.percentile(arr, 25)),
         "q75": float(np.percentile(arr, 75)),
     }
+
+
+def safe_share(count: int, total: int) -> float | None:
+    return None if total <= 0 else float(count / total)
 
 
 def format_value(value: Any, *, digits: int = 4) -> str:
@@ -550,6 +555,59 @@ def build_markdown_report(
     return "\n".join(line for line in lines if line is not None)
 
 
+def build_validation_summary(output_dir: Path, data: dict[str, Any]) -> dict[str, Any]:
+    metadata = data["metadata"]
+    phase_rows = data["phase_rows"]
+    detection_rows = data["detections_per_frame"]
+    velocity_rows = data["velocities"]
+    progress_rows = data["progress"]
+
+    corrections = finite_values(phase_rows, "correction_px")
+    scores = finite_values(phase_rows, "score")
+    detections = finite_values(detection_rows, "n_detections")
+    velocity_ratios = finite_values(velocity_rows, "velocity_ratio_y")
+    track_lengths = finite_values(velocity_rows, "n_detections")
+    velocity_ratios_0_to_1 = sum(1 for value in velocity_ratios if 0.0 <= value <= 1.0)
+
+    return {
+        "output_dir": str(output_dir),
+        "missing_standard_files": missing_standard_files(output_dir),
+        "run": {
+            "n_images": metadata.get("n_images"),
+            "frame_stride": metadata.get("frame_stride"),
+            "belt_velocity_px_per_frame": metadata.get("belt_velocity_px_per_frame"),
+            "belt_map_height_px": metadata.get("belt_map_height_px"),
+            "n_phase_estimates": metadata.get("n_phase_estimates"),
+            "n_detections": metadata.get("n_detections"),
+            "n_tracks": metadata.get("n_tracks"),
+            "n_velocity_estimates": metadata.get("n_velocity_estimates"),
+            "n_filtered_velocity_estimates": metadata.get("n_filtered_velocity_estimates"),
+        },
+        "phase_registration": {
+            "correction_px": describe(corrections),
+            "score": describe(scores),
+        },
+        "detections": {
+            "per_frame": describe(detections),
+            "zero_detection_frames": sum(1 for value in detections if value == 0),
+        },
+        "velocities": {
+            "velocity_ratio_y": describe(velocity_ratios),
+            "velocity_ratio_0_to_1_count": velocity_ratios_0_to_1,
+            "velocity_ratio_0_to_1_share": safe_share(
+                velocity_ratios_0_to_1,
+                len(velocity_ratios),
+            ),
+        },
+        "track_lengths": {
+            "n_detections": describe(track_lengths),
+            "tracks_ge_5": sum(1 for value in track_lengths if value >= 5),
+            "tracks_ge_10": sum(1 for value in track_lengths if value >= 10),
+        },
+        "belt_map_progress": final_belt_map_progress(progress_rows),
+    }
+
+
 def generate_validation_report(
     output_dir: Path,
     *,
@@ -558,12 +616,15 @@ def generate_validation_report(
 ) -> ValidationArtifacts:
     output_dir.mkdir(parents=True, exist_ok=True)
     report = report_path or (output_dir / "validation_report.md")
+    summary_path = report.with_name("validation_summary.json")
     report.parent.mkdir(parents=True, exist_ok=True)
     data = load_run_data(output_dir)
     plots = write_plots(output_dir, data) if make_plots else {}
+    summary = build_validation_summary(output_dir, data)
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     markdown = build_markdown_report(output_dir, report, data, plots)
     report.write_text(markdown, encoding="utf-8")
-    return ValidationArtifacts(report=report, plots=plots)
+    return ValidationArtifacts(report=report, summary=summary_path, plots=plots)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -579,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "report": str(artifacts.report),
+                    "summary": str(artifacts.summary),
                     "plots": {key: str(path) for key, path in artifacts.plots.items()},
                 },
                 indent=2,

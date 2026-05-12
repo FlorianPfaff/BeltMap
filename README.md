@@ -128,6 +128,7 @@ The validation command reads the standard driver outputs and writes:
 ```text
 outputs/
   validation_report.md
+  validation_summary.json
   phase_corrections.png
   phase_correction_timeseries.png
   registration_score.png
