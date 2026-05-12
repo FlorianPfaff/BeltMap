@@ -17,6 +17,7 @@ PLOT_FILENAMES = {
     "registration_score": "registration_score.png",
     "detections_per_frame": "detections_per_frame.png",
     "velocity_ratio_histogram": "velocity_ratio_histogram.png",
+    "track_length_histogram": "track_length_histogram.png",
 }
 
 
@@ -368,6 +369,12 @@ def write_plots(output_dir: Path, data: dict[str, Any]) -> dict[str, Path]:
         values=finite_values(velocity_rows, "velocity_ratio_y"),
         x_label="velocity_ratio_y",
     )
+    draw_histogram(
+        paths["track_length_histogram"],
+        title="Track lengths",
+        values=finite_values(velocity_rows, "n_detections"),
+        x_label="detections per velocity track",
+    )
     return paths
 
 
@@ -415,10 +422,14 @@ def build_markdown_report(
     scores = finite_values(phase_rows, "score")
     detections = finite_values(detection_rows, "n_detections")
     velocity_ratios = finite_values(velocity_rows, "velocity_ratio_y")
+    track_lengths = finite_values(velocity_rows, "n_detections")
     correction_stats = describe(corrections)
     score_stats = describe(scores)
     detection_stats = describe(detections)
     ratio_stats = describe(velocity_ratios)
+    track_length_stats = describe(track_lengths)
+    long_tracks_ge_5 = sum(1 for value in track_lengths if value >= 5)
+    long_tracks_ge_10 = sum(1 for value in track_lengths if value >= 10)
     missing = missing_standard_files(output_dir)
     map_progress = final_belt_map_progress(progress_rows)
 
@@ -503,6 +514,19 @@ def build_markdown_report(
             f"| max | {format_value(ratio_stats['max'])} |",
             "",
             plot_line("velocity_ratio_histogram", "Velocity-ratio histogram"),
+            "## Track lengths",
+            "",
+            "| Statistic | n_detections per velocity track |",
+            "| --- | ---: |",
+            f"| count | {track_length_stats['count']} |",
+            f"| median | {format_value(track_length_stats['median'])} |",
+            f"| q25 | {format_value(track_length_stats['q25'])} |",
+            f"| q75 | {format_value(track_length_stats['q75'])} |",
+            f"| max | {format_value(track_length_stats['max'])} |",
+            f"| tracks >= 5 detections | {long_tracks_ge_5} |",
+            f"| tracks >= 10 detections | {long_tracks_ge_10} |",
+            "",
+            plot_line("track_length_histogram", "Track-length histogram"),
             "## Belt-map progress",
             "",
             "| Quantity | Value |",
@@ -519,6 +543,7 @@ def build_markdown_report(
             "- Check `belt_map.png` for particle ghosts or interpolation bands.",
             "- Check detection-count spikes against residual previews.",
             "- Check velocity-ratio outliers against the experiment physics.",
+            "- Check that useful configurations produce enough long tracks, not just many tiny detections.",
             "",
         ]
     )

@@ -75,7 +75,7 @@ def make_minimal_outputs(output_dir: Path) -> None:
     write_csv(
         output_dir / "velocities.csv",
         [
-            {"track_id": 0, "velocity_ratio_y": 0.5},
+            {"track_id": 0, "velocity_ratio_y": 0.5, "n_detections": 8},
         ],
     )
 
@@ -93,12 +93,15 @@ def test_generate_validation_report_writes_markdown_and_plots(tmp_path):
     assert "phase_corrections.png" in report
     assert "phase_correction_timeseries.png" in report
     assert "velocity_ratio_histogram.png" in report
+    assert "track_length_histogram.png" in report
+    assert "| tracks >= 5 detections | 1 |" in report
     assert set(artifacts.plots) == {
         "phase_corrections",
         "phase_correction_timeseries",
         "registration_score",
         "detections_per_frame",
         "velocity_ratio_histogram",
+        "track_length_histogram",
     }
     for path in artifacts.plots.values():
         assert path.is_file()

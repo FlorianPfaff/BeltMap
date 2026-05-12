@@ -133,6 +133,7 @@ outputs/
   registration_score.png
   detections_per_frame.png
   velocity_ratio_histogram.png
+  track_length_histogram.png
   residual_histogram.png
   belt_map_coverage.png
   detections_overlay_sample_000000.png

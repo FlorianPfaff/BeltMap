@@ -79,6 +79,7 @@ outputs/
   registration_score.png
   detections_per_frame.png
   velocity_ratio_histogram.png
+  track_length_histogram.png
 ```
 
 Running `beltmap-compare` on multiple output directories adds a comparison report
@@ -540,12 +541,13 @@ Files:
 
 | File | Meaning |
 |---|---|
-| `validation_report.md` | Markdown summary of run metadata, missing expected files, phase-registration statistics, detection counts, velocity-ratio statistics, and belt-map progress. |
+| `validation_report.md` | Markdown summary of run metadata, missing expected files, phase-registration statistics, detection counts, velocity-ratio statistics, track-length statistics, and belt-map progress. |
 | `phase_corrections.png` | Histogram of finite `correction_px` values from `phase_estimates.csv`. |
 | `phase_correction_timeseries.png` | Time series of `correction_px` versus `frame_index`; useful for spotting drift, periodic failures, or search-boundary clipping. |
 | `registration_score.png` | Time series of finite registration `score` values from `phase_estimates.csv`. |
 | `detections_per_frame.png` | Time series of `n_detections` values from `detections_per_frame.csv`. |
 | `velocity_ratio_histogram.png` | Histogram of finite `velocity_ratio_y` values from `velocities.csv`. |
+| `track_length_histogram.png` | Histogram of `n_detections` values from `velocities.csv`, useful for spotting configurations that produce only tiny tracks. |
 
 These PNGs are diagnostic plots, not measurement data. Use the corresponding
 CSV files for quantitative post-processing.

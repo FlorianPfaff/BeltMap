@@ -188,7 +188,35 @@ interquartile range of velocity_ratio_y
 number of ratios outside the physically expected range for the experiment
 ```
 
-## Diagnostic 6: residual preview inspection
+## Diagnostic 6: track-length histogram
+
+Use `velocities.csv:n_detections`.
+
+Expected behavior:
+
+- A useful setting should produce enough multi-frame tracks to estimate
+  velocities credibly.
+- A setting that produces many one- or two-detection tracks is usually too
+  permissive, has too many false positives, or has association settings that are
+  too strict.
+
+Suggested plot:
+
+```text
+x-axis: detections per velocity track
+ y-axis: number of tracks
+```
+
+Report:
+
+```text
+number of velocity tracks
+median detections per velocity track
+number of tracks with at least 5 detections
+number of tracks with at least 10 detections
+```
+
+## Diagnostic 7: residual preview inspection
 
 Use `residual_frame_*.png` previews when enabled. At minimum, inspect the first
 few frames and any frames flagged by low registration score or unusually high
