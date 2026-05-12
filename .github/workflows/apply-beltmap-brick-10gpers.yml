@@ -1,7 +1,7 @@
 name: Apply BeltMap to Brick 10g/s Zenodo images
 
 run-name: >-
-  Brick 10g/s implementation=${{ inputs.implementation || 'scikit-image' }}
+  Brick 10g/s implementation=scikit-image
   max_frames=${{ inputs.max_frames || '0' }}
   stride=${{ inputs.frame_stride || '1' }}
   velocity=${{ inputs.belt_velocity_px_per_frame || 'auto' }}
@@ -25,14 +25,6 @@ on:
         required: false
         type: string
         default: "14723"
-      implementation:
-        description: "Implementation/dependency set: NumPy-only fallback or scikit-image accelerated path."
-        required: true
-        type: choice
-        options:
-          - numpy
-          - scikit-image
-        default: "scikit-image"
       detection_threshold:
         description: "Threshold on normalized residual for bright brick particles"
         required: true
@@ -43,31 +35,11 @@ on:
         required: true
         type: string
         default: "4"
-      detection_max_area_px:
-        description: "Optional maximum connected-component particle area. 0 = disabled."
+      detection_shape_gates:
+        description: "Detection gates as max_area,min_width,min_height,max_aspect,min_extent. 0 disables a gate."
         required: true
         type: string
-        default: "0"
-      detection_min_bbox_width_px:
-        description: "Optional minimum detection bounding-box width. 0 = disabled."
-        required: true
-        type: string
-        default: "0"
-      detection_min_bbox_height_px:
-        description: "Optional minimum detection bounding-box height. 0 = disabled."
-        required: true
-        type: string
-        default: "0"
-      detection_max_bbox_aspect_ratio:
-        description: "Optional maximum detection bounding-box aspect ratio. 0 = disabled."
-        required: true
-        type: string
-        default: "0"
-      detection_min_bbox_extent:
-        description: "Optional minimum detection extent area/bbox_area. 0 = disabled."
-        required: true
-        type: string
-        default: "0"
+        default: "0,0,0,0,0"
       min_track_length:
         description: "Minimum detections per track for velocity output"
         required: true
@@ -122,11 +94,6 @@ on:
         required: true
         type: string
         default: "16"
-      map_particle_mask_min_area_px:
-        description: "Minimum component area for map-building particle masks"
-        required: true
-        type: string
-        default: "8"
       registration_search_radius_px:
         description: "Local phase-registration search radius around the motion-model prediction"
         required: true
@@ -213,7 +180,7 @@ jobs:
 
       - name: Install and test package
         env:
-          BELTMAP_IMPLEMENTATION: ${{ inputs.implementation }}
+          BELTMAP_IMPLEMENTATION: scikit-image
         run: |
           rm -rf .venv
           case "$BELTMAP_IMPLEMENTATION" in
@@ -258,11 +225,7 @@ jobs:
           BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
           DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
           MIN_AREA_PX: ${{ inputs.min_area_px }}
-          DETECTION_MAX_AREA_PX: ${{ inputs.detection_max_area_px }}
-          DETECTION_MIN_BBOX_WIDTH_PX: ${{ inputs.detection_min_bbox_width_px }}
-          DETECTION_MIN_BBOX_HEIGHT_PX: ${{ inputs.detection_min_bbox_height_px }}
-          DETECTION_MAX_BBOX_ASPECT_RATIO: ${{ inputs.detection_max_bbox_aspect_ratio }}
-          DETECTION_MIN_BBOX_EXTENT: ${{ inputs.detection_min_bbox_extent }}
+          DETECTION_SHAPE_GATES: ${{ inputs.detection_shape_gates }}
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
           MAX_MATCH_DISTANCE_PX: ""
           MAX_FRAMES: ${{ inputs.max_frames }}
@@ -274,7 +237,7 @@ jobs:
           MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
-          MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
+          MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -300,11 +263,7 @@ jobs:
               "frame_stride": int(os.environ["FRAME_STRIDE"]),
               "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
               "map_mask_iterations": int(os.environ["MAP_MASK_ITERATIONS"]),
-              "detection_max_area_px": int(os.environ["DETECTION_MAX_AREA_PX"]),
-              "detection_min_bbox_width_px": int(os.environ["DETECTION_MIN_BBOX_WIDTH_PX"]),
-              "detection_min_bbox_height_px": int(os.environ["DETECTION_MIN_BBOX_HEIGHT_PX"]),
-              "detection_max_bbox_aspect_ratio": float(os.environ["DETECTION_MAX_BBOX_ASPECT_RATIO"]),
-              "detection_min_bbox_extent": float(os.environ["DETECTION_MIN_BBOX_EXTENT"]),
+              "detection_shape_gates": os.environ["DETECTION_SHAPE_GATES"],
               "map_particle_mask_mode": os.environ["MAP_PARTICLE_MASK_MODE"],
               "map_particle_mask_threshold": float(os.environ["MAP_PARTICLE_MASK_THRESHOLD"]),
               "map_particle_mask_grow_threshold": float(os.environ["MAP_PARTICLE_MASK_GROW_THRESHOLD"]),
@@ -363,7 +322,7 @@ jobs:
 
       - name: Install BeltMap and runtime dependencies
         env:
-          BELTMAP_IMPLEMENTATION: ${{ inputs.implementation }}
+          BELTMAP_IMPLEMENTATION: scikit-image
         run: |
           rm -rf .venv
           case "$BELTMAP_IMPLEMENTATION" in
@@ -458,11 +417,7 @@ jobs:
           BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
           DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
           MIN_AREA_PX: ${{ inputs.min_area_px }}
-          DETECTION_MAX_AREA_PX: ${{ inputs.detection_max_area_px }}
-          DETECTION_MIN_BBOX_WIDTH_PX: ${{ inputs.detection_min_bbox_width_px }}
-          DETECTION_MIN_BBOX_HEIGHT_PX: ${{ inputs.detection_min_bbox_height_px }}
-          DETECTION_MAX_BBOX_ASPECT_RATIO: ${{ inputs.detection_max_bbox_aspect_ratio }}
-          DETECTION_MIN_BBOX_EXTENT: ${{ inputs.detection_min_bbox_extent }}
+          DETECTION_SHAPE_GATES: ${{ inputs.detection_shape_gates }}
           MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
           MAX_MATCH_DISTANCE_PX: ""
           MAX_FRAMES: ${{ inputs.max_frames }}
@@ -474,7 +429,7 @@ jobs:
           MAP_PARTICLE_MASK_GROW_THRESHOLD: ${{ inputs.map_particle_mask_grow_threshold }}
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
-          MAP_PARTICLE_MASK_MIN_AREA_PX: ${{ inputs.map_particle_mask_min_area_px }}
+          MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -507,6 +462,27 @@ jobs:
                   return
               lines.append(f"{key} = {json.dumps(value)}")
 
+          def parse_detection_shape_gates() -> dict[str, str]:
+              raw = env_value("DETECTION_SHAPE_GATES") or "0,0,0,0,0"
+              values = [part.strip() for part in raw.split(",")]
+              if len(values) != 5:
+                  raise SystemExit(
+                      "DETECTION_SHAPE_GATES must be max_area,min_width,min_height,"
+                      "max_aspect,min_extent"
+                  )
+              return dict(
+                  zip(
+                      [
+                          "max_area_px",
+                          "min_bbox_width_px",
+                          "min_bbox_height_px",
+                          "max_bbox_aspect_ratio",
+                          "min_bbox_extent",
+                      ],
+                      values,
+                  )
+              )
+
           lines: list[str] = []
           lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
 
@@ -524,11 +500,8 @@ jobs:
           lines.append("[detection]")
           append_value(lines, "threshold", "DETECTION_THRESHOLD")
           append_value(lines, "min_area_px", "MIN_AREA_PX")
-          append_value(lines, "max_area_px", "DETECTION_MAX_AREA_PX")
-          append_value(lines, "min_bbox_width_px", "DETECTION_MIN_BBOX_WIDTH_PX")
-          append_value(lines, "min_bbox_height_px", "DETECTION_MIN_BBOX_HEIGHT_PX")
-          append_value(lines, "max_bbox_aspect_ratio", "DETECTION_MAX_BBOX_ASPECT_RATIO")
-          append_value(lines, "min_bbox_extent", "DETECTION_MIN_BBOX_EXTENT")
+          for key, value in parse_detection_shape_gates().items():
+              lines.append(f"{key} = {json.dumps(value)}")
           lines.append("")
 
           lines.append("[tracking]")
@@ -583,7 +556,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: beltmap-brick-10gpers-${{ inputs.implementation }}-results
+          name: beltmap-brick-10gpers-scikit-image-results
           path: outputs/**
           if-no-files-found: warn
           retention-days: 14
