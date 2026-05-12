@@ -80,6 +80,11 @@ outputs/
   detections_per_frame.png
   velocity_ratio_histogram.png
   track_length_histogram.png
+  residual_histogram.png
+  belt_map_coverage.png
+  overlay_contact_sheet.png
+  detections_overlay_sample_000000.png
+  tracks_overlay_sample_000000.png
 ```
 
 Running `beltmap-compare` on multiple output directories adds a comparison report
@@ -548,6 +553,11 @@ Files:
 | `detections_per_frame.png` | Time series of `n_detections` values from `detections_per_frame.csv`. |
 | `velocity_ratio_histogram.png` | Histogram of finite `velocity_ratio_y` values from `velocities.csv`. |
 | `track_length_histogram.png` | Histogram of `n_detections` values from `velocities.csv`, useful for spotting configurations that produce only tiny tracks. |
+| `residual_histogram.png` | Histogram over saved residual preview PNG intensities. |
+| `belt_map_coverage.png` | Nominal phase-trajectory coverage proxy for the belt map. |
+| `overlay_contact_sheet.png` | Side-by-side sheet pairing detection and track overlay samples by frame. |
+| `detections_overlay_sample_*.png` | Residual preview samples with detection boxes and centroids. |
+| `tracks_overlay_sample_*.png` | Residual preview samples with reconstructed track polylines. |
 
 These PNGs are diagnostic plots, not measurement data. Use the corresponding
 CSV files for quantitative post-processing.

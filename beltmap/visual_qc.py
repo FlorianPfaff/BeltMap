@@ -413,6 +413,90 @@ def draw_track_overlays(
     return created
 
 
+def make_thumbnail(path: Path, *, size: tuple[int, int]) -> Image.Image:
+    """Load an image and return a thumbnail on a white RGB canvas."""
+
+    image = Image.open(path).convert("RGB")
+    image.thumbnail(size)
+    canvas = Image.new("RGB", size, "white")
+    offset = ((size[0] - image.width) // 2, (size[1] - image.height) // 2)
+    canvas.paste(image, offset)
+    return canvas
+
+
+def draw_overlay_contact_sheet(
+    output_dir: Path,
+    *,
+    detection_overlays: list[Path],
+    track_overlays: list[Path],
+    max_rows: int = 6,
+) -> Path:
+    """Tile detection and track overlays into one quick-look contact sheet."""
+
+    out_path = output_dir / "overlay_contact_sheet.png"
+    detection_by_frame = {
+        frame: path
+        for path in detection_overlays
+        if (frame := parse_frame_index_from_preview(path)) is not None
+    }
+    track_by_frame = {
+        frame: path
+        for path in track_overlays
+        if (frame := parse_frame_index_from_preview(path)) is not None
+    }
+    frame_indices = sorted(set(detection_by_frame) | set(track_by_frame))[:max_rows]
+    if not frame_indices:
+        draw_empty_plot(out_path, "Overlay contact sheet", "No overlay samples available")
+        return out_path
+
+    thumb_size = (520, 360)
+    margin = 24
+    header_h = 54
+    label_h = 24
+    row_h = label_h + thumb_size[1] + margin
+    width = 2 * thumb_size[0] + 3 * margin
+    height = header_h + len(frame_indices) * row_h + margin
+    sheet = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(sheet)
+    draw.text((margin, 18), "Overlay contact sheet", fill="black")
+    draw.text((margin, header_h - 20), "Detections", fill="black")
+    draw.text((2 * margin + thumb_size[0], header_h - 20), "Tracks", fill="black")
+
+    for row_index, frame_index in enumerate(frame_indices):
+        y = header_h + row_index * row_h
+        draw.text((margin, y), f"frame {frame_index}", fill="black")
+        det_path = detection_by_frame.get(frame_index)
+        track_path = track_by_frame.get(frame_index)
+        if det_path is not None:
+            sheet.paste(make_thumbnail(det_path, size=thumb_size), (margin, y + label_h))
+        if track_path is not None:
+            sheet.paste(
+                make_thumbnail(track_path, size=thumb_size),
+                (2 * margin + thumb_size[0], y + label_h),
+            )
+        draw.rectangle(
+            (
+                margin,
+                y + label_h,
+                margin + thumb_size[0] - 1,
+                y + label_h + thumb_size[1] - 1,
+            ),
+            outline="lightgray",
+        )
+        draw.rectangle(
+            (
+                2 * margin + thumb_size[0],
+                y + label_h,
+                2 * margin + 2 * thumb_size[0] - 1,
+                y + label_h + thumb_size[1] - 1,
+            ),
+            outline="lightgray",
+        )
+
+    sheet.save(out_path)
+    return out_path
+
+
 def generate_visual_qc(output_dir: Path, data: dict[str, Any]) -> VisualQcArtifacts:
     """Generate residual, coverage, detection-overlay, and track-overlay QC."""
 
@@ -451,11 +535,17 @@ def generate_visual_qc(output_dir: Path, data: dict[str, Any]) -> VisualQcArtifa
         detections_by_frame=detections_by_frame,
         tracks=tracks,
     )
+    contact_sheet = draw_overlay_contact_sheet(
+        output_dir,
+        detection_overlays=detection_overlays,
+        track_overlays=track_overlays,
+    )
 
     return VisualQcArtifacts(
         plots={
             "residual_histogram": residual_histogram,
             "belt_map_coverage": coverage_path,
+            "overlay_contact_sheet": contact_sheet,
         },
         images={
             "detections_overlay": detection_overlays,

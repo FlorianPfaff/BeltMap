@@ -76,7 +76,11 @@ def test_generate_visual_qc_writes_histogram_coverage_and_overlays(tmp_path):
 
     artifacts = generate_visual_qc(tmp_path, data)
 
-    assert set(artifacts.plots) == {"residual_histogram", "belt_map_coverage"}
+    assert set(artifacts.plots) == {
+        "residual_histogram",
+        "belt_map_coverage",
+        "overlay_contact_sheet",
+    }
     assert set(artifacts.images) == {"detections_overlay", "tracks_overlay"}
     for path in artifacts.plots.values():
         assert path.is_file()

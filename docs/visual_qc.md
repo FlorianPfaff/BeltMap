@@ -11,6 +11,7 @@ enough to decide whether the result is credible.
 |---|---|
 | `residual_histogram.png` | Histogram over saved residual preview PNG intensities. This is a quick sanity check for unusual clipping, saturation, or nearly empty residual previews. |
 | `belt_map_coverage.png` | Nominal belt-map observation coverage induced by the recovered phase trajectory and crop geometry. This is a QC proxy, not the exact driver accumulation mask. |
+| `overlay_contact_sheet.png` | Side-by-side sheet pairing detection and track overlay samples by frame. |
 | `detections_overlay_sample_*.png` | Residual preview images with current-frame detection boxes and centroids overlaid. |
 | `tracks_overlay_sample_*.png` | Residual preview images with simple nearest-neighbor track polylines overlaid for sanity checking association quality. |
 

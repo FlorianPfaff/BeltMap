@@ -136,6 +136,7 @@ outputs/
   track_length_histogram.png
   residual_histogram.png
   belt_map_coverage.png
+  overlay_contact_sheet.png
   detections_overlay_sample_000000.png
   detections_overlay_sample_000001.png
   detections_overlay_sample_000002.png

@@ -43,6 +43,7 @@ def append_visual_qc_section(report_path: Path, artifacts: VisualQcArtifacts) ->
     report_dir = report_path.parent
     residual_histogram = artifacts.plots.get("residual_histogram")
     belt_map_coverage = artifacts.plots.get("belt_map_coverage")
+    overlay_contact_sheet = artifacts.plots.get("overlay_contact_sheet")
     lines = [
         "",
         "## Visual quality-control artifacts",
@@ -70,6 +71,15 @@ def append_visual_qc_section(report_path: Path, artifacts: VisualQcArtifacts) ->
                 "",
             ]
         )
+    if overlay_contact_sheet is not None:
+        lines.extend(
+            [
+                "### Overlay contact sheet",
+                "",
+                f"![Overlay contact sheet]({markdown_link(overlay_contact_sheet, relative_to=report_dir)})",
+                "",
+            ]
+        )
     lines.extend(
         image_gallery_lines(
             artifacts.images.get("detections_overlay", []),
@@ -90,6 +100,7 @@ def append_visual_qc_section(report_path: Path, artifacts: VisualQcArtifacts) ->
             "",
             "- `residual_histogram.png` summarizes saved residual preview PNG intensities.",
             "- `belt_map_coverage.png` is nominal phase-trajectory coverage, not the exact accumulation mask.",
+            "- `overlay_contact_sheet.png` pairs detection and track overlays for quick review.",
             "- `detections_overlay_sample_*.png` overlays current-frame boxes and centroids on residual previews.",
             "- `tracks_overlay_sample_*.png` reconstructs simple nearest-neighbor tracks for visual sanity checks.",
             "",
