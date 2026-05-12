@@ -274,6 +274,11 @@ Important fields:
 | `reference_phase_px` | px | Phase assigned to the reference frame by the map builder. |
 | `detection_threshold` | z | Threshold applied to the normalized residual image. |
 | `min_area_px` | px | Minimum connected-component area for detection output. |
+| `detection_max_area_px` | px | Optional maximum connected-component area, or `null` when disabled. |
+| `detection_min_bbox_width_px` | px | Optional minimum component bounding-box width, or `null` when disabled. |
+| `detection_min_bbox_height_px` | px | Optional minimum component bounding-box height, or `null` when disabled. |
+| `detection_max_bbox_aspect_ratio` | ratio | Optional maximum component bounding-box aspect ratio, or `null` when disabled. |
+| `detection_min_bbox_extent` | fraction | Optional minimum component extent, or `null` when disabled. |
 | `map_mask_iterations` | count | Number of particle-mask refinement iterations used for map building. |
 | `map_particle_mask_threshold` | z | Threshold used for particle masking during map reconstruction. |
 | `map_particle_mask_margin_px` | px | Bounding-box margin used when excluding particle pixels from the map. |

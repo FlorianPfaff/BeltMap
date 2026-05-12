@@ -62,6 +62,29 @@ def test_extract_particle_detections_honors_connectivity():
     assert [detection.area_px for detection in detections_8] == [2]
 
 
+def test_extract_particle_detections_applies_shape_gates():
+    mask = np.zeros((16, 16), dtype=bool)
+    mask[2:6, 2:6] = True
+    mask[1:13, 12] = True
+    mask[10, 2:12:2] = True
+
+    detections = extract_particle_detections(
+        mask,
+        config=ParticleComponentConfig(
+            min_area_px=4,
+            min_bbox_width_px=3,
+            min_bbox_height_px=3,
+            max_bbox_aspect_ratio=3.0,
+            min_bbox_extent=0.4,
+        ),
+    )
+
+    assert len(detections) == 1
+    assert detections[0].bbox_top == 2
+    assert detections[0].bbox_left == 2
+    assert detections[0].area_px == 16
+
+
 def test_connected_components_prefers_accelerated_scipy_labeler(monkeypatch):
     mask = np.array([[True]])
     expected = [(np.array([0]), np.array([0]))]

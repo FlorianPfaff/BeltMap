@@ -91,6 +91,11 @@ underscores.
 | `belt.period_px` | `BELT_PERIOD_PX` | `--belt-period-px` | unset | px | Belt circumference/period in belt-map pixels. If unset or non-positive, the driver builds a finite map covering the selected sequence phase range. |
 | `detection.threshold` | `DETECTION_THRESHOLD` | `--detection-threshold` | `5.0` | z | Threshold on normalized residuals for final bright-particle detection. |
 | `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. Must be at least 1. |
+| `detection.max_area_px` | `DETECTION_MAX_AREA_PX` | `--detection-max-area-px` | `0` | px | Optional maximum connected-component area. `0` disables this gate. |
+| `detection.min_bbox_width_px` | `DETECTION_MIN_BBOX_WIDTH_PX` | `--detection-min-bbox-width-px` | `0` | px | Optional minimum component bounding-box width. `0` disables this gate. |
+| `detection.min_bbox_height_px` | `DETECTION_MIN_BBOX_HEIGHT_PX` | `--detection-min-bbox-height-px` | `0` | px | Optional minimum component bounding-box height. `0` disables this gate. |
+| `detection.max_bbox_aspect_ratio` | `DETECTION_MAX_BBOX_ASPECT_RATIO` | `--detection-max-bbox-aspect-ratio` | `0` | ratio | Optional maximum bounding-box aspect ratio `max(height/width, width/height)`. `0` disables this gate. |
+| `detection.min_bbox_extent` | `DETECTION_MIN_BBOX_EXTENT` | `--detection-min-bbox-extent` | `0` | fraction | Optional minimum component extent `area / (bbox_width * bbox_height)`. `0` disables this gate. |
 | `tracking.min_track_length` | `MIN_TRACK_LENGTH` | `--min-track-length` | `2` | detections | Minimum number of detections required before a particle track contributes a velocity row. Must be at least 1 at driver parsing and at least 2 for velocity estimation. |
 | `tracking.max_match_distance_px` | `MAX_MATCH_DISTANCE_PX` | `--max-match-distance-px` | `max(5, 1.5 * abs(belt_velocity))` | px | Maximum frame-to-frame nearest-neighbor association distance for tracking. Leave unset to derive it from the belt speed. |
 | `track_filter.min_length` | `TRACK_FILTER_MIN_LENGTH` | `--track-filter-min-length` | `max(5, tracking.min_track_length)` | detections | Minimum detections per accepted filtered velocity row. Raw `velocities.csv` is not modified. |
@@ -178,6 +183,27 @@ When `reuse.phase_estimates_path` is also set, the driver uses those per-frame
 phases directly. Otherwise it recomputes per-frame phases by registering each
 selected frame against the reused map, then proceeds with residual rendering,
 detection, tracking, and velocity estimation.
+
+## Shape and scratch gating
+
+Bright belt scratches often survive residual thresholding as thin or sparse
+connected components. The detection shape gates reject those components before
+tracking while leaving the residual threshold unchanged. For the brick sequence,
+a useful diagnostic starting point is:
+
+```toml
+[detection]
+threshold = 3.5
+min_area_px = 4
+min_bbox_width_px = 3
+min_bbox_height_px = 3
+max_bbox_aspect_ratio = 4.0
+min_bbox_extent = 0.15
+```
+
+These gates are deliberately disabled by default because the right values depend
+on particle size, imaging scale, and whether particles are partly cut by the belt
+crop boundary.
 
 ## Track-level filtering
 

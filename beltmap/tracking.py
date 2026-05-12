@@ -26,6 +26,10 @@ class ParticleComponentConfig:
 
     min_area_px: int = 1
     max_area_px: int | None = None
+    min_bbox_width_px: int | None = None
+    min_bbox_height_px: int | None = None
+    max_bbox_aspect_ratio: float | None = None
+    min_bbox_extent: float | None = None
     connectivity: int = 8
     weighted_centroid: bool = True
 
@@ -151,6 +155,19 @@ def extract_particle_detections(
             continue
         if cfg.max_area_px is not None and area > cfg.max_area_px:
             continue
+        top = int(np.min(rows))
+        left = int(np.min(cols))
+        bottom = int(np.max(rows)) + 1
+        right = int(np.max(cols)) + 1
+        height = bottom - top
+        width = right - left
+        if not _component_shape_passes(
+            area=area,
+            height=height,
+            width=width,
+            config=cfg,
+        ):
+            continue
 
         values = signal[rows, cols] if signal is not None else None
         y, x = _component_centroid(
@@ -166,10 +183,10 @@ def extract_particle_detections(
                 y=y,
                 x=x,
                 area_px=int(area),
-                bbox_top=int(np.min(rows)),
-                bbox_left=int(np.min(cols)),
-                bbox_bottom=int(np.max(rows)) + 1,
-                bbox_right=int(np.max(cols)) + 1,
+                bbox_top=top,
+                bbox_left=left,
+                bbox_bottom=bottom,
+                bbox_right=right,
                 mean_signal=None if values is None else float(np.mean(values)),
                 peak_signal=None if values is None else float(np.max(values)),
             )
@@ -420,6 +437,17 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
         raise ValueError("min_area_px must be positive")
     if config.max_area_px is not None and config.max_area_px < config.min_area_px:
         raise ValueError("max_area_px must be greater than or equal to min_area_px")
+    if config.min_bbox_width_px is not None and config.min_bbox_width_px < 1:
+        raise ValueError("min_bbox_width_px must be positive when set")
+    if config.min_bbox_height_px is not None and config.min_bbox_height_px < 1:
+        raise ValueError("min_bbox_height_px must be positive when set")
+    if (
+        config.max_bbox_aspect_ratio is not None
+        and config.max_bbox_aspect_ratio < 1.0
+    ):
+        raise ValueError("max_bbox_aspect_ratio must be at least 1 when set")
+    if config.min_bbox_extent is not None and not (0.0 <= config.min_bbox_extent <= 1.0):
+        raise ValueError("min_bbox_extent must be in [0, 1] when set")
     if config.connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
 
@@ -429,6 +457,29 @@ def _validate_tracking_config(config: ParticleTrackingConfig) -> None:
         raise ValueError("max_match_distance_px must be positive")
     if config.max_frame_gap <= 0:
         raise ValueError("max_frame_gap must be positive")
+
+
+def _component_shape_passes(
+    *,
+    area: int,
+    height: int,
+    width: int,
+    config: ParticleComponentConfig,
+) -> bool:
+    if config.min_bbox_width_px is not None and width < config.min_bbox_width_px:
+        return False
+    if config.min_bbox_height_px is not None and height < config.min_bbox_height_px:
+        return False
+    if config.max_bbox_aspect_ratio is not None:
+        aspect_ratio = max(height / width, width / height)
+        if aspect_ratio > config.max_bbox_aspect_ratio:
+            return False
+    if config.min_bbox_extent is not None:
+        bbox_area = height * width
+        extent = area / bbox_area
+        if extent < config.min_bbox_extent:
+            return False
+    return True
 
 
 def _validate_track_filter_config(config: TrackFilterConfig) -> None:

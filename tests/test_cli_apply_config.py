@@ -93,4 +93,5 @@ def test_config_template_writer(tmp_path):
     text = path.read_text(encoding="utf-8")
     assert "[paths]" in text
     assert "velocity_px_per_frame" in text
+    assert "max_bbox_aspect_ratio" in text
     assert "particle_mask_margin_px" in text

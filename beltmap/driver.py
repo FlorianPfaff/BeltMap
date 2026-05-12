@@ -222,6 +222,14 @@ def main() -> None:
     period_px = optional_positive_int("BELT_PERIOD_PX")
     detection_threshold = rt.env_float("DETECTION_THRESHOLD", 5.0)
     min_area_px = rt.env_int("MIN_AREA_PX", 4, minimum=1)
+    detection_max_area_px = optional_positive_int("DETECTION_MAX_AREA_PX")
+    detection_min_bbox_width_px = optional_positive_int("DETECTION_MIN_BBOX_WIDTH_PX")
+    detection_min_bbox_height_px = optional_positive_int("DETECTION_MIN_BBOX_HEIGHT_PX")
+    detection_max_bbox_aspect_ratio = optional_positive_float(
+        "DETECTION_MAX_BBOX_ASPECT_RATIO",
+        0.0,
+    )
+    detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
@@ -256,6 +264,11 @@ def main() -> None:
         belt_period_px=period_px,
         detection_threshold=detection_threshold,
         min_area_px=min_area_px,
+        detection_max_area_px=detection_max_area_px,
+        detection_min_bbox_width_px=detection_min_bbox_width_px,
+        detection_min_bbox_height_px=detection_min_bbox_height_px,
+        detection_max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
+        detection_min_bbox_extent=detection_min_bbox_extent,
         min_track_length=min_track_length,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
@@ -349,7 +362,14 @@ def main() -> None:
         reference_frame=0.0,
         reference_phase_px=reference_phase,
     )
-    component_config = ParticleComponentConfig(min_area_px=min_area_px)
+    component_config = ParticleComponentConfig(
+        min_area_px=min_area_px,
+        max_area_px=detection_max_area_px,
+        min_bbox_width_px=detection_min_bbox_width_px,
+        min_bbox_height_px=detection_min_bbox_height_px,
+        max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
+        min_bbox_extent=detection_min_bbox_extent,
+    )
     residual_config = ResidualConfig()
 
     progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
@@ -502,6 +522,11 @@ def main() -> None:
         "reference_phase_px": reference_phase,
         "detection_threshold": detection_threshold,
         "min_area_px": min_area_px,
+        "detection_max_area_px": detection_max_area_px,
+        "detection_min_bbox_width_px": detection_min_bbox_width_px,
+        "detection_min_bbox_height_px": detection_min_bbox_height_px,
+        "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
+        "detection_min_bbox_extent": detection_min_bbox_extent,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,

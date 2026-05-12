@@ -81,6 +81,11 @@ period_px = 64
 [detection]
 threshold = 5.5
 min_area_px = 4
+max_area_px = 5000
+min_bbox_width_px = 3
+min_bbox_height_px = 3
+max_bbox_aspect_ratio = 4.0
+min_bbox_extent = 0.15
 
 [tracking]
 min_track_length = 2
@@ -119,6 +124,11 @@ allow_full_frame = true
         "BELT_REGION": "10,20,30,40",
         "BELT_VELOCITY_PX_PER_FRAME": "auto",
         "DETECTION_THRESHOLD": "5.5",
+        "DETECTION_MAX_AREA_PX": "5000",
+        "DETECTION_MAX_BBOX_ASPECT_RATIO": "4",
+        "DETECTION_MIN_BBOX_EXTENT": "0.15",
+        "DETECTION_MIN_BBOX_HEIGHT_PX": "3",
+        "DETECTION_MIN_BBOX_WIDTH_PX": "3",
         "FRAME_STRIDE": "3",
         "MAP_PARTICLE_MASK_DILATION_PX": "24",
         "MAP_PARTICLE_MASK_GROW_THRESHOLD": "1.5",

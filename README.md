@@ -236,6 +236,19 @@ When available, BeltMap uses `scipy.ndimage.label` first, then
 `skimage.measure.label`, and falls back to the pure NumPy implementation when
 neither optional backend is installed.
 
+For scratch-heavy residuals, reject line-like components before tracking with
+the optional shape gates:
+
+```toml
+[detection]
+threshold = 3.5
+min_area_px = 4
+min_bbox_width_px = 3
+min_bbox_height_px = 3
+max_bbox_aspect_ratio = 4.0
+min_bbox_extent = 0.15
+```
+
 Particle velocities can be extracted from a sequence of particle masks and
 compared to the signed belt image velocity:
 
