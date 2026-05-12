@@ -656,6 +656,10 @@ jobs:
 
           poetry run beltmap-apply --config beltmap-run.toml --print-config
 
+      - name: Generate validation report and visual QC
+        run: |
+          poetry run beltmap-validate --output-dir outputs
+
       - name: Upload BeltMap outputs
         if: always()
         uses: actions/upload-artifact@v7

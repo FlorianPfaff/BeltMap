@@ -147,6 +147,10 @@ The overlay images are intended for manual sanity checks on real conveyor data:
 use them to verify whether detections are actual particles and whether track
 segments connect the correct components.
 
+The Brick 10g/s GitHub Actions workflow runs this validation step automatically
+after a successful `beltmap-apply` job, so downloaded workflow artifacts include
+the report, plots, and overlay samples.
+
 Compare several output directories, for example detection-only threshold sweeps,
 with:
 
