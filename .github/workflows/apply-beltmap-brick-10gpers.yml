@@ -94,31 +94,11 @@ on:
         required: true
         type: string
         default: "16"
-      static_noise_sample_frames:
-        description: "Residual frames sampled to learn a static residual-noise map. 0 = disabled."
+      static_noise_options:
+        description: "Static-noise options as sample_frames,min_scale,mask_threshold,mask_margin,min_area. 0,0,0,8,4 disables."
         required: true
         type: string
-        default: "0"
-      static_noise_min_scale:
-        description: "Minimum value in the learned static residual-noise map"
-        required: true
-        type: string
-        default: "0.0"
-      static_noise_mask_threshold:
-        description: "Optional normalized residual threshold for masking particles while learning static noise. 0 = disabled."
-        required: true
-        type: string
-        default: "0.0"
-      static_noise_mask_margin_px:
-        description: "Safety margin around particle boxes while learning static noise"
-        required: true
-        type: string
-        default: "8"
-      static_noise_mask_min_area_px:
-        description: "Minimum particle-mask component area while learning static noise"
-        required: true
-        type: string
-        default: "4"
+        default: "0,0,0,8,4"
       registration_search_radius_px:
         description: "Local phase-registration search radius around the motion-model prediction"
         required: true
@@ -149,16 +129,11 @@ on:
         required: true
         type: string
         default: "25"
-      progress_interval_frames:
-        description: "Print progress every N frames during long stages"
+      progress_intervals:
+        description: "Progress and partial-output intervals as progress,partial. Partial 0 = final only."
         required: true
         type: string
-        default: "25"
-      partial_output_interval_frames:
-        description: "Write partial CSV outputs every N processed frames. 0 = only final."
-        required: true
-        type: string
-        default: "250"
+        default: "25,250"
       debug_residual_preview_interval_frames:
         description: "Also save residual previews every N frames. 0 = disabled."
         required: true
@@ -263,11 +238,7 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
-          STATIC_NOISE_SAMPLE_FRAMES: ${{ inputs.static_noise_sample_frames }}
-          STATIC_NOISE_MIN_SCALE: ${{ inputs.static_noise_min_scale }}
-          STATIC_NOISE_MASK_THRESHOLD: ${{ inputs.static_noise_mask_threshold }}
-          STATIC_NOISE_MASK_MARGIN_PX: ${{ inputs.static_noise_mask_margin_px }}
-          STATIC_NOISE_MASK_MIN_AREA_PX: ${{ inputs.static_noise_mask_min_area_px }}
+          STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -275,8 +246,7 @@ jobs:
           PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX: ${{ inputs.phase_refinement_max_abs_correction_px }}
           PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES: ${{ inputs.phase_refinement_smoothing_window_frames }}
           VELOCITY_SEARCH_RADIUS_PX: "90"
-          PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
-          PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
+          PROGRESS_INTERVALS: ${{ inputs.progress_intervals }}
           DEBUG_RESIDUAL_PREVIEW_FRAMES: "3"
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
@@ -286,6 +256,14 @@ jobs:
 
           import beltmap.driver as driver
 
+          def parse_csv_values(name, count):
+              values = [part.strip() for part in os.environ[name].split(",")]
+              if len(values) != count:
+                  raise SystemExit(f"{name} must contain {count} comma-separated values")
+              return values
+
+          static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)
+          progress = parse_csv_values("PROGRESS_INTERVALS", 2)
           checks = {
               "driver": driver.__name__,
               "belt_velocity_px_per_frame": os.environ["BELT_VELOCITY_PX_PER_FRAME"],
@@ -300,11 +278,11 @@ jobs:
               "map_particle_mask_dilation_px": int(os.environ["MAP_PARTICLE_MASK_DILATION_PX"]),
               "map_particle_mask_margin_px": int(os.environ["MAP_PARTICLE_MASK_MARGIN_PX"]),
               "map_particle_mask_min_area_px": int(os.environ["MAP_PARTICLE_MASK_MIN_AREA_PX"]),
-              "static_noise_sample_frames": int(os.environ["STATIC_NOISE_SAMPLE_FRAMES"]),
-              "static_noise_min_scale": float(os.environ["STATIC_NOISE_MIN_SCALE"]),
-              "static_noise_mask_threshold": float(os.environ["STATIC_NOISE_MASK_THRESHOLD"]),
-              "static_noise_mask_margin_px": int(os.environ["STATIC_NOISE_MASK_MARGIN_PX"]),
-              "static_noise_mask_min_area_px": int(os.environ["STATIC_NOISE_MASK_MIN_AREA_PX"]),
+              "static_noise_sample_frames": int(static_noise[0]),
+              "static_noise_min_scale": float(static_noise[1]),
+              "static_noise_mask_threshold": float(static_noise[2]),
+              "static_noise_mask_margin_px": int(static_noise[3]),
+              "static_noise_mask_min_area_px": int(static_noise[4]),
               "registration_search_radius_px": float(os.environ["REGISTRATION_SEARCH_RADIUS_PX"]),
               "registration_search_step_px": float(os.environ["REGISTRATION_SEARCH_STEP_PX"]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
@@ -312,8 +290,8 @@ jobs:
               "phase_refinement_max_abs_correction_px": float(os.environ["PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX"]),
               "phase_refinement_smoothing_window_frames": int(os.environ["PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES"]),
               "velocity_search_radius_px": int(os.environ["VELOCITY_SEARCH_RADIUS_PX"]),
-              "progress_interval_frames": int(os.environ["PROGRESS_INTERVAL_FRAMES"]),
-              "partial_output_interval_frames": int(os.environ["PARTIAL_OUTPUT_INTERVAL_FRAMES"]),
+              "progress_interval_frames": int(progress[0]),
+              "partial_output_interval_frames": int(progress[1]),
               "debug_residual_preview_frames": int(os.environ["DEBUG_RESIDUAL_PREVIEW_FRAMES"]),
               "debug_residual_preview_interval_frames": int(os.environ["DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES"]),
           }
@@ -465,11 +443,7 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
-          STATIC_NOISE_SAMPLE_FRAMES: ${{ inputs.static_noise_sample_frames }}
-          STATIC_NOISE_MIN_SCALE: ${{ inputs.static_noise_min_scale }}
-          STATIC_NOISE_MASK_THRESHOLD: ${{ inputs.static_noise_mask_threshold }}
-          STATIC_NOISE_MASK_MARGIN_PX: ${{ inputs.static_noise_mask_margin_px }}
-          STATIC_NOISE_MASK_MIN_AREA_PX: ${{ inputs.static_noise_mask_min_area_px }}
+          STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -477,8 +451,7 @@ jobs:
           PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX: ${{ inputs.phase_refinement_max_abs_correction_px }}
           PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES: ${{ inputs.phase_refinement_smoothing_window_frames }}
           VELOCITY_SEARCH_RADIUS_PX: "90"
-          PROGRESS_INTERVAL_FRAMES: ${{ inputs.progress_interval_frames }}
-          PARTIAL_OUTPUT_INTERVAL_FRAMES: ${{ inputs.partial_output_interval_frames }}
+          PROGRESS_INTERVALS: ${{ inputs.progress_intervals }}
           DEBUG_RESIDUAL_PREVIEW_FRAMES: "3"
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
@@ -523,6 +496,12 @@ jobs:
                   )
               )
 
+          def parse_csv_values(env_name: str, count: int) -> list[str]:
+              values = [part.strip() for part in env_value(env_name).split(",")]
+              if len(values) != count:
+                  raise SystemExit(f"{env_name} must contain {count} comma-separated values")
+              return values
+
           lines: list[str] = []
           lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
 
@@ -561,11 +540,18 @@ jobs:
           lines.append("")
 
           lines.append("[static_noise]")
-          append_value(lines, "sample_frames", "STATIC_NOISE_SAMPLE_FRAMES")
-          append_value(lines, "min_scale", "STATIC_NOISE_MIN_SCALE")
-          append_value(lines, "mask_threshold", "STATIC_NOISE_MASK_THRESHOLD")
-          append_value(lines, "mask_margin_px", "STATIC_NOISE_MASK_MARGIN_PX")
-          append_value(lines, "mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX")
+          static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)
+          for key, value in zip(
+              [
+                  "sample_frames",
+                  "min_scale",
+                  "mask_threshold",
+                  "mask_margin_px",
+                  "mask_min_area_px",
+              ],
+              static_noise,
+          ):
+              lines.append(f"{key} = {json.dumps(value)}")
           lines.append("")
 
           lines.append("[registration]")
@@ -585,8 +571,9 @@ jobs:
           lines.append("")
 
           lines.append("[progress]")
-          append_value(lines, "interval_frames", "PROGRESS_INTERVAL_FRAMES")
-          append_value(lines, "partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES")
+          progress_intervals = parse_csv_values("PROGRESS_INTERVALS", 2)
+          lines.append(f"interval_frames = {json.dumps(progress_intervals[0])}")
+          lines.append(f"partial_output_interval_frames = {json.dumps(progress_intervals[1])}")
           lines.append("")
 
           lines.append("[debug]")
