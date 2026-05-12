@@ -48,6 +48,7 @@ outputs/
   config_resolved.json
   detections.csv
   detections_per_frame.csv
+  filtered_velocities.csv
   metadata.json
   phase_estimates.csv
   progress.jsonl
@@ -55,6 +56,7 @@ outputs/
   residual_frame_000000.png
   residual_frame_000001.png
   residual_frame_000002.png
+  track_scores.csv
   velocities.csv
 ```
 
@@ -267,6 +269,11 @@ Important fields:
 | `n_detections` | count | Number of rows written to `detections.csv`. |
 | `n_tracks` | count | Number of particle tracks created by the tracker. |
 | `n_velocity_estimates` | count | Number of rows written to `velocities.csv`. |
+| `n_filtered_velocity_estimates` | count | Number of rows written to `filtered_velocities.csv`. |
+| `track_filter_min_length` | detections | Minimum detections per accepted filtered velocity row. |
+| `track_filter_min_velocity_ratio_y` | ratio | Minimum accepted `velocity_ratio_y`. |
+| `track_filter_max_velocity_ratio_y` | ratio | Maximum accepted `velocity_ratio_y`. |
+| `track_filter_max_abs_x_velocity_px_per_frame` | px/frame | Optional lateral velocity gate, or `null` when disabled. |
 | `auto_velocity_pair_shifts` | px/frame | List of adjacent-frame shifts used for automatic belt-velocity estimation. |
 | `elapsed_s` | s | Total elapsed runtime reported by the driver. |
 
@@ -331,6 +338,41 @@ Format: JSON object with the same schema as one line of `progress.jsonl`.
 
 Use this file for dashboards or workflow monitors that only need the most recent
 status without reading the whole JSONL log.
+
+## `track_scores.csv`
+
+Purpose: one row per raw velocity estimate, with track-level plausibility gates
+used to create `filtered_velocities.csv`.
+
+Format: CSV with a header row.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `track_id` | 1 | Track identifier from the tracker and `velocities.csv`. |
+| `n_detections` | count | Number of detections in the track. |
+| `frame_start` | frame | First frame index in the track. |
+| `frame_end` | frame | Last frame index in the track. |
+| `velocity_y_px_per_frame` | px/frame | Vertical velocity copied from `velocities.csv`. |
+| `velocity_x_px_per_frame` | px/frame | Horizontal velocity copied from `velocities.csv`. |
+| `velocity_ratio_y` | 1 | Particle vertical velocity divided by belt vertical velocity. |
+| `abs_x_velocity_px_per_frame` | px/frame | Absolute horizontal velocity magnitude. |
+| `passes_min_track_length` | bool | Whether the track is long enough for the filter. |
+| `passes_velocity_ratio` | bool | Whether `velocity_ratio_y` lies in the configured interval. |
+| `passes_lateral_velocity` | bool | Whether the optional lateral-velocity gate passes. |
+| `accepted` | bool | Whether all enabled gates pass. |
+| `plausibility_score` | 1 | Smooth helper score in `[0, 1]`; use `accepted` for the hard filter. |
+
+## `filtered_velocities.csv`
+
+Purpose: subset of `velocities.csv` accepted by the track-level filter.
+
+Format: same columns and units as `velocities.csv`.
+
+Default filter: at least five detections and
+`0 <= velocity_ratio_y <= 1.1`. The raw `velocities.csv` file is not modified.
+Existing runs can be post-processed with `beltmap-filter-tracks`.
 
 ## `residual_frame_*.png`
 

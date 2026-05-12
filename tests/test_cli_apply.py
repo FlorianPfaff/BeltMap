@@ -82,6 +82,16 @@ period_px = 64
 threshold = 5.5
 min_area_px = 4
 
+[tracking]
+min_track_length = 2
+max_match_distance_px = 75
+
+[track_filter]
+min_length = 5
+min_velocity_ratio_y = 0.1
+max_velocity_ratio_y = 1.05
+max_abs_x_velocity_px_per_frame = 12.5
+
 [map]
 particle_mask_mode = "hysteresis_abs"
 particle_mask_threshold = 4.0
@@ -116,9 +126,15 @@ allow_full_frame = true
         "MAP_PARTICLE_MASK_MIN_AREA_PX": "8",
         "MAP_PARTICLE_MASK_MODE": "hysteresis_abs",
         "MAP_PARTICLE_MASK_THRESHOLD": "4",
+        "MAX_MATCH_DISTANCE_PX": "75",
         "MIN_AREA_PX": "4",
+        "MIN_TRACK_LENGTH": "2",
         "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
         "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
+        "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME": "12.5",
+        "TRACK_FILTER_MAX_VELOCITY_RATIO_Y": "1.05",
+        "TRACK_FILTER_MIN_LENGTH": "5",
+        "TRACK_FILTER_MIN_VELOCITY_RATIO_Y": "0.1",
     }
     assert report["driver_environment"] == env_updates
 

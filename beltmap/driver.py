@@ -17,10 +17,12 @@ from . import (
     ParticleTrackingConfig,
     PhaseRegistrationConfig,
     ResidualConfig,
+    TrackFilterConfig,
     detect_particles_from_residual,
     estimate_particle_velocities_vs_belt,
     extract_particle_detections,
     render_clean_belt_residual,
+    score_particle_velocities,
     track_particle_detections,
 )
 from . import _driver_runtime as rt
@@ -45,6 +47,13 @@ VELOCITY_FIELDS = [
     "velocity_y_px_per_frame", "velocity_x_px_per_frame", "speed_px_per_frame",
     "belt_velocity_y_px_per_frame", "velocity_ratio_y",
     "belt_minus_particle_velocity_y_px_per_frame",
+]
+TRACK_SCORE_FIELDS = [
+    "track_id", "n_detections", "frame_start", "frame_end",
+    "velocity_y_px_per_frame", "velocity_x_px_per_frame",
+    "velocity_ratio_y", "abs_x_velocity_px_per_frame",
+    "passes_min_track_length", "passes_velocity_ratio",
+    "passes_lateral_velocity", "accepted", "plausibility_score",
 ]
 
 
@@ -403,14 +412,51 @@ def main() -> None:
     rt.emit("track", "finished particle tracking", tracks=len(tracks))
 
     velocity_rows = []
+    velocity_objects = []
     if abs(belt_velocity) > 1e-9:
         rt.emit("velocity", "estimating particle velocities relative to belt", min_track_length=min_track_length)
         for velocity in estimate_particle_velocities_vs_belt(tracks, belt_image_velocity_px_per_frame=belt_velocity, min_track_length=min_track_length):
+            velocity_objects.append(velocity)
             velocity_rows.append(asdict(velocity))
     else:
         rt.emit("velocity", "skipped particle velocity estimation because belt velocity is near zero")
     rt.write_csv(rt.OUT / "velocities.csv", velocity_rows, VELOCITY_FIELDS)
     rt.emit("velocity", "wrote velocity estimates", velocity_estimates=len(velocity_rows))
+    track_filter_config = TrackFilterConfig(
+        min_track_length=rt.env_int("TRACK_FILTER_MIN_LENGTH", max(5, min_track_length), minimum=1),
+        min_velocity_ratio_y=rt.env_float("TRACK_FILTER_MIN_VELOCITY_RATIO_Y", 0.0),
+        max_velocity_ratio_y=rt.env_float("TRACK_FILTER_MAX_VELOCITY_RATIO_Y", 1.1),
+        max_abs_x_velocity_px_per_frame=optional_positive_float(
+            "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME",
+            0.0,
+        ),
+    )
+    track_scores = score_particle_velocities(
+        velocity_objects,
+        config=track_filter_config,
+    )
+    accepted_track_ids = {score.track_id for score in track_scores if score.accepted}
+    filtered_velocity_rows = [
+        asdict(velocity)
+        for velocity in velocity_objects
+        if velocity.track_id in accepted_track_ids
+    ]
+    rt.write_csv(
+        rt.OUT / "track_scores.csv",
+        [asdict(score) for score in track_scores],
+        TRACK_SCORE_FIELDS,
+    )
+    rt.write_csv(rt.OUT / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
+    rt.emit(
+        "velocity",
+        "wrote track-filter outputs",
+        track_scores=len(track_scores),
+        filtered_velocity_estimates=len(filtered_velocity_rows),
+        track_filter_min_length=track_filter_config.min_track_length,
+        track_filter_min_velocity_ratio_y=track_filter_config.min_velocity_ratio_y,
+        track_filter_max_velocity_ratio_y=track_filter_config.max_velocity_ratio_y,
+        track_filter_max_abs_x_velocity_px_per_frame=track_filter_config.max_abs_x_velocity_px_per_frame,
+    )
 
     metadata = {
         "n_images": len(paths),
@@ -446,6 +492,11 @@ def main() -> None:
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
         "n_velocity_estimates": len(velocity_rows),
+        "n_filtered_velocity_estimates": len(filtered_velocity_rows),
+        "track_filter_min_length": track_filter_config.min_track_length,
+        "track_filter_min_velocity_ratio_y": track_filter_config.min_velocity_ratio_y,
+        "track_filter_max_velocity_ratio_y": track_filter_config.max_velocity_ratio_y,
+        "track_filter_max_abs_x_velocity_px_per_frame": track_filter_config.max_abs_x_velocity_px_per_frame,
         "auto_velocity_pair_shifts": pair_shifts,
         "elapsed_s": rt.elapsed_s(),
     }

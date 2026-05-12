@@ -26,6 +26,7 @@ SUMMARY_FIELDS = [
     "n_detections",
     "n_tracks",
     "n_velocity_estimates",
+    "n_filtered_velocity_estimates",
     "detections_per_frame_mean",
     "detections_per_frame_median",
     "detections_per_frame_max",
@@ -35,6 +36,8 @@ SUMMARY_FIELDS = [
     "velocity_ratio_q25",
     "velocity_ratio_q75",
     "velocity_ratio_share_0_to_1",
+    "filtered_velocity_ratio_median",
+    "filtered_velocity_ratio_share_0_to_1",
     "velocity_track_length_median",
     "long_velocity_tracks_ge_5",
     "long_velocity_tracks_ge_10",
@@ -69,6 +72,7 @@ class RunData:
     detections: list[dict[str, str]]
     detections_per_frame: list[dict[str, str]]
     velocities: list[dict[str, str]]
+    filtered_velocities: list[dict[str, str]]
     preview_paths: dict[int, Path]
     detections_by_frame: dict[int, list[DetectionRecord]]
 
@@ -193,6 +197,7 @@ def load_run_data(spec: RunSpec) -> RunData:
         detections=detections,
         detections_per_frame=read_csv_rows(spec.output_dir / "detections_per_frame.csv"),
         velocities=read_csv_rows(spec.output_dir / "velocities.csv"),
+        filtered_velocities=read_csv_rows(spec.output_dir / "filtered_velocities.csv"),
         preview_paths=find_preview_paths(spec.output_dir),
         detections_by_frame=group_detections_by_frame(records),
     )
@@ -217,13 +222,18 @@ def summarize_run(data: RunData) -> dict[str, Any]:
     detection_counts = finite_values(data.detections_per_frame, "n_detections")
     detection_areas = finite_values(data.detections, "area_px")
     velocity_ratios = finite_values(data.velocities, "velocity_ratio_y")
+    filtered_velocity_ratios = finite_values(data.filtered_velocities, "velocity_ratio_y")
     velocity_track_lengths = finite_values(data.velocities, "n_detections")
     detection_stats = describe(detection_counts)
     area_stats = describe(detection_areas)
     ratio_stats = describe(velocity_ratios)
+    filtered_ratio_stats = describe(filtered_velocity_ratios)
     length_stats = describe(velocity_track_lengths)
     small_components = sum(1 for value in detection_areas if value <= 8.0)
     plausible_ratios = sum(1 for value in velocity_ratios if 0.0 <= value <= 1.0)
+    plausible_filtered_ratios = sum(
+        1 for value in filtered_velocity_ratios if 0.0 <= value <= 1.0
+    )
     long_ge_5 = sum(1 for value in velocity_track_lengths if value >= 5.0)
     long_ge_10 = sum(1 for value in velocity_track_lengths if value >= 10.0)
     detection_threshold = finite_float(data.metadata.get("detection_threshold"))
@@ -243,6 +253,11 @@ def summarize_run(data: RunData) -> dict[str, Any]:
         "n_detections": metadata_or_count(data, "n_detections", data.detections),
         "n_tracks": data.metadata.get("n_tracks"),
         "n_velocity_estimates": metadata_or_count(data, "n_velocity_estimates", data.velocities),
+        "n_filtered_velocity_estimates": metadata_or_count(
+            data,
+            "n_filtered_velocity_estimates",
+            data.filtered_velocities,
+        ),
         "detections_per_frame_mean": detection_stats["mean"],
         "detections_per_frame_median": detection_stats["median"],
         "detections_per_frame_max": detection_stats["max"],
@@ -252,6 +267,11 @@ def summarize_run(data: RunData) -> dict[str, Any]:
         "velocity_ratio_q25": ratio_stats["q25"],
         "velocity_ratio_q75": ratio_stats["q75"],
         "velocity_ratio_share_0_to_1": safe_share(plausible_ratios, len(velocity_ratios)),
+        "filtered_velocity_ratio_median": filtered_ratio_stats["median"],
+        "filtered_velocity_ratio_share_0_to_1": safe_share(
+            plausible_filtered_ratios,
+            len(filtered_velocity_ratios),
+        ),
         "velocity_track_length_median": length_stats["median"],
         "long_velocity_tracks_ge_5": long_ge_5,
         "long_velocity_tracks_ge_10": long_ge_10,
@@ -533,12 +553,14 @@ def build_markdown_report(
         ("n_detections", "detections"),
         ("n_tracks", "tracks"),
         ("n_velocity_estimates", "velocity rows"),
+        ("n_filtered_velocity_estimates", "filtered rows"),
         ("detections_per_frame_median", "median/frame"),
         ("detections_per_frame_max", "max/frame"),
         ("detection_area_median_px", "median area"),
         ("small_component_share_area_le_8", "small <=8px share"),
         ("velocity_ratio_median", "ratio median"),
         ("velocity_ratio_share_0_to_1", "ratio 0..1 share"),
+        ("filtered_velocity_ratio_share_0_to_1", "filtered 0..1 share"),
         ("long_velocity_tracks_ge_10", "tracks >=10"),
     ]
     lines = [

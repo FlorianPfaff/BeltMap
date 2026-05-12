@@ -5,9 +5,13 @@ from beltmap import (
     ParticleComponentConfig,
     ParticleDetection,
     ParticleTrackingConfig,
+    ParticleVelocity,
+    TrackFilterConfig,
     estimate_particle_velocities_vs_belt,
     extract_particle_detections,
     extract_particle_velocities_vs_belt,
+    filter_particle_velocities,
+    score_particle_velocities,
     track_particle_detections,
 )
 
@@ -161,6 +165,62 @@ def test_extract_particle_velocities_vs_belt_from_masks():
     assert len(velocities) == 1
     np.testing.assert_allclose(velocities[0].velocity_y_px_per_frame, 3.0)
     np.testing.assert_allclose(velocities[0].velocity_ratio_y, 0.6)
+
+
+def test_score_particle_velocities_applies_length_ratio_and_lateral_gates():
+    velocities = [
+        ParticleVelocity(
+            track_id=0,
+            n_detections=6,
+            frame_start=0,
+            frame_end=5,
+            velocity_y_px_per_frame=4.0,
+            velocity_x_px_per_frame=0.5,
+            speed_px_per_frame=4.03,
+            belt_velocity_y_px_per_frame=5.0,
+            velocity_ratio_y=0.8,
+            belt_minus_particle_velocity_y_px_per_frame=1.0,
+        ),
+        ParticleVelocity(
+            track_id=1,
+            n_detections=3,
+            frame_start=0,
+            frame_end=2,
+            velocity_y_px_per_frame=6.0,
+            velocity_x_px_per_frame=0.5,
+            speed_px_per_frame=6.02,
+            belt_velocity_y_px_per_frame=5.0,
+            velocity_ratio_y=1.2,
+            belt_minus_particle_velocity_y_px_per_frame=-1.0,
+        ),
+        ParticleVelocity(
+            track_id=2,
+            n_detections=8,
+            frame_start=0,
+            frame_end=7,
+            velocity_y_px_per_frame=3.0,
+            velocity_x_px_per_frame=3.0,
+            speed_px_per_frame=4.24,
+            belt_velocity_y_px_per_frame=5.0,
+            velocity_ratio_y=0.6,
+            belt_minus_particle_velocity_y_px_per_frame=2.0,
+        ),
+    ]
+
+    config = TrackFilterConfig(
+        min_track_length=5,
+        min_velocity_ratio_y=0.0,
+        max_velocity_ratio_y=1.1,
+        max_abs_x_velocity_px_per_frame=2.0,
+    )
+    scores = score_particle_velocities(velocities, config=config)
+    filtered = filter_particle_velocities(velocities, config=config)
+
+    assert [score.accepted for score in scores] == [True, False, False]
+    assert scores[1].passes_min_track_length is False
+    assert scores[1].passes_velocity_ratio is False
+    assert scores[2].passes_lateral_velocity is False
+    assert [velocity.track_id for velocity in filtered] == [0]
 
 
 def test_track_particle_detections_drops_tracks_across_explicit_empty_frame_gap():

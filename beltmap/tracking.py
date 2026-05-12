@@ -93,6 +93,35 @@ class ParticleVelocity:
     belt_minus_particle_velocity_y_px_per_frame: float
 
 
+@dataclass(frozen=True)
+class TrackFilterConfig:
+    """Settings for selecting physically plausible particle tracks."""
+
+    min_track_length: int = 5
+    min_velocity_ratio_y: float = 0.0
+    max_velocity_ratio_y: float = 1.1
+    max_abs_x_velocity_px_per_frame: float | None = None
+
+
+@dataclass(frozen=True)
+class ParticleTrackScore:
+    """Track-level gates and score used for post-detection filtering."""
+
+    track_id: int
+    n_detections: int
+    frame_start: float
+    frame_end: float
+    velocity_y_px_per_frame: float
+    velocity_x_px_per_frame: float
+    velocity_ratio_y: float
+    abs_x_velocity_px_per_frame: float
+    passes_min_track_length: bool
+    passes_velocity_ratio: bool
+    passes_lateral_velocity: bool
+    accepted: bool
+    plausibility_score: float
+
+
 def extract_particle_detections(
     particle_mask: ArrayLike,
     *,
@@ -259,6 +288,78 @@ def estimate_particle_velocities_vs_belt(
     return velocities
 
 
+def score_particle_velocities(
+    velocities: Sequence[ParticleVelocity],
+    *,
+    config: TrackFilterConfig | None = None,
+) -> list[ParticleTrackScore]:
+    """Score velocity rows with conservative physical plausibility gates.
+
+    The score is intended for filtering particle tracks after detection. It does
+    not modify the raw detections or raw velocity estimates. A track is accepted
+    when it is long enough, moves in the configured vertical velocity-ratio
+    interval, and passes the optional lateral-velocity gate.
+    """
+
+    cfg = config or TrackFilterConfig()
+    _validate_track_filter_config(cfg)
+    scores: list[ParticleTrackScore] = []
+    for velocity in velocities:
+        passes_length = velocity.n_detections >= cfg.min_track_length
+        passes_ratio = (
+            cfg.min_velocity_ratio_y
+            <= velocity.velocity_ratio_y
+            <= cfg.max_velocity_ratio_y
+        )
+        abs_x_velocity = abs(velocity.velocity_x_px_per_frame)
+        passes_lateral = (
+            cfg.max_abs_x_velocity_px_per_frame is None
+            or abs_x_velocity <= cfg.max_abs_x_velocity_px_per_frame
+        )
+        length_score = min(1.0, velocity.n_detections / cfg.min_track_length)
+        ratio_score = _interval_score(
+            velocity.velocity_ratio_y,
+            lower=cfg.min_velocity_ratio_y,
+            upper=cfg.max_velocity_ratio_y,
+        )
+        lateral_score = (
+            1.0
+            if cfg.max_abs_x_velocity_px_per_frame is None
+            else max(0.0, 1.0 - abs_x_velocity / cfg.max_abs_x_velocity_px_per_frame)
+        )
+        accepted = passes_length and passes_ratio and passes_lateral
+        scores.append(
+            ParticleTrackScore(
+                track_id=velocity.track_id,
+                n_detections=velocity.n_detections,
+                frame_start=velocity.frame_start,
+                frame_end=velocity.frame_end,
+                velocity_y_px_per_frame=velocity.velocity_y_px_per_frame,
+                velocity_x_px_per_frame=velocity.velocity_x_px_per_frame,
+                velocity_ratio_y=velocity.velocity_ratio_y,
+                abs_x_velocity_px_per_frame=abs_x_velocity,
+                passes_min_track_length=passes_length,
+                passes_velocity_ratio=passes_ratio,
+                passes_lateral_velocity=passes_lateral,
+                accepted=accepted,
+                plausibility_score=length_score * ratio_score * lateral_score,
+            )
+        )
+    return scores
+
+
+def filter_particle_velocities(
+    velocities: Sequence[ParticleVelocity],
+    *,
+    config: TrackFilterConfig | None = None,
+) -> list[ParticleVelocity]:
+    """Return velocity rows accepted by ``score_particle_velocities``."""
+
+    scores = score_particle_velocities(velocities, config=config)
+    accepted_ids = {score.track_id for score in scores if score.accepted}
+    return [velocity for velocity in velocities if velocity.track_id in accepted_ids]
+
+
 def extract_particle_velocities_vs_belt(
     particle_masks: Sequence[ArrayLike],
     *,
@@ -328,6 +429,30 @@ def _validate_tracking_config(config: ParticleTrackingConfig) -> None:
         raise ValueError("max_match_distance_px must be positive")
     if config.max_frame_gap <= 0:
         raise ValueError("max_frame_gap must be positive")
+
+
+def _validate_track_filter_config(config: TrackFilterConfig) -> None:
+    if config.min_track_length < 1:
+        raise ValueError("min_track_length must be positive")
+    if not np.isfinite(config.min_velocity_ratio_y):
+        raise ValueError("min_velocity_ratio_y must be finite")
+    if not np.isfinite(config.max_velocity_ratio_y):
+        raise ValueError("max_velocity_ratio_y must be finite")
+    if config.max_velocity_ratio_y < config.min_velocity_ratio_y:
+        raise ValueError("max_velocity_ratio_y must be greater than or equal to min_velocity_ratio_y")
+    if (
+        config.max_abs_x_velocity_px_per_frame is not None
+        and config.max_abs_x_velocity_px_per_frame <= 0
+    ):
+        raise ValueError("max_abs_x_velocity_px_per_frame must be positive when set")
+
+
+def _interval_score(value: float, *, lower: float, upper: float) -> float:
+    if lower <= value <= upper:
+        return 1.0
+    width = max(upper - lower, 1e-9)
+    distance = lower - value if value < lower else value - upper
+    return max(0.0, 1.0 - distance / width)
 
 
 def _residual_values(

@@ -27,6 +27,10 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
+    ("track_filter_min_length", "TRACK_FILTER_MIN_LENGTH", "int", (("track_filter_min_length",), ("track_filter", "min_length")), "Minimum detections per accepted filtered track.", "N"),
+    ("track_filter_min_velocity_ratio_y", "TRACK_FILTER_MIN_VELOCITY_RATIO_Y", "float", (("track_filter_min_velocity_ratio_y",), ("track_filter", "min_velocity_ratio_y")), "Minimum accepted particle/belt vertical velocity ratio.", "RATIO"),
+    ("track_filter_max_velocity_ratio_y", "TRACK_FILTER_MAX_VELOCITY_RATIO_Y", "float", (("track_filter_max_velocity_ratio_y",), ("track_filter", "max_velocity_ratio_y")), "Maximum accepted particle/belt vertical velocity ratio.", "RATIO"),
+    ("track_filter_max_abs_x_velocity_px_per_frame", "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME", "float", (("track_filter_max_abs_x_velocity_px_per_frame",), ("track_filter", "max_abs_x_velocity_px_per_frame")), "Optional maximum accepted absolute lateral velocity. Use 0 to disable.", "PX_PER_FRAME"),
     ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
@@ -85,6 +89,12 @@ min_area_px = 4
 [tracking]
 min_track_length = 2
 # max_match_distance_px = 90.0
+
+[track_filter]
+min_length = 5
+min_velocity_ratio_y = 0.0
+max_velocity_ratio_y = 1.1
+max_abs_x_velocity_px_per_frame = 0.0
 
 [map]
 sample_frames = 120

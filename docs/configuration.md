@@ -93,6 +93,10 @@ underscores.
 | `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. Must be at least 1. |
 | `tracking.min_track_length` | `MIN_TRACK_LENGTH` | `--min-track-length` | `2` | detections | Minimum number of detections required before a particle track contributes a velocity row. Must be at least 1 at driver parsing and at least 2 for velocity estimation. |
 | `tracking.max_match_distance_px` | `MAX_MATCH_DISTANCE_PX` | `--max-match-distance-px` | `max(5, 1.5 * abs(belt_velocity))` | px | Maximum frame-to-frame nearest-neighbor association distance for tracking. Leave unset to derive it from the belt speed. |
+| `track_filter.min_length` | `TRACK_FILTER_MIN_LENGTH` | `--track-filter-min-length` | `max(5, tracking.min_track_length)` | detections | Minimum detections per accepted filtered velocity row. Raw `velocities.csv` is not modified. |
+| `track_filter.min_velocity_ratio_y` | `TRACK_FILTER_MIN_VELOCITY_RATIO_Y` | `--track-filter-min-velocity-ratio-y` | `0.0` | ratio | Minimum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
+| `track_filter.max_velocity_ratio_y` | `TRACK_FILTER_MAX_VELOCITY_RATIO_Y` | `--track-filter-max-velocity-ratio-y` | `1.1` | ratio | Maximum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
+| `track_filter.max_abs_x_velocity_px_per_frame` | `TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME` | `--track-filter-max-abs-x-velocity-px-per-frame` | `0` | px/frame | Optional lateral-velocity gate. `0` disables this gate. |
 | `map.sample_frames` | `MAP_SAMPLE_FRAMES` | `--map-sample-frames` | `120` | frames | Number of frames sampled across the selected sequence to reconstruct the belt map. Must be at least 1. |
 | `map.mask_iterations` | `MAP_MASK_ITERATIONS` | `--map-mask-iterations` | `1` | passes | Number of particle-masked belt-map refinement passes after the initial provisional map. `0` disables particle masking during map reconstruction. |
 | `map.particle_mask_threshold` | `MAP_PARTICLE_MASK_THRESHOLD` | `--map-particle-mask-threshold` | `detection.threshold` | z | Strong residual threshold used to seed particle masks while building the clean belt map. |
@@ -174,6 +178,33 @@ When `reuse.phase_estimates_path` is also set, the driver uses those per-frame
 phases directly. Otherwise it recomputes per-frame phases by registering each
 selected frame against the reused map, then proceeds with residual rendering,
 detection, tracking, and velocity estimation.
+
+## Track-level filtering
+
+The detector intentionally writes raw threshold detections and raw velocity rows.
+To select tracks that are more consistent with the experiment physics, BeltMap
+also writes:
+
+```text
+track_scores.csv
+filtered_velocities.csv
+```
+
+The default filter keeps velocity rows with at least five detections and
+`0 <= velocity_ratio_y <= 1.1`. This matches the brick-particle assumption that
+particles move in the belt direction but usually do not exceed the belt velocity,
+while allowing a small tolerance above 1 for measurement noise. A lateral
+velocity gate can be enabled with `track_filter.max_abs_x_velocity_px_per_frame`.
+
+Existing runs can be filtered without rerunning image processing:
+
+```bash
+beltmap-filter-tracks \
+  --output-dir outputs-threshold-3p5 \
+  --min-track-length 5 \
+  --min-velocity-ratio-y 0 \
+  --max-velocity-ratio-y 1.1
+```
 
 ## Common configurations
 
