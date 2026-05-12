@@ -112,7 +112,7 @@ def filter_recurrent_artifact_detections(
     """Reject detections whose belt-coordinate bbox mostly overlaps artifacts."""
 
     cfg = config or RecurrentArtifactConfig(min_revolutions=1)
-    _validate_config(cfg)
+    _validate_filter_config(cfg)
     mode = cfg.mode.strip().lower()
     if mode == "soft" and detection_threshold is None:
         raise ValueError("detection_threshold is required for soft recurrent filtering")
@@ -235,6 +235,10 @@ def _belt_rows_for_image_rows(
 def _validate_config(config: RecurrentArtifactConfig) -> None:
     if config.min_revolutions < 1:
         raise ValueError("min_revolutions must be at least 1")
+    _validate_filter_config(config)
+
+
+def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
     if config.margin_px < 0:
         raise ValueError("margin_px must be non-negative")
     if not 0 <= config.max_overlap_fraction <= 1:

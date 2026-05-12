@@ -17,6 +17,7 @@ from beltmap.driver import (
     apply_static_noise_floor,
     learn_static_residual_noise_map,
     load_phase_estimates,
+    load_recurrent_artifact_map,
     validate_reused_phase_estimates,
 )
 from scripts.apply_beltmap_to_images import (
@@ -140,6 +141,27 @@ def test_validate_reused_phase_estimates_reports_missing_frames():
 
     with pytest.raises(ValueError, match="missing 1 selected frames"):
         validate_reused_phase_estimates(estimates, frame_count=3)
+
+
+def test_load_recurrent_artifact_map_for_reuse_mode(tmp_path):
+    path = tmp_path / "recurrent_artifact_map.npy"
+    np.save(path, np.array([[0, 1, 0], [1, 0, 1]], dtype=np.uint8))
+
+    artifact_map = load_recurrent_artifact_map(path, map_shape=(2, 3))
+
+    assert artifact_map.dtype == bool
+    np.testing.assert_array_equal(
+        artifact_map,
+        [[False, True, False], [True, False, True]],
+    )
+
+
+def test_load_recurrent_artifact_map_rejects_shape_mismatch(tmp_path):
+    path = tmp_path / "recurrent_artifact_map.npy"
+    np.save(path, np.zeros((2, 3), dtype=bool))
+
+    with pytest.raises(ValueError, match="shape does not match"):
+        load_recurrent_artifact_map(path, map_shape=(3, 2))
 
 
 def test_static_noise_floor_renormalizes_residual_without_changing_raw_values():

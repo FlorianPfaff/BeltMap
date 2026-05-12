@@ -105,3 +105,21 @@ def test_soft_recurrent_filter_keeps_strong_peak_and_rejects_weak_peak():
 
     assert rejected == 1
     assert filtered == [[strong_recurring, off_artifact]]
+
+
+def test_filter_accepts_config_without_build_min_revolutions_for_reused_map():
+    artifact_map = np.ones((4, 4), dtype=bool)
+
+    filtered, rejected = filter_recurrent_artifact_detections(
+        [[detection(0, 1, 1, 3, 3)]],
+        phase_px_by_frame=[0.0],
+        artifact_map=artifact_map,
+        config=RecurrentArtifactConfig(
+            min_revolutions=0,
+            margin_px=0,
+            max_overlap_fraction=0.3,
+        ),
+    )
+
+    assert rejected == 1
+    assert filtered == [[]]

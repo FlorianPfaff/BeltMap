@@ -272,6 +272,13 @@ mode = "hard"
 soft_penalty_weight = 1.0
 ```
 
+For detection-only sweeps, a previously built artifact map can be reused:
+
+```toml
+[reuse]
+recurrent_artifact_map_path = "previous/recurrent_artifact_map.npy"
+```
+
 Particle velocities can be extracted from a sequence of particle masks and
 compared to the signed belt image velocity:
 

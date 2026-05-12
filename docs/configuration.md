@@ -85,6 +85,7 @@ underscores.
 | `reuse.belt_map_path` | `REUSE_BELT_MAP_PATH` | `--reuse-belt-map-path` | unset | path | Existing `belt_map.npy` to reuse instead of rebuilding the belt map. The driver writes a copy plus fresh detection, tracking, velocity, metadata, and preview outputs into `paths.output_dir`. |
 | `reuse.phase_estimates_path` | `REUSE_PHASE_ESTIMATES_PATH` | `--reuse-phase-estimates-path` | unset | path | Existing `phase_estimates.csv` to reuse with `reuse.belt_map_path`. If unset, phases are recomputed by local registration against the reused map. |
 | `reuse.static_noise_path` | `REUSE_STATIC_NOISE_PATH` | `--reuse-static-noise-path` | unset | path | Existing `static_noise.npy` to reuse as a per-pixel residual-noise floor during detection. |
+| `reuse.recurrent_artifact_map_path` | `REUSE_RECURRENT_ARTIFACT_MAP_PATH` | `--reuse-recurrent-artifact-map-path` | unset | path | Existing `recurrent_artifact_map.npy` to reuse for recurrent artifact filtering. This enables the filter without rebuilding the recurrent artifact map. |
 | `frames.max_frames` | `MAX_FRAMES` | `--max-frames` | `0` | frames | Maximum number of selected frames to process after sorting and striding. `0` means process all selected frames. |
 | `frames.stride` | `FRAME_STRIDE` | `--frame-stride` | `1` | frames | Process every Nth frame after natural filename sorting. Must be at least 1. |
 | `belt.region` | `BELT_REGION` | `--belt-region` | full frame | px | Belt crop as `top,left,height,width`. Coordinates are full-frame image coordinates. Omit only when the full frame is belt texture. |
@@ -116,7 +117,7 @@ underscores.
 | `static_noise.mask_threshold` | `STATIC_NOISE_MASK_THRESHOLD` | `--static-noise-mask-threshold` | `0` | z | Optional normalized-residual threshold for masking particle boxes while learning static noise. `0` disables this particle mask. |
 | `static_noise.mask_margin_px` | `STATIC_NOISE_MASK_MARGIN_PX` | `--static-noise-mask-margin-px` | `8` | px | Safety margin around particle boxes while learning static noise. Used only when `static_noise.mask_threshold > 0`. |
 | `static_noise.mask_min_area_px` | `STATIC_NOISE_MASK_MIN_AREA_PX` | `--static-noise-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area for particle masks while learning static noise. |
-| `recurrent_artifact.min_revolutions` | `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` | `--recurrent-artifact-min-revolutions` | `0` | revolutions | Minimum distinct belt revolutions in which a belt-coordinate neighborhood must fire before it is marked as recurrent artifact. `0` disables this filter. |
+| `recurrent_artifact.min_revolutions` | `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` | `--recurrent-artifact-min-revolutions` | `0` | revolutions | Minimum distinct belt revolutions in which a belt-coordinate neighborhood must fire before it is marked as recurrent artifact. `0` disables building this filter unless `reuse.recurrent_artifact_map_path` is set. |
 | `recurrent_artifact.margin_px` | `RECURRENT_ARTIFACT_MARGIN_PX` | `--recurrent-artifact-margin-px` | `2` | px | Safety margin around detected component boxes when accumulating recurrent artifacts in belt coordinates. |
 | `recurrent_artifact.max_overlap_fraction` | `RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION` | `--recurrent-artifact-max-overlap-fraction` | `0.3` | fraction | Reject a detection when this fraction of its belt-coordinate bounding box overlaps the recurrent artifact map. |
 | `recurrent_artifact.mode` | `RECURRENT_ARTIFACT_MODE` | `--recurrent-artifact-mode` | `hard` | mode | `hard` rejects by overlap alone. `soft` rejects recurrent detections only when their peak residual is weak relative to the detection threshold. |
@@ -259,6 +260,12 @@ In `mode = "hard"`, that overlap test rejects the detection directly. In
 `mode = "soft"`, recurring components are rejected only if their `peak_signal`
 does not clear `detection.threshold * (1 + soft_penalty_weight * overlap)`.
 This is useful when hard recurrent filtering removes too many strong particles.
+
+To reuse a previously built artifact map during threshold or shape-gate sweeps,
+set `reuse.recurrent_artifact_map_path`. In that mode the driver loads the map,
+copies it to the output directory, and applies the configured `mode`,
+`max_overlap_fraction`, and `soft_penalty_weight` without rebuilding
+`recurrent_artifact_counts.npy`.
 
 For short diagnostics with only about two revolutions, use `min_revolutions = 2`.
 For full runs with many revolutions, start with `min_revolutions = 3` or higher.

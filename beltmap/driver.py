@@ -126,6 +126,24 @@ def load_phase_estimates(path: Path) -> dict[int, PhaseEstimate]:
     return estimates
 
 
+def load_recurrent_artifact_map(
+    path: Path,
+    *,
+    map_shape: tuple[int, int],
+) -> np.ndarray:
+    artifact_map = np.load(path)
+    if artifact_map.ndim != 2:
+        raise ValueError(
+            "REUSE_RECURRENT_ARTIFACT_MAP_PATH must point to a 2-D recurrent_artifact_map.npy"
+        )
+    if artifact_map.shape != map_shape:
+        raise ValueError(
+            "reused recurrent artifact map shape does not match belt map and crop width: "
+            f"{artifact_map.shape} != {map_shape}"
+        )
+    return np.asarray(artifact_map, dtype=bool)
+
+
 def validate_reused_phase_estimates(
     estimates: dict[int, PhaseEstimate],
     *,
@@ -437,6 +455,7 @@ def main() -> None:
     reuse_belt_map_path = optional_path("REUSE_BELT_MAP_PATH")
     reuse_phase_estimates_path = optional_path("REUSE_PHASE_ESTIMATES_PATH")
     reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")
+    reuse_recurrent_artifact_map_path = optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH")
     if reuse_phase_estimates_path is not None and reuse_belt_map_path is None:
         raise ValueError("REUSE_PHASE_ESTIMATES_PATH requires REUSE_BELT_MAP_PATH")
     static_noise_sample_frames = rt.env_int("STATIC_NOISE_SAMPLE_FRAMES", 0, minimum=0)
@@ -502,6 +521,7 @@ def main() -> None:
         reuse_belt_map_path=reuse_belt_map_path,
         reuse_phase_estimates_path=reuse_phase_estimates_path,
         reuse_static_noise_path=reuse_static_noise_path,
+        reuse_recurrent_artifact_map_path=reuse_recurrent_artifact_map_path,
         static_noise_sample_frames=static_noise_sample_frames,
         static_noise_min_scale=static_noise_min_scale,
         static_noise_mask_threshold=static_noise_mask_threshold,
@@ -666,11 +686,28 @@ def main() -> None:
         np.save(rt.OUT / "static_noise.npy", static_noise_map)
         rt.save_png(static_noise_map, rt.OUT / "static_noise.png")
 
+    reused_recurrent_artifact_map: np.ndarray | None = None
+    if reuse_recurrent_artifact_map_path is not None:
+        reused_recurrent_artifact_map = load_recurrent_artifact_map(
+            reuse_recurrent_artifact_map_path,
+            map_shape=(map_height, region[3]),
+        )
+        rt.emit(
+            "recurrent_artifact",
+            "loaded reused recurrent belt-coordinate artifact map",
+            source_recurrent_artifact_map_npy=reuse_recurrent_artifact_map_path,
+            artifact_pixels=int(np.count_nonzero(reused_recurrent_artifact_map)),
+            artifact_map_shape=list(reused_recurrent_artifact_map.shape),
+        )
+
     progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     partial_output_interval = rt.env_int("PARTIAL_OUTPUT_INTERVAL_FRAMES", 250, minimum=0)
     residual_preview_frames = rt.env_int("DEBUG_RESIDUAL_PREVIEW_FRAMES", 3, minimum=0)
     residual_preview_interval = rt.env_int("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", 0, minimum=0)
-    recurrent_artifact_enabled = recurrent_artifact_config.min_revolutions > 0
+    recurrent_artifact_enabled = (
+        recurrent_artifact_config.min_revolutions > 0
+        or reuse_recurrent_artifact_map_path is not None
+    )
     rt.emit(
         "detect",
         "starting residual rendering and particle detection",
@@ -733,33 +770,60 @@ def main() -> None:
     recurrent_artifact_pixels = 0
     recurrent_artifact_rejected = 0
     recurrent_artifact_revolutions = 0
+    recurrent_artifact_source = "none"
     if recurrent_artifact_enabled:
-        rt.emit(
-            "recurrent_artifact",
-            "building recurrent belt-coordinate artifact map",
-            min_revolutions=recurrent_artifact_config.min_revolutions,
-            margin_px=recurrent_artifact_config.margin_px,
-            max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
-            mode=recurrent_artifact_config.mode,
-            soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
-        )
-        recurrent_result = build_recurrent_artifact_map(
-            detections_by_frame,
-            phase_px_by_frame,
-            belt_revolution_indices(len(paths), motion_model),
-            map_shape=(map_height, region[3]),
-            config=recurrent_artifact_config,
-        )
-        recurrent_artifact_pixels = recurrent_result.artifact_pixels
-        recurrent_artifact_revolutions = recurrent_result.revolution_count
-        np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_result.mask)
-        np.save(rt.OUT / "recurrent_artifact_counts.npy", recurrent_result.counts)
-        rt.save_png(recurrent_result.mask.astype(np.float32), rt.OUT / "recurrent_artifact_map.png")
-        rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
+        map_shape = (map_height, region[3])
+        recurrent_artifact_candidate_detections: int | None = None
+        if reuse_recurrent_artifact_map_path is not None:
+            recurrent_artifact_source = "loaded"
+            assert reused_recurrent_artifact_map is not None
+            recurrent_artifact_mask = reused_recurrent_artifact_map
+            recurrent_artifact_pixels = int(np.count_nonzero(recurrent_artifact_mask))
+            np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_artifact_mask)
+            rt.save_png(
+                recurrent_artifact_mask.astype(np.float32),
+                rt.OUT / "recurrent_artifact_map.png",
+            )
+            rt.emit(
+                "recurrent_artifact",
+                "saved reused recurrent belt-coordinate artifact map",
+                source_recurrent_artifact_map_npy=reuse_recurrent_artifact_map_path,
+                artifact_pixels=recurrent_artifact_pixels,
+                recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
+            )
+        else:
+            recurrent_artifact_source = "built"
+            rt.emit(
+                "recurrent_artifact",
+                "building recurrent belt-coordinate artifact map",
+                min_revolutions=recurrent_artifact_config.min_revolutions,
+                margin_px=recurrent_artifact_config.margin_px,
+                max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+                mode=recurrent_artifact_config.mode,
+                soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
+            )
+            recurrent_result = build_recurrent_artifact_map(
+                detections_by_frame,
+                phase_px_by_frame,
+                belt_revolution_indices(len(paths), motion_model),
+                map_shape=map_shape,
+                config=recurrent_artifact_config,
+            )
+            recurrent_artifact_mask = recurrent_result.mask
+            recurrent_artifact_pixels = recurrent_result.artifact_pixels
+            recurrent_artifact_revolutions = recurrent_result.revolution_count
+            recurrent_artifact_candidate_detections = recurrent_result.candidate_detections
+            np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_result.mask)
+            np.save(rt.OUT / "recurrent_artifact_counts.npy", recurrent_result.counts)
+            rt.save_png(
+                recurrent_result.mask.astype(np.float32),
+                rt.OUT / "recurrent_artifact_map.png",
+            )
+            rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
         detections_by_frame, recurrent_artifact_rejected = filter_recurrent_artifact_detections(
             detections_by_frame,
             phase_px_by_frame,
-            recurrent_result.mask,
+            recurrent_artifact_mask,
             config=recurrent_artifact_config,
             detection_threshold=detection_threshold,
         )
@@ -767,13 +831,18 @@ def main() -> None:
         rt.emit(
             "recurrent_artifact",
             "filtered recurrent belt-coordinate artifacts",
-            revolutions=recurrent_result.revolution_count,
-            candidate_detections=recurrent_result.candidate_detections,
-            artifact_pixels=recurrent_result.artifact_pixels,
+            source=recurrent_artifact_source,
+            revolutions=recurrent_artifact_revolutions,
+            candidate_detections=recurrent_artifact_candidate_detections,
+            artifact_pixels=recurrent_artifact_pixels,
             rejected_detections=recurrent_artifact_rejected,
             remaining_detections=len(detection_rows),
             recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
-            recurrent_artifact_counts_npy=rt.OUT / "recurrent_artifact_counts.npy",
+            recurrent_artifact_counts_npy=(
+                rt.OUT / "recurrent_artifact_counts.npy"
+                if recurrent_artifact_source == "built"
+                else None
+            ),
         )
 
     write_detection_outputs(detections_by_frame, detection_rows)
@@ -876,6 +945,7 @@ def main() -> None:
         "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
         "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
         "reuse_static_noise_path": "" if reuse_static_noise_path is None else str(reuse_static_noise_path),
+        "reuse_recurrent_artifact_map_path": "" if reuse_recurrent_artifact_map_path is None else str(reuse_recurrent_artifact_map_path),
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
         "static_noise_mask_threshold": static_noise_mask_threshold,
@@ -888,6 +958,7 @@ def main() -> None:
         "recurrent_artifact_mode": recurrent_artifact_config.mode,
         "recurrent_artifact_soft_penalty_weight": recurrent_artifact_config.soft_penalty_weight,
         "recurrent_artifact_filter_used": recurrent_artifact_enabled,
+        "recurrent_artifact_source": recurrent_artifact_source,
         "recurrent_artifact_revolutions": recurrent_artifact_revolutions,
         "recurrent_artifact_pixels": recurrent_artifact_pixels,
         "n_recurrent_artifact_rejected": recurrent_artifact_rejected,

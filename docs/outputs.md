@@ -54,8 +54,8 @@ outputs/
   phase_estimates.csv
   progress.jsonl
   progress_latest.json
-  recurrent_artifact_counts.npy  # only when recurrent artifact filtering is enabled
-  recurrent_artifact_counts.png  # only when recurrent artifact filtering is enabled
+  recurrent_artifact_counts.npy  # only when recurrent artifact map is built
+  recurrent_artifact_counts.png  # only when recurrent artifact map is built
   recurrent_artifact_map.npy     # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.png     # only when recurrent artifact filtering is enabled
   residual_frame_000000.png
@@ -185,17 +185,23 @@ Shape: `(belt_map_height_px, crop_width_px)`.
 Coordinates: same belt-coordinate row and crop-local column layout as
 `belt_map.npy`.
 
-This file is written only when `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` or
-`recurrent_artifact.min_revolutions` is positive. Final `detections.csv`,
-`tracks.csv`, and velocity outputs are written after rejecting detections whose
-belt-coordinate bounding boxes overlap this map too strongly. With
-`recurrent_artifact.mode = "soft"`, overlapping detections can survive if their
-peak residual is strong enough.
+This file is written when recurrent artifact filtering is enabled, either by
+building a map with `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` /
+`recurrent_artifact.min_revolutions` or by loading one with
+`REUSE_RECURRENT_ARTIFACT_MAP_PATH` / `reuse.recurrent_artifact_map_path`.
+Final `detections.csv`, `tracks.csv`, and velocity outputs are written after
+rejecting detections whose belt-coordinate bounding boxes overlap this map too
+strongly. With `recurrent_artifact.mode = "soft"`, overlapping detections can
+survive if their peak residual is strong enough.
 
 ## `recurrent_artifact_counts.npy`
 
 Purpose: stores the distinct-revolution recurrence count used to build
 `recurrent_artifact_map.npy`.
+
+This file is written only when the recurrent artifact map is built in the
+current run. It is not regenerated when a recurrent artifact map is loaded via
+`reuse.recurrent_artifact_map_path`.
 
 Format: NumPy `.npy` integer array.
 
@@ -370,6 +376,7 @@ Important fields:
 | `map_particle_mask_min_area_px` | px | Minimum component area used for map-building particle masks. |
 | `static_noise_map_used` | bool | Whether a learned or reused static residual-noise map was applied during detection. |
 | `reuse_static_noise_path` | path | Source static-noise map path, or an empty string when no map was reused. |
+| `reuse_recurrent_artifact_map_path` | path | Source recurrent artifact map path, or an empty string when no map was reused. |
 | `static_noise_sample_frames` | frames | Number of frames requested for static residual-noise learning. |
 | `static_noise_min_scale` | gray | Minimum static residual-noise scale used when writing the map. |
 | `static_noise_mask_threshold` | z | Particle-mask threshold used while learning static noise, or `null` when disabled. |
@@ -381,6 +388,7 @@ Important fields:
 | `recurrent_artifact_max_overlap_fraction` | fraction | Per-detection overlap threshold used for rejection. |
 | `recurrent_artifact_mode` | mode | Recurrent artifact rejection mode, either `hard` or `soft`. |
 | `recurrent_artifact_soft_penalty_weight` | weight | Soft-mode peak-signal penalty weight. |
+| `recurrent_artifact_source` | mode | `built`, `loaded`, or `none`. |
 | `recurrent_artifact_revolutions` | count | Number of distinct revolution bins represented in the processed frame sequence. |
 | `recurrent_artifact_pixels` | px | Number of belt-coordinate pixels marked as recurrent artifacts. |
 | `n_recurrent_artifact_rejected` | count | Number of first-pass detections rejected by recurrent artifact suppression. |

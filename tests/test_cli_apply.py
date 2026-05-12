@@ -70,6 +70,7 @@ output_dir = "outputs"
 belt_map_path = "previous/belt_map.npy"
 phase_estimates_path = "previous/phase_estimates.csv"
 static_noise_path = "previous/static_noise.npy"
+recurrent_artifact_map_path = "previous/recurrent_artifact_map.npy"
 
 [frames]
 stride = 3
@@ -156,6 +157,7 @@ allow_full_frame = true
         "MIN_TRACK_LENGTH": "2",
         "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
         "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
+        "REUSE_RECURRENT_ARTIFACT_MAP_PATH": "previous/recurrent_artifact_map.npy",
         "REUSE_STATIC_NOISE_PATH": "previous/static_noise.npy",
         "RECURRENT_ARTIFACT_MARGIN_PX": "4",
         "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION": "0.35",

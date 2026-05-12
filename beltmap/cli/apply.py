@@ -21,6 +21,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("reuse_belt_map_path", "REUSE_BELT_MAP_PATH", "path", (("reuse_belt_map_path",), ("reuse", "belt_map_path")), "Optional existing belt_map.npy to reuse instead of rebuilding the belt map.", "NPY"),
     ("reuse_phase_estimates_path", "REUSE_PHASE_ESTIMATES_PATH", "path", (("reuse_phase_estimates_path",), ("reuse", "phase_estimates_path")), "Optional existing phase_estimates.csv to reuse with a reused belt map.", "CSV"),
     ("reuse_static_noise_path", "REUSE_STATIC_NOISE_PATH", "path", (("reuse_static_noise_path",), ("reuse", "static_noise_path")), "Optional existing static_noise.npy to reuse for residual normalization.", "NPY"),
+    ("reuse_recurrent_artifact_map_path", "REUSE_RECURRENT_ARTIFACT_MAP_PATH", "path", (("reuse_recurrent_artifact_map_path",), ("reuse", "recurrent_artifact_map_path")), "Optional existing recurrent_artifact_map.npy to reuse for recurrent artifact filtering.", "NPY"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
     ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity in pixels per frame, or 'auto'.", "PX_PER_FRAME|auto"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
@@ -52,7 +53,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("static_noise_mask_threshold", "STATIC_NOISE_MASK_THRESHOLD", "float", (("static_noise_mask_threshold",), ("static_noise", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static noise. Use 0 to disable.", "Z"),
     ("static_noise_mask_margin_px", "STATIC_NOISE_MASK_MARGIN_PX", "int", (("static_noise_mask_margin_px",), ("static_noise", "mask_margin_px")), "Safety margin around particle boxes while learning static noise.", "PX"),
     ("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for particle masks while learning static noise.", "PX"),
-    ("recurrent_artifact_min_revolutions", "RECURRENT_ARTIFACT_MIN_REVOLUTIONS", "int", (("recurrent_artifact_min_revolutions",), ("recurrent_artifact", "min_revolutions")), "Minimum distinct belt revolutions required to mark recurrent artifact pixels. Use 0 to disable.", "N"),
+    ("recurrent_artifact_min_revolutions", "RECURRENT_ARTIFACT_MIN_REVOLUTIONS", "int", (("recurrent_artifact_min_revolutions",), ("recurrent_artifact", "min_revolutions")), "Minimum distinct belt revolutions required to mark recurrent artifact pixels. Use 0 to disable building unless a reused map is set.", "N"),
     ("recurrent_artifact_margin_px", "RECURRENT_ARTIFACT_MARGIN_PX", "int", (("recurrent_artifact_margin_px",), ("recurrent_artifact", "margin_px")), "Safety margin around detection boxes when accumulating recurrent artifacts.", "PX"),
     ("recurrent_artifact_max_overlap_fraction", "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION", "float", (("recurrent_artifact_max_overlap_fraction",), ("recurrent_artifact", "max_overlap_fraction")), "Reject detections whose belt-coordinate bbox overlaps recurrent artifacts above this fraction.", "FRACTION"),
     ("recurrent_artifact_mode", "RECURRENT_ARTIFACT_MODE", "path", (("recurrent_artifact_mode",), ("recurrent_artifact", "mode")), "Recurrent artifact filter mode: hard rejects by overlap; soft keeps strong peaks.", "MODE"),
@@ -89,6 +90,7 @@ output_dir = "outputs"
 # belt_map_path = "outputs/belt_map.npy"
 # phase_estimates_path = "outputs/phase_estimates.csv"
 # static_noise_path = "outputs/static_noise.npy"
+# recurrent_artifact_map_path = "outputs/recurrent_artifact_map.npy"
 
 [frames]
 max_frames = 0
