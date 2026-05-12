@@ -73,6 +73,24 @@ normalized_residual = raw_residual / local_noise
 
 The local noise scale is estimated robustly from valid residual pixels. The current implementation uses a global median center, a median-absolute-deviation scale estimate, optional clipping, and a masked local box variance. Invalid pixels are filled with `NaN` and excluded from later processing.
 
+Optionally, the image-sequence driver can also learn a static residual-noise map
+from sampled belt-subtracted residuals:
+
+```text
+static_noise(y, x) = 1.4826 * MAD_t(raw_residual_t(y, x))
+```
+
+When enabled, final detection uses the larger of the frame-local scale and this
+image-fixed scale:
+
+```text
+normalized_residual = raw_residual / max(local_noise, static_noise)
+```
+
+This is a normalization floor, not a background subtraction term. It is intended
+to down-weight fixed residual structures such as illumination or detector
+artifacts without changing the expected clean belt render.
+
 The default detector is intentionally simple and interpretable for bright particles on a darker belt:
 
 ```text

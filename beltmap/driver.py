@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import json
 import os
+import tempfile
+import warnings
 from dataclasses import asdict
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from . import (
     ParticleTrackingConfig,
     PhaseRegistrationConfig,
     ResidualConfig,
+    ResidualImage,
     TrackFilterConfig,
     detect_particles_from_residual,
     estimate_particle_velocities_vs_belt,
@@ -30,6 +33,8 @@ from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
     PhaseFeedbackConfig,
     build_belt_map_result,
+    expanded_detection_mask,
+    sample_indices,
 )
 from ._driver_motion import estimate_velocity, parse_region, validate_auto_velocity_region
 
@@ -185,6 +190,169 @@ def should_save_residual_preview(frame_index: int, preview_frames: int, preview_
     return frame_index < preview_frames or (preview_interval > 0 and frame_index % preview_interval == 0)
 
 
+def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray | None) -> ResidualImage:
+    """Normalize a residual with an image-fixed noise floor when available."""
+
+    if static_noise is None:
+        return residual
+    noise_floor = np.asarray(static_noise, dtype=np.float64)
+    if noise_floor.shape != residual.local_noise.shape:
+        raise ValueError(
+            "static noise map shape must match residual shape: "
+            f"{noise_floor.shape} != {residual.local_noise.shape}"
+        )
+    noise_floor = np.where(np.isfinite(noise_floor) & (noise_floor > 0), noise_floor, 0.0)
+    local_noise = np.maximum(residual.local_noise, noise_floor)
+    valid = residual.mask & np.isfinite(residual.raw) & np.isfinite(local_noise) & (local_noise > 0)
+    normalized = np.full(residual.normalized.shape, np.nan, dtype=np.float64)
+    normalized[valid] = residual.raw[valid] / local_noise[valid]
+    return ResidualImage(
+        raw=residual.raw,
+        local_noise=local_noise,
+        normalized=normalized,
+        mask=residual.mask,
+        expected_background=residual.expected_background,
+        clean_render=residual.clean_render,
+    )
+
+
+def _nanmedian(values: np.ndarray, *, axis: int) -> np.ndarray:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+        return np.nanmedian(values, axis=axis)
+
+
+def learn_static_residual_noise_map(
+    *,
+    paths: list[Path],
+    belt_map: np.ndarray,
+    motion_model: BeltMotionModel,
+    region: tuple[int, int, int, int],
+    phase_estimates: dict[int, PhaseEstimate] | None,
+    registration_config: PhaseRegistrationConfig,
+    residual_config: ResidualConfig,
+    sample_frames: int,
+    min_scale: float,
+    mask_threshold: float | None = None,
+    mask_margin_px: int = 0,
+    mask_min_area_px: int = 1,
+    chunk_rows: int = 48,
+) -> np.ndarray:
+    """Estimate per-pixel residual MAD from belt-subtracted sampled frames."""
+
+    if sample_frames <= 0:
+        raise ValueError("sample_frames must be positive")
+    if min_scale < 0:
+        raise ValueError("min_scale must be non-negative")
+    if mask_threshold is not None and mask_threshold <= 0:
+        mask_threshold = None
+    if mask_margin_px < 0:
+        raise ValueError("mask_margin_px must be non-negative")
+    if mask_min_area_px < 1:
+        raise ValueError("mask_min_area_px must be at least 1")
+
+    _, _, crop_height, crop_width = region
+    samples = sample_indices(len(paths), sample_frames)
+    rt.emit(
+        "static_noise",
+        "learning static residual-noise map",
+        sampled_frames=len(samples),
+        selected_frames=len(paths),
+        mask_threshold=mask_threshold,
+        mask_margin_px=mask_margin_px,
+        mask_min_area_px=mask_min_area_px,
+        min_scale=min_scale,
+    )
+    component_config = ParticleComponentConfig(
+        min_area_px=mask_min_area_px,
+        weighted_centroid=False,
+    )
+    progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
+    with tempfile.TemporaryDirectory(prefix="static_noise_", dir=rt.OUT) as temp_dir:
+        stack_path = Path(temp_dir) / "residual_stack.npy"
+        residual_stack = np.lib.format.open_memmap(
+            stack_path,
+            mode="w+",
+            dtype=np.float32,
+            shape=(len(samples), crop_height, crop_width),
+        )
+        masked_pixels = 0
+        for sample_number, frame_index in enumerate(samples, start=1):
+            frame = rt.crop(rt.read_gray(paths[frame_index]), region)
+            phase_estimate = (
+                phase_estimates[frame_index]
+                if phase_estimates is not None
+                else None
+            )
+            residual = render_clean_belt_residual(
+                image=frame,
+                belt_map=belt_map,
+                frame_index=float(frame_index),
+                motion_model=motion_model,
+                belt_region=None,
+                phase_estimate=phase_estimate,
+                registration_config=registration_config,
+                residual_config=residual_config,
+            )
+            raw = np.asarray(residual.raw, dtype=np.float32).copy()
+            if mask_threshold is not None:
+                mask = detect_particles_from_residual(residual, threshold=mask_threshold)
+                detections = extract_particle_detections(
+                    mask,
+                    residual=residual,
+                    frame_index=float(frame_index),
+                    config=component_config,
+                )
+                particle_mask = expanded_detection_mask(
+                    detections,
+                    raw.shape,
+                    margin_px=mask_margin_px,
+                )
+                raw[particle_mask] = np.nan
+                masked_pixels += int(np.count_nonzero(particle_mask))
+            residual_stack[sample_number - 1] = raw
+            if sample_number == 1 or sample_number == len(samples) or sample_number % progress_interval == 0:
+                rt.emit(
+                    "static_noise",
+                    f"sampled {sample_number}/{len(samples)} residual frames",
+                    source_frame_index=frame_index,
+                    masked_pixels=masked_pixels,
+                )
+
+        static_noise = np.empty((crop_height, crop_width), dtype=np.float32)
+        for row_start in range(0, crop_height, chunk_rows):
+            row_stop = min(crop_height, row_start + chunk_rows)
+            block = np.asarray(residual_stack[:, row_start:row_stop, :], dtype=np.float32)
+            center = _nanmedian(block, axis=0)
+            deviations = np.abs(block - center[None, :, :])
+            mad = _nanmedian(deviations, axis=0)
+            noise = (1.4826 * mad).astype(np.float32)
+            noise[~np.isfinite(noise)] = min_scale
+            if min_scale > 0:
+                noise = np.maximum(noise, min_scale)
+            static_noise[row_start:row_stop] = noise
+            rt.emit(
+                "static_noise",
+                "computed static-noise row chunk",
+                row_start=row_start,
+                row_stop=row_stop,
+                crop_height=crop_height,
+            )
+            del block, center, deviations, mad, noise
+        residual_stack.flush()
+        del residual_stack
+
+    finite = static_noise[np.isfinite(static_noise)]
+    rt.emit(
+        "static_noise",
+        "finished static residual-noise map",
+        median_noise=float(np.median(finite)) if finite.size else None,
+        p95_noise=float(np.percentile(finite, 95)) if finite.size else None,
+        max_noise=float(np.max(finite)) if finite.size else None,
+    )
+    return static_noise
+
+
 def main() -> None:
     """Run the BeltMap image-sequence driver."""
 
@@ -240,8 +408,14 @@ def main() -> None:
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     reuse_belt_map_path = optional_path("REUSE_BELT_MAP_PATH")
     reuse_phase_estimates_path = optional_path("REUSE_PHASE_ESTIMATES_PATH")
+    reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")
     if reuse_phase_estimates_path is not None and reuse_belt_map_path is None:
         raise ValueError("REUSE_PHASE_ESTIMATES_PATH requires REUSE_BELT_MAP_PATH")
+    static_noise_sample_frames = rt.env_int("STATIC_NOISE_SAMPLE_FRAMES", 0, minimum=0)
+    static_noise_min_scale = rt.env_float("STATIC_NOISE_MIN_SCALE", 0.0, minimum=0.0)
+    static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", 0.0)
+    static_noise_mask_margin_px = rt.env_int("STATIC_NOISE_MASK_MARGIN_PX", 8, minimum=0)
+    static_noise_mask_min_area_px = rt.env_int("STATIC_NOISE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     registration_config = PhaseRegistrationConfig(
         search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
@@ -279,6 +453,12 @@ def main() -> None:
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
         reuse_belt_map_path=reuse_belt_map_path,
         reuse_phase_estimates_path=reuse_phase_estimates_path,
+        reuse_static_noise_path=reuse_static_noise_path,
+        static_noise_sample_frames=static_noise_sample_frames,
+        static_noise_min_scale=static_noise_min_scale,
+        static_noise_mask_threshold=static_noise_mask_threshold,
+        static_noise_mask_margin_px=static_noise_mask_margin_px,
+        static_noise_mask_min_area_px=static_noise_mask_min_area_px,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
         phase_refinement_iterations=phase_refinement_iterations,
@@ -371,6 +551,67 @@ def main() -> None:
         min_bbox_extent=detection_min_bbox_extent,
     )
     residual_config = ResidualConfig()
+    reused_phase_estimates = (
+        load_phase_estimates(reuse_phase_estimates_path)
+        if reuse_phase_estimates_path is not None
+        else None
+    )
+    if reused_phase_estimates is not None:
+        validate_reused_phase_estimates(reused_phase_estimates, frame_count=len(paths))
+        rt.emit(
+            "detect",
+            "loaded reused phase estimates",
+            source_phase_estimates_csv=reuse_phase_estimates_path,
+            phase_estimates=len(reused_phase_estimates),
+        )
+    static_noise_map: np.ndarray | None = None
+    if reuse_static_noise_path is not None:
+        static_noise_map = np.load(reuse_static_noise_path)
+        if static_noise_map.ndim != 2:
+            raise ValueError("REUSE_STATIC_NOISE_PATH must point to a 2-D static_noise.npy")
+        if static_noise_map.shape != (region[2], region[3]):
+            raise ValueError(
+                "reused static noise map shape does not match BELT_REGION: "
+                f"{static_noise_map.shape} != {(region[2], region[3])}"
+            )
+        static_noise_map = np.asarray(static_noise_map, dtype=np.float32)
+        static_noise_map = np.where(
+            np.isfinite(static_noise_map) & (static_noise_map > 0),
+            static_noise_map,
+            0.0,
+        ).astype(np.float32, copy=False)
+        rt.emit(
+            "static_noise",
+            "loaded reused static residual-noise map",
+            source_static_noise_npy=reuse_static_noise_path,
+            static_noise_shape=list(static_noise_map.shape),
+        )
+    elif static_noise_sample_frames > 0:
+        static_noise_map = learn_static_residual_noise_map(
+            paths=paths,
+            belt_map=belt_map,
+            motion_model=motion_model,
+            region=region,
+            phase_estimates=reused_phase_estimates,
+            registration_config=registration_config,
+            residual_config=residual_config,
+            sample_frames=static_noise_sample_frames,
+            min_scale=static_noise_min_scale,
+            mask_threshold=static_noise_mask_threshold,
+            mask_margin_px=static_noise_mask_margin_px,
+            mask_min_area_px=static_noise_mask_min_area_px,
+        )
+        np.save(rt.OUT / "static_noise.npy", static_noise_map)
+        rt.save_png(static_noise_map, rt.OUT / "static_noise.png")
+        rt.emit(
+            "static_noise",
+            "saved static residual-noise map",
+            static_noise_npy=rt.OUT / "static_noise.npy",
+            static_noise_png=rt.OUT / "static_noise.png",
+        )
+    if static_noise_map is not None and reuse_static_noise_path is not None:
+        np.save(rt.OUT / "static_noise.npy", static_noise_map)
+        rt.save_png(static_noise_map, rt.OUT / "static_noise.png")
 
     progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     partial_output_interval = rt.env_int("PARTIAL_OUTPUT_INTERVAL_FRAMES", 250, minimum=0)
@@ -389,19 +630,6 @@ def main() -> None:
     detections_by_frame = []
     detection_rows: list[dict] = []
     phase_rows: list[dict] = []
-    reused_phase_estimates = (
-        load_phase_estimates(reuse_phase_estimates_path)
-        if reuse_phase_estimates_path is not None
-        else None
-    )
-    if reused_phase_estimates is not None:
-        validate_reused_phase_estimates(reused_phase_estimates, frame_count=len(paths))
-        rt.emit(
-            "detect",
-            "loaded reused phase estimates",
-            source_phase_estimates_csv=reuse_phase_estimates_path,
-            phase_estimates=len(reused_phase_estimates),
-        )
     detection_start = rt.time.perf_counter()
     for frame_index, path in enumerate(paths):
         frame = rt.crop(rt.read_gray(path), region)
@@ -420,6 +648,7 @@ def main() -> None:
             registration_config=registration_config,
             residual_config=residual_config,
         )
+        residual = apply_static_noise_floor(residual, static_noise_map)
         phase_rows.append(phase_estimate_row(frame_index, path, residual, float(map_height)))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
@@ -541,6 +770,13 @@ def main() -> None:
         "reused_belt_map": reuse_belt_map_path is not None,
         "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
         "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
+        "reuse_static_noise_path": "" if reuse_static_noise_path is None else str(reuse_static_noise_path),
+        "static_noise_sample_frames": static_noise_sample_frames,
+        "static_noise_min_scale": static_noise_min_scale,
+        "static_noise_mask_threshold": static_noise_mask_threshold,
+        "static_noise_mask_margin_px": static_noise_mask_margin_px,
+        "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
+        "static_noise_map_used": static_noise_map is not None,
         "reuse_metadata_path": "" if reuse_metadata_path is None else str(reuse_metadata_path),
         "phase_estimate_source": "loaded" if reused_phase_estimates is not None else "registration",
         "n_phase_refinement_rows": len(phase_refinement_rows),

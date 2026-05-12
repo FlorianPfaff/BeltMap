@@ -57,6 +57,8 @@ outputs/
   residual_frame_000000.png
   residual_frame_000001.png
   residual_frame_000002.png
+  static_noise.npy        # only when static-noise learning or reuse is enabled
+  static_noise.png        # only when static-noise learning or reuse is enabled
   tracks.csv
   track_scores.csv
   velocities.csv
@@ -128,6 +130,44 @@ quantitative analysis because the pixel values are contrast-normalized for
 inspection.
 
 Coordinates: same row and column layout as `belt_map.npy`.
+
+## `static_noise.npy`
+
+Purpose: optional image-fixed residual-noise floor used during particle
+detection.
+
+Format: NumPy `.npy` array.
+
+Shape: `(crop_height_px, crop_width_px)`.
+
+Units: grayscale residual intensity, the same units as `residual.raw`.
+
+When `STATIC_NOISE_SAMPLE_FRAMES` or `static_noise.sample_frames` is positive,
+the driver renders the clean belt for sampled frames, computes raw
+belt-subtracted residuals, and estimates:
+
+```text
+static_noise(y, x) = 1.4826 * MAD_t(residual_t(y, x))
+```
+
+During detection, the normalized residual uses this map as a floor:
+
+```text
+normalized = residual / max(local_noise, static_noise)
+```
+
+When detection-only reuse mode is enabled with `REUSE_STATIC_NOISE_PATH` or
+`reuse.static_noise_path`, this file is a copy of the loaded map in the new
+output directory.
+
+## `static_noise.png`
+
+Purpose: quick-look visualization of `static_noise.npy`.
+
+Format: 8-bit grayscale PNG.
+
+Scaling: display-only robust percentile scaling. Do not use this file for
+quantitative analysis.
 
 ## `phase_estimates.csv`
 
@@ -283,6 +323,13 @@ Important fields:
 | `map_particle_mask_threshold` | z | Threshold used for particle masking during map reconstruction. |
 | `map_particle_mask_margin_px` | px | Bounding-box margin used when excluding particle pixels from the map. |
 | `map_particle_mask_min_area_px` | px | Minimum component area used for map-building particle masks. |
+| `static_noise_map_used` | bool | Whether a learned or reused static residual-noise map was applied during detection. |
+| `reuse_static_noise_path` | path | Source static-noise map path, or an empty string when no map was reused. |
+| `static_noise_sample_frames` | frames | Number of frames requested for static residual-noise learning. |
+| `static_noise_min_scale` | gray | Minimum static residual-noise scale used when writing the map. |
+| `static_noise_mask_threshold` | z | Particle-mask threshold used while learning static noise, or `null` when disabled. |
+| `static_noise_mask_margin_px` | px | Particle-box margin used while learning static noise. |
+| `static_noise_mask_min_area_px` | px | Particle-mask minimum area used while learning static noise. |
 | `n_phase_estimates` | count | Number of rows written to `phase_estimates.csv`. |
 | `n_detections` | count | Number of rows written to `detections.csv`. |
 | `n_tracks` | count | Number of particle tracks created by the tracker. |

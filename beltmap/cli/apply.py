@@ -20,6 +20,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("output_dir", "BELTMAP_OUTPUT_DIR", "path", (("output_dir",), ("paths", "output_dir")), "Directory where BeltMap outputs are written.", "DIR"),
     ("reuse_belt_map_path", "REUSE_BELT_MAP_PATH", "path", (("reuse_belt_map_path",), ("reuse", "belt_map_path")), "Optional existing belt_map.npy to reuse instead of rebuilding the belt map.", "NPY"),
     ("reuse_phase_estimates_path", "REUSE_PHASE_ESTIMATES_PATH", "path", (("reuse_phase_estimates_path",), ("reuse", "phase_estimates_path")), "Optional existing phase_estimates.csv to reuse with a reused belt map.", "CSV"),
+    ("reuse_static_noise_path", "REUSE_STATIC_NOISE_PATH", "path", (("reuse_static_noise_path",), ("reuse", "static_noise_path")), "Optional existing static_noise.npy to reuse for residual normalization.", "NPY"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
     ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity in pixels per frame, or 'auto'.", "PX_PER_FRAME|auto"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
@@ -46,6 +47,11 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
     ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
     ("map_particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX", "int", (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px")), "Minimum component area for map-building particle masks.", "PX"),
+    ("static_noise_sample_frames", "STATIC_NOISE_SAMPLE_FRAMES", "int", (("static_noise_sample_frames",), ("static_noise", "sample_frames")), "Number of residual frames sampled to learn a static residual-noise map. Use 0 to disable.", "N"),
+    ("static_noise_min_scale", "STATIC_NOISE_MIN_SCALE", "float", (("static_noise_min_scale",), ("static_noise", "min_scale")), "Minimum per-pixel static residual-noise floor.", "GRAY"),
+    ("static_noise_mask_threshold", "STATIC_NOISE_MASK_THRESHOLD", "float", (("static_noise_mask_threshold",), ("static_noise", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static noise. Use 0 to disable.", "Z"),
+    ("static_noise_mask_margin_px", "STATIC_NOISE_MASK_MARGIN_PX", "int", (("static_noise_mask_margin_px",), ("static_noise", "mask_margin_px")), "Safety margin around particle boxes while learning static noise.", "PX"),
+    ("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for particle masks while learning static noise.", "PX"),
     ("velocity_search_radius_px", "VELOCITY_SEARCH_RADIUS_PX", "int", (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")), "Max vertical shift searched during automatic belt-velocity estimation.", "PX"),
     ("velocity_estimation_pairs", "VELOCITY_ESTIMATION_PAIRS", "int", (("velocity_estimation_pairs",), ("auto_velocity", "estimation_pairs")), "Number of adjacent frame pairs used for automatic velocity estimation.", "N"),
     ("auto_velocity_min_abs_px_per_frame", "AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", "float", (("auto_velocity_min_abs_px_per_frame",), ("auto_velocity", "min_abs_px_per_frame")), "Minimum accepted absolute auto-estimated belt velocity.", "PX_PER_FRAME"),
@@ -77,6 +83,7 @@ output_dir = "outputs"
 [reuse]
 # belt_map_path = "outputs/belt_map.npy"
 # phase_estimates_path = "outputs/phase_estimates.csv"
+# static_noise_path = "outputs/static_noise.npy"
 
 [frames]
 max_frames = 0
@@ -115,6 +122,13 @@ particle_mask_grow_threshold = 2.0
 particle_mask_dilation_px = 0
 particle_mask_margin_px = 8
 particle_mask_min_area_px = 4
+
+[static_noise]
+sample_frames = 0
+min_scale = 0.0
+mask_threshold = 0.0
+mask_margin_px = 8
+mask_min_area_px = 4
 
 [auto_velocity]
 search_radius_px = 90

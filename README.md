@@ -218,6 +218,17 @@ The normalized image is
 `(image - expected_background) / local_noise`. The local noise is estimated
 robustly from the residual image, and invalid non-belt pixels are masked.
 
+For image-fixed residual structures, enable static residual-noise learning. This
+estimates `static_noise(y, x) = 1.4826 * MAD_t(residual_t(y, x))` from sampled
+belt-subtracted residuals and detects with
+`residual / max(local_noise, static_noise)`:
+
+```toml
+[static_noise]
+sample_frames = 500
+mask_threshold = 4.0
+```
+
 Bright brick particles on a dark belt can then be detected by thresholding the
 normalized residual:
 

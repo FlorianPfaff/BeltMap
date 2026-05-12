@@ -94,6 +94,31 @@ on:
         required: true
         type: string
         default: "16"
+      static_noise_sample_frames:
+        description: "Residual frames sampled to learn a static residual-noise map. 0 = disabled."
+        required: true
+        type: string
+        default: "0"
+      static_noise_min_scale:
+        description: "Minimum value in the learned static residual-noise map"
+        required: true
+        type: string
+        default: "0.0"
+      static_noise_mask_threshold:
+        description: "Optional normalized residual threshold for masking particles while learning static noise. 0 = disabled."
+        required: true
+        type: string
+        default: "0.0"
+      static_noise_mask_margin_px:
+        description: "Safety margin around particle boxes while learning static noise"
+        required: true
+        type: string
+        default: "8"
+      static_noise_mask_min_area_px:
+        description: "Minimum particle-mask component area while learning static noise"
+        required: true
+        type: string
+        default: "4"
       registration_search_radius_px:
         description: "Local phase-registration search radius around the motion-model prediction"
         required: true
@@ -238,6 +263,11 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
+          STATIC_NOISE_SAMPLE_FRAMES: ${{ inputs.static_noise_sample_frames }}
+          STATIC_NOISE_MIN_SCALE: ${{ inputs.static_noise_min_scale }}
+          STATIC_NOISE_MASK_THRESHOLD: ${{ inputs.static_noise_mask_threshold }}
+          STATIC_NOISE_MASK_MARGIN_PX: ${{ inputs.static_noise_mask_margin_px }}
+          STATIC_NOISE_MASK_MIN_AREA_PX: ${{ inputs.static_noise_mask_min_area_px }}
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -270,6 +300,11 @@ jobs:
               "map_particle_mask_dilation_px": int(os.environ["MAP_PARTICLE_MASK_DILATION_PX"]),
               "map_particle_mask_margin_px": int(os.environ["MAP_PARTICLE_MASK_MARGIN_PX"]),
               "map_particle_mask_min_area_px": int(os.environ["MAP_PARTICLE_MASK_MIN_AREA_PX"]),
+              "static_noise_sample_frames": int(os.environ["STATIC_NOISE_SAMPLE_FRAMES"]),
+              "static_noise_min_scale": float(os.environ["STATIC_NOISE_MIN_SCALE"]),
+              "static_noise_mask_threshold": float(os.environ["STATIC_NOISE_MASK_THRESHOLD"]),
+              "static_noise_mask_margin_px": int(os.environ["STATIC_NOISE_MASK_MARGIN_PX"]),
+              "static_noise_mask_min_area_px": int(os.environ["STATIC_NOISE_MASK_MIN_AREA_PX"]),
               "registration_search_radius_px": float(os.environ["REGISTRATION_SEARCH_RADIUS_PX"]),
               "registration_search_step_px": float(os.environ["REGISTRATION_SEARCH_STEP_PX"]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
@@ -430,6 +465,11 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
+          STATIC_NOISE_SAMPLE_FRAMES: ${{ inputs.static_noise_sample_frames }}
+          STATIC_NOISE_MIN_SCALE: ${{ inputs.static_noise_min_scale }}
+          STATIC_NOISE_MASK_THRESHOLD: ${{ inputs.static_noise_mask_threshold }}
+          STATIC_NOISE_MASK_MARGIN_PX: ${{ inputs.static_noise_mask_margin_px }}
+          STATIC_NOISE_MASK_MIN_AREA_PX: ${{ inputs.static_noise_mask_min_area_px }}
           REGISTRATION_SEARCH_RADIUS_PX: ${{ inputs.registration_search_radius_px }}
           REGISTRATION_SEARCH_STEP_PX: ${{ inputs.registration_search_step_px }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -518,6 +558,14 @@ jobs:
           append_value(lines, "particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX")
           append_value(lines, "particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX")
           append_value(lines, "particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX")
+          lines.append("")
+
+          lines.append("[static_noise]")
+          append_value(lines, "sample_frames", "STATIC_NOISE_SAMPLE_FRAMES")
+          append_value(lines, "min_scale", "STATIC_NOISE_MIN_SCALE")
+          append_value(lines, "mask_threshold", "STATIC_NOISE_MASK_THRESHOLD")
+          append_value(lines, "mask_margin_px", "STATIC_NOISE_MASK_MARGIN_PX")
+          append_value(lines, "mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX")
           lines.append("")
 
           lines.append("[registration]")

@@ -69,6 +69,7 @@ output_dir = "outputs"
 [reuse]
 belt_map_path = "previous/belt_map.npy"
 phase_estimates_path = "previous/phase_estimates.csv"
+static_noise_path = "previous/static_noise.npy"
 
 [frames]
 stride = 3
@@ -104,6 +105,13 @@ particle_mask_grow_threshold = 1.5
 particle_mask_dilation_px = 24
 particle_mask_margin_px = 16
 particle_mask_min_area_px = 8
+
+[static_noise]
+sample_frames = 250
+min_scale = 0.25
+mask_threshold = 4.0
+mask_margin_px = 12
+mask_min_area_px = 6
 
 [auto_velocity]
 allow_full_frame = true
@@ -141,6 +149,12 @@ allow_full_frame = true
         "MIN_TRACK_LENGTH": "2",
         "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
         "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
+        "REUSE_STATIC_NOISE_PATH": "previous/static_noise.npy",
+        "STATIC_NOISE_MASK_MARGIN_PX": "12",
+        "STATIC_NOISE_MASK_MIN_AREA_PX": "6",
+        "STATIC_NOISE_MASK_THRESHOLD": "4",
+        "STATIC_NOISE_MIN_SCALE": "0.25",
+        "STATIC_NOISE_SAMPLE_FRAMES": "250",
         "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME": "12.5",
         "TRACK_FILTER_MAX_VELOCITY_RATIO_Y": "1.05",
         "TRACK_FILTER_MIN_LENGTH": "5",
@@ -251,6 +265,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["particle_mask_mode"] == "positive"
     assert parsed["map"]["particle_mask_grow_threshold"] == 2.0
     assert parsed["map"]["particle_mask_dilation_px"] == 0
+    assert parsed["static_noise"]["sample_frames"] == 0
+    assert parsed["static_noise"]["mask_margin_px"] == 8
 
 
 def test_main_write_config_template_exits_without_running_driver(tmp_path, monkeypatch):

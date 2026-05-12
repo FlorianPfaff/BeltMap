@@ -84,6 +84,7 @@ underscores.
 | `paths.output_dir` | `BELTMAP_OUTPUT_DIR` | `--output-dir` | `outputs` | path | Directory where maps, CSV files, metadata, progress logs, previews, and validation artifacts are written. |
 | `reuse.belt_map_path` | `REUSE_BELT_MAP_PATH` | `--reuse-belt-map-path` | unset | path | Existing `belt_map.npy` to reuse instead of rebuilding the belt map. The driver writes a copy plus fresh detection, tracking, velocity, metadata, and preview outputs into `paths.output_dir`. |
 | `reuse.phase_estimates_path` | `REUSE_PHASE_ESTIMATES_PATH` | `--reuse-phase-estimates-path` | unset | path | Existing `phase_estimates.csv` to reuse with `reuse.belt_map_path`. If unset, phases are recomputed by local registration against the reused map. |
+| `reuse.static_noise_path` | `REUSE_STATIC_NOISE_PATH` | `--reuse-static-noise-path` | unset | path | Existing `static_noise.npy` to reuse as a per-pixel residual-noise floor during detection. |
 | `frames.max_frames` | `MAX_FRAMES` | `--max-frames` | `0` | frames | Maximum number of selected frames to process after sorting and striding. `0` means process all selected frames. |
 | `frames.stride` | `FRAME_STRIDE` | `--frame-stride` | `1` | frames | Process every Nth frame after natural filename sorting. Must be at least 1. |
 | `belt.region` | `BELT_REGION` | `--belt-region` | full frame | px | Belt crop as `top,left,height,width`. Coordinates are full-frame image coordinates. Omit only when the full frame is belt texture. |
@@ -110,6 +111,11 @@ underscores.
 | `map.particle_mask_dilation_px` | `MAP_PARTICLE_MASK_DILATION_PX` | `--map-particle-mask-dilation-px` | `0` | px | Morphological dilation radius for `hysteresis_abs` map masks before applying the rectangular safety margin. `0` disables dilation. |
 | `map.particle_mask_margin_px` | `MAP_PARTICLE_MASK_MARGIN_PX` | `--map-particle-mask-margin-px` | `8` | px | Safety margin added around detected or grown particle regions during map reconstruction. |
 | `map.particle_mask_min_area_px` | `MAP_PARTICLE_MASK_MIN_AREA_PX` | `--map-particle-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area used for particle masking during map reconstruction. Must be at least 1. |
+| `static_noise.sample_frames` | `STATIC_NOISE_SAMPLE_FRAMES` | `--static-noise-sample-frames` | `0` | frames | Number of belt-subtracted residual frames sampled to learn `static_noise.npy`. `0` disables static residual-noise learning. |
+| `static_noise.min_scale` | `STATIC_NOISE_MIN_SCALE` | `--static-noise-min-scale` | `0` | gray | Minimum value written into the learned static residual-noise map. |
+| `static_noise.mask_threshold` | `STATIC_NOISE_MASK_THRESHOLD` | `--static-noise-mask-threshold` | `0` | z | Optional normalized-residual threshold for masking particle boxes while learning static noise. `0` disables this particle mask. |
+| `static_noise.mask_margin_px` | `STATIC_NOISE_MASK_MARGIN_PX` | `--static-noise-mask-margin-px` | `8` | px | Safety margin around particle boxes while learning static noise. Used only when `static_noise.mask_threshold > 0`. |
+| `static_noise.mask_min_area_px` | `STATIC_NOISE_MASK_MIN_AREA_PX` | `--static-noise-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area for particle masks while learning static noise. |
 | `auto_velocity.search_radius_px` | `VELOCITY_SEARCH_RADIUS_PX` | `--velocity-search-radius-px` | `50` | px | Maximum vertical shift searched for each adjacent-frame pair during automatic belt-velocity estimation. Increase if the belt moves farther than this between frames. |
 | `auto_velocity.estimation_pairs` | `VELOCITY_ESTIMATION_PAIRS` | `--velocity-estimation-pairs` | `100` | pairs | Number of adjacent-frame pairs used for automatic belt-velocity estimation, capped by the available sequence length. |
 | `auto_velocity.min_abs_px_per_frame` | `AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME` | `--auto-velocity-min-abs-px-per-frame` | `0.25` | px/frame | Minimum accepted absolute value of the auto-estimated belt velocity. Helps reject static-background-dominated crops. |
@@ -183,6 +189,43 @@ When `reuse.phase_estimates_path` is also set, the driver uses those per-frame
 phases directly. Otherwise it recomputes per-frame phases by registering each
 selected frame against the reused map, then proceeds with residual rendering,
 detection, tracking, and velocity estimation.
+
+## Static residual-noise map
+
+Use `static_noise.sample_frames` to learn image-fixed residual variability after
+subtracting the phase-dependent belt map. The driver estimates a robust per-pixel
+scale from sampled raw residuals:
+
+```text
+static_noise(y, x) = 1.4826 * MAD_t(residual_t(y, x))
+```
+
+During detection, the normalized residual becomes:
+
+```text
+normalized = residual / max(local_noise, static_noise)
+```
+
+This does not subtract a static background. It only raises the normalization
+denominator at pixels that repeatedly show image-fixed residual variation, so
+fixed illumination/sensor artifacts are less likely to become detections.
+
+```toml
+[static_noise]
+sample_frames = 500
+mask_threshold = 4.0
+mask_margin_px = 8
+mask_min_area_px = 4
+```
+
+The learned `static_noise.npy` can be reused in threshold sweeps:
+
+```toml
+[reuse]
+belt_map_path = "outputs-good-map/belt_map.npy"
+phase_estimates_path = "outputs-good-map/phase_estimates.csv"
+static_noise_path = "outputs-good-map/static_noise.npy"
+```
 
 ## Shape and scratch gating
 

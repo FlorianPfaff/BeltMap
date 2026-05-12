@@ -2,8 +2,23 @@ import pytest
 import numpy as np
 from PIL import Image
 
-from beltmap import BeltRegion, CleanBeltRender, PhaseEstimate, ResidualImage, render_belt_view
-from beltmap.driver import load_phase_estimates, validate_reused_phase_estimates
+from beltmap import (
+    BeltMotionModel,
+    BeltRegion,
+    CleanBeltRender,
+    PhaseEstimate,
+    PhaseRegistrationConfig,
+    ResidualConfig,
+    ResidualImage,
+    render_belt_view,
+)
+from beltmap import _driver_runtime as rt
+from beltmap.driver import (
+    apply_static_noise_floor,
+    learn_static_residual_noise_map,
+    load_phase_estimates,
+    validate_reused_phase_estimates,
+)
 from scripts.apply_beltmap_to_images import (
     DATA,
     build_belt_map,
@@ -125,6 +140,77 @@ def test_validate_reused_phase_estimates_reports_missing_frames():
 
     with pytest.raises(ValueError, match="missing 1 selected frames"):
         validate_reused_phase_estimates(estimates, frame_count=3)
+
+
+def test_static_noise_floor_renormalizes_residual_without_changing_raw_values():
+    residual = ResidualImage(
+        raw=np.array([[2.0, 8.0], [3.0, np.nan]]),
+        local_noise=np.array([[1.0, 2.0], [5.0, 1.0]]),
+        normalized=np.array([[2.0, 4.0], [0.6, np.nan]]),
+        mask=np.array([[True, True], [True, False]]),
+        expected_background=np.zeros((2, 2)),
+    )
+
+    adjusted = apply_static_noise_floor(
+        residual,
+        np.array([[4.0, 1.0], [np.nan, 2.0]]),
+    )
+
+    assert adjusted.raw is residual.raw
+    assert adjusted.mask is residual.mask
+    np.testing.assert_allclose(adjusted.local_noise, [[4.0, 2.0], [5.0, 2.0]])
+    np.testing.assert_allclose(
+        adjusted.normalized,
+        [[0.5, 4.0], [0.6, np.nan]],
+        equal_nan=True,
+    )
+
+
+def test_learn_static_residual_noise_map_estimates_per_pixel_mad(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    monkeypatch.setattr(rt, "OUT", output_dir)
+
+    belt_map = np.full((8, 4), 50.0, dtype=np.float32)
+    paths = []
+    variable_residuals = [0, 10, 20, 30, 40]
+    for frame_index, value in enumerate(variable_residuals):
+        frame = np.full((4, 4), 50, dtype=np.uint8)
+        frame[1, 2] = 50 + value
+        path = tmp_path / f"frame_{frame_index:03d}.bmp"
+        Image.fromarray(frame).save(path)
+        paths.append(path)
+
+    phases = {
+        frame_index: PhaseEstimate(
+            phase_px=0.0,
+            frame_index=float(frame_index),
+            predicted_phase_px=0.0,
+        )
+        for frame_index in range(len(paths))
+    }
+
+    static_noise = learn_static_residual_noise_map(
+        paths=paths,
+        belt_map=belt_map,
+        motion_model=BeltMotionModel(
+            image_velocity_px_per_frame=0.0,
+            period_px=float(belt_map.shape[0]),
+        ),
+        region=(0, 0, 4, 4),
+        phase_estimates=phases,
+        registration_config=PhaseRegistrationConfig(),
+        residual_config=ResidualConfig(),
+        sample_frames=len(paths),
+        min_scale=0.0,
+        chunk_rows=2,
+    )
+
+    assert static_noise.shape == (4, 4)
+    assert static_noise[1, 2] == pytest.approx(14.826, rel=1e-3)
+    assert np.median(np.delete(static_noise.ravel(), 1 * 4 + 2)) == pytest.approx(0.0)
+    assert not any(output_dir.glob("static_noise_*"))
 
 
 def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monkeypatch):
