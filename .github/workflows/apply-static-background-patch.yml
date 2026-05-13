@@ -1,0 +1,171 @@
+name: Apply static background subtraction patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-static-background-patch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply additive static-background implementation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"pattern not found in {path}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          driver = Path("beltmap/driver.py")
+          driver_text = driver.read_text(encoding="utf-8")
+          if "learn_static_residual_background_map" not in driver_text:
+              replace_once(
+                  "beltmap/driver.py",
+                  "    estimate_particle_velocities_vs_belt,\n    extract_particle_detections,",
+                  "    estimate_particle_velocities_vs_belt,\n    estimate_local_noise,\n    extract_particle_detections,",
+              )
+
+              replace_once(
+                  "beltmap/driver.py",
+                  '''def _nanmedian(values: np.ndarray, *, axis: int) -> np.ndarray:\n''',
+                  '''def subtract_static_background(\n    residual: ResidualImage,\n    static_background: np.ndarray | None,\n    *,\n    residual_config: ResidualConfig,\n) -> ResidualImage:\n    """Subtract an image-fixed additive background from a belt residual.\n\n    The learned map lives in crop/image coordinates, while the belt map lives in\n    belt coordinates. After subtracting the static component, local noise is\n    recomputed from the corrected residual so fixed illumination structures no\n    longer inflate the normalization.\n    """\n\n    if static_background is None:\n        return residual\n    background = np.asarray(static_background, dtype=np.float64)\n    if background.shape != residual.raw.shape:\n        raise ValueError(\n            "static background map shape must match residual shape: "\n            f"{background.shape} != {residual.raw.shape}"\n        )\n    background = np.where(np.isfinite(background), background, 0.0)\n    valid = residual.mask & np.isfinite(residual.raw)\n    corrected_raw_values = residual.raw - background\n    local_noise = estimate_local_noise(\n        corrected_raw_values,\n        mask=valid,\n        config=residual_config,\n    )\n    normalized = np.full(\n        residual.normalized.shape,\n        residual_config.fill_value,\n        dtype=np.float64,\n    )\n    norm_valid = valid & np.isfinite(local_noise) & (local_noise > 0)\n    normalized[norm_valid] = corrected_raw_values[norm_valid] / local_noise[norm_valid]\n    raw = np.full(residual.raw.shape, residual_config.fill_value, dtype=np.float64)\n    raw[valid] = corrected_raw_values[valid]\n    expected = residual.expected_background + background\n    return ResidualImage(\n        raw=raw,\n        local_noise=local_noise,\n        normalized=normalized,\n        mask=residual.mask,\n        expected_background=expected,\n        clean_render=residual.clean_render,\n    )\n\n\ndef _nanmedian(values: np.ndarray, *, axis: int) -> np.ndarray:\n''',
+              )
+
+              replace_once(
+                  "beltmap/driver.py",
+                  '''\n\ndef main() -> None:\n''',
+                  '''\n\ndef learn_static_residual_background_map(\n    *,\n    paths: list[Path],\n    belt_map: np.ndarray,\n    motion_model: BeltMotionModel,\n    region: tuple[int, int, int, int],\n    phase_estimates: dict[int, PhaseEstimate] | None,\n    registration_config: PhaseRegistrationConfig,\n    residual_config: ResidualConfig,\n    sample_frames: int,\n    mask_threshold: float | None = None,\n    mask_margin_px: int = 0,\n    mask_min_area_px: int = 1,\n    chunk_rows: int = 48,\n) -> np.ndarray:\n    """Estimate an additive image-fixed background from belt-subtracted residuals."""\n\n    if sample_frames <= 0:\n        raise ValueError("sample_frames must be positive")\n    if mask_threshold is not None and mask_threshold <= 0:\n        mask_threshold = None\n    if mask_margin_px < 0:\n        raise ValueError("mask_margin_px must be non-negative")\n    if mask_min_area_px < 1:\n        raise ValueError("mask_min_area_px must be at least 1")\n\n    _, _, crop_height, crop_width = region\n    samples = sample_indices(len(paths), sample_frames)\n    rt.emit(\n        "static_background",\n        "learning additive static residual-background map",\n        sampled_frames=len(samples),\n        selected_frames=len(paths),\n        mask_threshold=mask_threshold,\n        mask_margin_px=mask_margin_px,\n        mask_min_area_px=mask_min_area_px,\n    )\n    component_config = ParticleComponentConfig(\n        min_area_px=mask_min_area_px,\n        weighted_centroid=False,\n    )\n    progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)\n    with tempfile.TemporaryDirectory(prefix="static_background_", dir=rt.OUT) as temp_dir:\n        stack_path = Path(temp_dir) / "residual_stack.npy"\n        residual_stack = np.lib.format.open_memmap(\n            stack_path,\n            mode="w+",\n            dtype=np.float32,\n            shape=(len(samples), crop_height, crop_width),\n        )\n        masked_pixels = 0\n        for sample_number, frame_index in enumerate(samples, start=1):\n            frame = rt.crop(rt.read_gray(paths[frame_index]), region)\n            phase_estimate = (\n                phase_estimates[frame_index]\n                if phase_estimates is not None\n                else None\n            )\n            residual = render_clean_belt_residual(\n                image=frame,\n                belt_map=belt_map,\n                frame_index=float(frame_index),\n                motion_model=motion_model,\n                belt_region=None,\n                phase_estimate=phase_estimate,\n                registration_config=registration_config,\n                residual_config=residual_config,\n            )\n            raw = np.asarray(residual.raw, dtype=np.float32).copy()\n            if mask_threshold is not None:\n                mask = detect_particles_from_residual(residual, threshold=mask_threshold)\n                detections = extract_particle_detections(\n                    mask,\n                    residual=residual,\n                    frame_index=float(frame_index),\n                    config=component_config,\n                )\n                particle_mask = expanded_detection_mask(\n                    detections,\n                    raw.shape,\n                    margin_px=mask_margin_px,\n                )\n                raw[particle_mask] = np.nan\n                masked_pixels += int(np.count_nonzero(particle_mask))\n            residual_stack[sample_number - 1] = raw\n            if (\n                sample_number == 1\n                or sample_number == len(samples)\n                or sample_number % progress_interval == 0\n            ):\n                rt.emit(\n                    "static_background",\n                    f"sampled {sample_number}/{len(samples)} residual frames",\n                    source_frame_index=frame_index,\n                    masked_pixels=masked_pixels,\n                )\n\n        static_background = np.empty((crop_height, crop_width), dtype=np.float32)\n        for row_start in range(0, crop_height, chunk_rows):\n            row_stop = min(crop_height, row_start + chunk_rows)\n            block = np.asarray(residual_stack[:, row_start:row_stop, :], dtype=np.float32)\n            center = _nanmedian(block, axis=0).astype(np.float32)\n            center[~np.isfinite(center)] = 0.0\n            static_background[row_start:row_stop] = center\n            rt.emit(\n                "static_background",\n                "computed static-background row chunk",\n                row_start=row_start,\n                row_stop=row_stop,\n                crop_height=crop_height,\n            )\n            del block, center\n        residual_stack.flush()\n        del residual_stack\n\n    finite = static_background[np.isfinite(static_background)]\n    rt.emit(\n        "static_background",\n        "finished additive static residual-background map",\n        median_background=float(np.median(finite)) if finite.size else None,\n        p05_background=float(np.percentile(finite, 5)) if finite.size else None,\n        p95_background=float(np.percentile(finite, 95)) if finite.size else None,\n        max_abs_background=float(np.max(np.abs(finite))) if finite.size else None,\n    )\n    return static_background\n\n\ndef main() -> None:\n''',
+              )
+
+              replace_once(
+                  "beltmap/driver.py",
+                  '    reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")\n',
+                  '    reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")\n    reuse_static_background_path = optional_path("REUSE_STATIC_BACKGROUND_PATH")\n',
+              )
+              replace_once(
+                  "beltmap/driver.py",
+                  '    static_noise_mask_min_area_px = rt.env_int("STATIC_NOISE_MASK_MIN_AREA_PX", min_area_px, minimum=1)\n',
+                  '    static_noise_mask_min_area_px = rt.env_int("STATIC_NOISE_MASK_MIN_AREA_PX", min_area_px, minimum=1)\n    static_background_sample_frames = rt.env_int("STATIC_BACKGROUND_SAMPLE_FRAMES", 0, minimum=0)\n    static_background_mask_threshold = optional_positive_float("STATIC_BACKGROUND_MASK_THRESHOLD", 0.0)\n    static_background_mask_margin_px = rt.env_int("STATIC_BACKGROUND_MASK_MARGIN_PX", 8, minimum=0)\n    static_background_mask_min_area_px = rt.env_int("STATIC_BACKGROUND_MASK_MIN_AREA_PX", min_area_px, minimum=1)\n',
+              )
+              replace_once(
+                  "beltmap/driver.py",
+                  '        reuse_static_noise_path=reuse_static_noise_path,\n',
+                  '        reuse_static_noise_path=reuse_static_noise_path,\n        reuse_static_background_path=reuse_static_background_path,\n',
+              )
+              replace_once(
+                  "beltmap/driver.py",
+                  '        static_noise_mask_min_area_px=static_noise_mask_min_area_px,\n',
+                  '        static_noise_mask_min_area_px=static_noise_mask_min_area_px,\n        static_background_sample_frames=static_background_sample_frames,\n        static_background_mask_threshold=static_background_mask_threshold,\n        static_background_mask_margin_px=static_background_mask_margin_px,\n        static_background_mask_min_area_px=static_background_mask_min_area_px,\n',
+              )
+              replace_once(
+                  "beltmap/driver.py",
+                  '    static_noise_map: np.ndarray | None = None\n',
+                  '''    static_background_map: np.ndarray | None = None\n    if reuse_static_background_path is not None:\n        static_background_map = np.load(reuse_static_background_path)\n        if static_background_map.ndim != 2:\n            raise ValueError("REUSE_STATIC_BACKGROUND_PATH must point to a 2-D static_background.npy")\n        if static_background_map.shape != (region[2], region[3]):\n            raise ValueError(\n                "reused static background map shape does not match BELT_REGION: "\n                f"{static_background_map.shape} != {(region[2], region[3])}"\n            )\n        static_background_map = np.asarray(static_background_map, dtype=np.float32)\n        static_background_map = np.where(\n            np.isfinite(static_background_map),\n            static_background_map,\n            0.0,\n        ).astype(np.float32, copy=False)\n        rt.emit(\n            "static_background",\n            "loaded reused additive static residual-background map",\n            source_static_background_npy=reuse_static_background_path,\n            static_background_shape=list(static_background_map.shape),\n        )\n    elif static_background_sample_frames > 0:\n        static_background_map = learn_static_residual_background_map(\n            paths=paths,\n            belt_map=belt_map,\n            motion_model=motion_model,\n            region=region,\n            phase_estimates=reused_phase_estimates,\n            registration_config=registration_config,\n            residual_config=residual_config,\n            sample_frames=static_background_sample_frames,\n            mask_threshold=static_background_mask_threshold,\n            mask_margin_px=static_background_mask_margin_px,\n            mask_min_area_px=static_background_mask_min_area_px,\n        )\n        np.save(rt.OUT / "static_background.npy", static_background_map)\n        rt.save_png(static_background_map, rt.OUT / "static_background.png")\n        rt.emit(\n            "static_background",\n            "saved additive static residual-background map",\n            static_background_npy=rt.OUT / "static_background.npy",\n            static_background_png=rt.OUT / "static_background.png",\n        )\n    if static_background_map is not None and reuse_static_background_path is not None:\n        np.save(rt.OUT / "static_background.npy", static_background_map)\n        rt.save_png(static_background_map, rt.OUT / "static_background.png")\n\n    static_noise_map: np.ndarray | None = None\n''',
+              )
+              replace_once(
+                  "beltmap/driver.py",
+                  '        residual = apply_static_noise_floor(residual, static_noise_map)\n',
+                  '''        residual = subtract_static_background(\n            residual,\n            static_background_map,\n            residual_config=residual_config,\n        )\n        residual = apply_static_noise_floor(residual, static_noise_map)\n''',
+              )
+
+          cli = Path("beltmap/cli/apply.py")
+          cli_text = cli.read_text(encoding="utf-8")
+          if "static_background_sample_frames" not in cli_text:
+              replace_once(
+                  "beltmap/cli/apply.py",
+                  '("reuse_static_noise_path", "REUSE_STATIC_NOISE_PATH", "path", (("reuse_static_noise_path",), ("reuse", "static_noise_path")), "Optional existing static_noise.npy to reuse for residual normalization.", "NPY"),\n',
+                  '("reuse_static_noise_path", "REUSE_STATIC_NOISE_PATH", "path", (("reuse_static_noise_path",), ("reuse", "static_noise_path")), "Optional existing static_noise.npy to reuse for residual normalization.", "NPY"),\n    ("reuse_static_background_path", "REUSE_STATIC_BACKGROUND_PATH", "path", (("reuse_static_background_path",), ("reuse", "static_background_path")), "Optional existing static_background.npy additive residual map to subtract during detection.", "NPY"),\n',
+              )
+              replace_once(
+                  "beltmap/cli/apply.py",
+                  '("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for particle masks while learning static noise.", "PX"),\n',
+                  '("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for particle masks while learning static noise.", "PX"),\n    ("static_background_sample_frames", "STATIC_BACKGROUND_SAMPLE_FRAMES", "int", (("static_background_sample_frames",), ("static_background", "sample_frames")), "Number of residual frames sampled to learn an additive image-fixed background. Use 0 to disable.", "N"),\n    ("static_background_mask_threshold", "STATIC_BACKGROUND_MASK_THRESHOLD", "float", (("static_background_mask_threshold",), ("static_background", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static background. Use 0 to disable.", "Z"),\n    ("static_background_mask_margin_px", "STATIC_BACKGROUND_MASK_MARGIN_PX", "int", (("static_background_mask_margin_px",), ("static_background", "mask_margin_px")), "Safety margin around particle boxes while learning static background.", "PX"),\n    ("static_background_mask_min_area_px", "STATIC_BACKGROUND_MASK_MIN_AREA_PX", "int", (("static_background_mask_min_area_px",), ("static_background", "mask_min_area_px")), "Minimum component area for particle masks while learning static background.", "PX"),\n',
+              )
+              replace_once(
+                  "beltmap/cli/apply.py",
+                  '# static_noise_path = "outputs/static_noise.npy"\n',
+                  '# static_noise_path = "outputs/static_noise.npy"\n# static_background_path = "outputs/static_background.npy"\n',
+              )
+              replace_once(
+                  "beltmap/cli/apply.py",
+                  '[recurrent_artifact]\n',
+                  '[static_background]\nsample_frames = 0\nmask_threshold = 0.0\nmask_margin_px = 8\nmask_min_area_px = 4\n\n[recurrent_artifact]\n',
+              )
+
+          wf = Path(".github/workflows/apply-beltmap-brick-10gpers.yml")
+          wf_text = wf.read_text(encoding="utf-8")
+          if "static_background_options" not in wf_text:
+              replace_once(
+                  ".github/workflows/apply-beltmap-brick-10gpers.yml",
+                  '      recurrent_artifact_options:\n',
+                  '      static_background_options:\n        description: "Static additive background options as sample_frames,mask_threshold,mask_margin,min_area. 0,0,8,4 disables."\n        required: true\n        type: string\n        default: "0,0,8,4"\n      recurrent_artifact_options:\n',
+              )
+              wf_text = wf.read_text(encoding="utf-8")
+              wf_text = wf_text.replace(
+                  '          STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}\n',
+                  '          STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}\n          STATIC_BACKGROUND_OPTIONS: ${{ inputs.static_background_options }}\n',
+              )
+              wf.write_text(wf_text, encoding="utf-8")
+              replace_once(
+                  ".github/workflows/apply-beltmap-brick-10gpers.yml",
+                  '          static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)\n',
+                  '          static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)\n          static_background = parse_csv_values("STATIC_BACKGROUND_OPTIONS", 4)\n',
+              )
+              replace_once(
+                  ".github/workflows/apply-beltmap-brick-10gpers.yml",
+                  '              "static_noise_mask_min_area_px": int(static_noise[4]),\n',
+                  '              "static_noise_mask_min_area_px": int(static_noise[4]),\n              "static_background_sample_frames": int(static_background[0]),\n              "static_background_mask_threshold": float(static_background[1]),\n              "static_background_mask_margin_px": int(static_background[2]),\n              "static_background_mask_min_area_px": int(static_background[3]),\n',
+              )
+              replace_once(
+                  ".github/workflows/apply-beltmap-brick-10gpers.yml",
+                  '          lines.append("[recurrent_artifact]")\n',
+                  '          static_background = parse_csv_values("STATIC_BACKGROUND_OPTIONS", 4)\n\n          lines.append("[static_background]")\n          for key, value in zip(\n              [\n                  "sample_frames",\n                  "mask_threshold",\n                  "mask_margin_px",\n                  "mask_min_area_px",\n              ],\n              static_background,\n          ):\n              lines.append(f"{key} = {json.dumps(value)}")\n          lines.append("")\n\n          lines.append("[recurrent_artifact]")\n',
+              )
+
+          docs = Path("docs/outputs.md")
+          docs_text = docs.read_text(encoding="utf-8")
+          if "static_background.npy" not in docs_text:
+              replace_once(
+                  "docs/outputs.md",
+                  '  residual_frame_000002.png\n',
+                  '  residual_frame_000002.png\n  static_background.npy   # only when static-background learning or reuse is enabled\n  static_background.png   # only when static-background learning or reuse is enabled\n',
+              )
+              replace_once(
+                  "docs/outputs.md",
+                  '## `belt_map.png`\n',
+                  '''## `static_background.npy`\n\nPurpose: optional additive image-fixed background learned from belt-subtracted\nresiduals and subtracted during residual generation.\n\nFormat: NumPy `.npy` array.\n\nShape: `(crop_height_px, crop_width_px)`.\n\nUnits: grayscale residual intensity, the same units as `residual.raw`.\n\nWhen `STATIC_BACKGROUND_SAMPLE_FRAMES` or\n`static_background.sample_frames` is positive, the driver renders the clean\nbelt for sampled frames and computes belt-subtracted residuals:\n\n```text\nresidual_t(y, x) = image_t(y, x) - belt_background_t(y, x)\n```\n\nIt then estimates:\n\n```text\nstatic_background(y, x) = median_t(residual_t(y, x))\n```\n\nwith optional particle masking. During detection the final raw residual is:\n\n```text\nraw = image - belt_background - static_background\n```\n\n## `belt_map.png`\n''',
+              )
+          PY
+
+      - name: Check syntax and commit
+        run: |
+          python -m py_compile beltmap/driver.py beltmap/cli/apply.py
+          rm -f .github/workflows/apply-static-background-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Add additive static background subtraction"
+          git push
