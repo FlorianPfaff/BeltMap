@@ -1,5 +1,6 @@
 name: Apply static background subtraction patch
 
+# Retry trigger: 2026-05-13
 on:
   push:
     branches: [main]
