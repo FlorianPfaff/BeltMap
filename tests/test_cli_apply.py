@@ -70,6 +70,7 @@ output_dir = "outputs"
 belt_map_path = "previous/belt_map.npy"
 phase_estimates_path = "previous/phase_estimates.csv"
 static_noise_path = "previous/static_noise.npy"
+static_background_path = "previous/static_background.npy"
 recurrent_artifact_map_path = "previous/recurrent_artifact_map.npy"
 
 [frames]
@@ -113,6 +114,12 @@ min_scale = 0.25
 mask_threshold = 4.0
 mask_margin_px = 12
 mask_min_area_px = 6
+
+[static_background]
+sample_frames = 200
+mask_threshold = 3.5
+mask_margin_px = 10
+mask_min_area_px = 5
 
 [recurrent_artifact]
 min_revolutions = 3
@@ -158,12 +165,17 @@ allow_full_frame = true
         "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
         "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
         "REUSE_RECURRENT_ARTIFACT_MAP_PATH": "previous/recurrent_artifact_map.npy",
+        "REUSE_STATIC_BACKGROUND_PATH": "previous/static_background.npy",
         "REUSE_STATIC_NOISE_PATH": "previous/static_noise.npy",
         "RECURRENT_ARTIFACT_MARGIN_PX": "4",
         "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION": "0.35",
         "RECURRENT_ARTIFACT_MIN_REVOLUTIONS": "3",
         "RECURRENT_ARTIFACT_MODE": "soft",
         "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT": "1.5",
+        "STATIC_BACKGROUND_MASK_MARGIN_PX": "10",
+        "STATIC_BACKGROUND_MASK_MIN_AREA_PX": "5",
+        "STATIC_BACKGROUND_MASK_THRESHOLD": "3.5",
+        "STATIC_BACKGROUND_SAMPLE_FRAMES": "200",
         "STATIC_NOISE_MASK_MARGIN_PX": "12",
         "STATIC_NOISE_MASK_MIN_AREA_PX": "6",
         "STATIC_NOISE_MASK_THRESHOLD": "4",
@@ -281,6 +293,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["particle_mask_dilation_px"] == 0
     assert parsed["static_noise"]["sample_frames"] == 0
     assert parsed["static_noise"]["mask_margin_px"] == 8
+    assert parsed["static_background"]["sample_frames"] == 0
+    assert parsed["static_background"]["mask_margin_px"] == 8
     assert parsed["recurrent_artifact"]["min_revolutions"] == 0
     assert parsed["recurrent_artifact"]["max_overlap_fraction"] == 0.3
     assert parsed["recurrent_artifact"]["mode"] == "hard"

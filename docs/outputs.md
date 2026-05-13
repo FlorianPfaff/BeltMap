@@ -62,6 +62,8 @@ outputs/
   residual_frame_000000.png
   residual_frame_000001.png
   residual_frame_000002.png
+  static_background.npy   # only when static-background learning or reuse is enabled
+  static_background.png   # only when static-background learning or reuse is enabled
   static_noise.npy        # only when static-noise learning or reuse is enabled
   static_noise.png        # only when static-noise learning or reuse is enabled
   tracks.csv
@@ -130,6 +132,37 @@ Coordinates:
 
 Interpretation: row `phase_px + image_y` in this array is the clean belt value
 expected at crop-local image row `image_y` for the corresponding frame.
+
+## `static_background.npy`
+
+Purpose: optional additive image-fixed background learned from belt-subtracted
+residuals and subtracted during residual generation.
+
+Format: NumPy `.npy` array.
+
+Shape: `(crop_height_px, crop_width_px)`.
+
+Units: grayscale residual intensity, the same units as `residual.raw`.
+
+When `STATIC_BACKGROUND_SAMPLE_FRAMES` or
+`static_background.sample_frames` is positive, the driver renders the clean
+belt for sampled frames and computes belt-subtracted residuals:
+
+```text
+residual_t(y, x) = image_t(y, x) - belt_background_t(y, x)
+```
+
+It then estimates:
+
+```text
+static_background(y, x) = median_t(residual_t(y, x))
+```
+
+with optional particle masking. During detection the final raw residual is:
+
+```text
+raw = image - belt_background - static_background
+```
 
 ## `belt_map.png`
 
