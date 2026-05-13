@@ -6,6 +6,7 @@ run-name: >-
   stride=${{ inputs.frame_stride || '1' }}
   velocity=${{ inputs.belt_velocity_px_per_frame || 'auto' }}
   phase_refinement=${{ inputs.phase_refinement_iterations || '0' }}
+  static_bg=${{ inputs.static_background_options || '0,0,8,4' }}
 
 on:
   workflow_dispatch:
@@ -99,6 +100,11 @@ on:
         required: true
         type: string
         default: "0,0,0,8,4"
+      static_background_options:
+        description: "Static-background options as sample_frames,mask_threshold,mask_margin,min_area. 0,0,8,4 disables."
+        required: true
+        type: string
+        default: "0,0,8,4"
       recurrent_artifact_options:
         description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,reuse_map_path]]. 0,2,0.3 disables."
         required: true
@@ -239,6 +245,7 @@ jobs:
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
+          STATIC_BACKGROUND_OPTIONS: ${{ inputs.static_background_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -281,6 +288,7 @@ jobs:
               return values
 
           static_noise = parse_csv_values("STATIC_NOISE_OPTIONS", 5)
+          static_background = parse_csv_values("STATIC_BACKGROUND_OPTIONS", 4)
           recurrent_artifact = parse_recurrent_artifact_options()
           registration_search = parse_csv_values("REGISTRATION_SEARCH", 2)
           progress = parse_csv_values("PROGRESS_INTERVALS", 2)
@@ -303,6 +311,10 @@ jobs:
               "static_noise_mask_threshold": float(static_noise[2]),
               "static_noise_mask_margin_px": int(static_noise[3]),
               "static_noise_mask_min_area_px": int(static_noise[4]),
+              "static_background_sample_frames": int(static_background[0]),
+              "static_background_mask_threshold": float(static_background[1]),
+              "static_background_mask_margin_px": int(static_background[2]),
+              "static_background_mask_min_area_px": int(static_background[3]),
               "recurrent_artifact_min_revolutions": int(recurrent_artifact[0]),
               "recurrent_artifact_margin_px": int(recurrent_artifact[1]),
               "recurrent_artifact_max_overlap_fraction": float(recurrent_artifact[2]),
@@ -470,6 +482,7 @@ jobs:
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
+          STATIC_BACKGROUND_OPTIONS: ${{ inputs.static_background_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
@@ -604,6 +617,20 @@ jobs:
                   "mask_min_area_px",
               ],
               static_noise,
+          ):
+              lines.append(f"{key} = {json.dumps(value)}")
+          lines.append("")
+
+          lines.append("[static_background]")
+          static_background = parse_csv_values("STATIC_BACKGROUND_OPTIONS", 4)
+          for key, value in zip(
+              [
+                  "sample_frames",
+                  "mask_threshold",
+                  "mask_margin_px",
+                  "mask_min_area_px",
+              ],
+              static_background,
           ):
               lines.append(f"{key} = {json.dumps(value)}")
           lines.append("")
