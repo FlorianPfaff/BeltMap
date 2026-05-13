@@ -23,10 +23,12 @@ from .residual import (
 )
 from .recurrent_artifacts import (
     RecurrentArtifactConfig,
+    RecurrentArtifactDetectionScore,
     RecurrentArtifactMap,
     belt_revolution_indices,
     build_recurrent_artifact_map,
     filter_recurrent_artifact_detections,
+    score_recurrent_artifact_detections,
 )
 from .tracking import (
     ParticleComponentConfig,
@@ -59,6 +61,7 @@ __all__ = [
     "ResidualConfig",
     "ResidualImage",
     "RecurrentArtifactConfig",
+    "RecurrentArtifactDetectionScore",
     "RecurrentArtifactMap",
     "TrackFilterConfig",
     "belt_revolution_indices",
@@ -77,5 +80,6 @@ __all__ = [
     "render_belt_view",
     "render_expected_clean_belt",
     "score_particle_velocities",
+    "score_recurrent_artifact_detections",
     "track_particle_detections",
 ]

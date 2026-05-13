@@ -49,6 +49,8 @@ class ParticleDetection:
     bbox_right: int
     mean_signal: float | None = None
     peak_signal: float | None = None
+    recurrent_artifact_overlap_fraction: float | None = None
+    recurrent_artifact_required_peak_signal: float | None = None
 
 
 @dataclass(frozen=True)

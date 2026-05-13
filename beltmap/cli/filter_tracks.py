@@ -58,6 +58,8 @@ TRACK_DETECTION_FIELDS = [
     "bbox_right",
     "mean_signal",
     "peak_signal",
+    "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_required_peak_signal",
 ]
 
 
@@ -161,6 +163,16 @@ def parse_detection(row: dict[str, str]) -> ParticleDetection:
         bbox_right=int(float(row["bbox_right"])),
         mean_signal=None if row.get("mean_signal", "") == "" else float(row["mean_signal"]),
         peak_signal=None if row.get("peak_signal", "") == "" else float(row["peak_signal"]),
+        recurrent_artifact_overlap_fraction=(
+            None
+            if row.get("recurrent_artifact_overlap_fraction", "") == ""
+            else float(row["recurrent_artifact_overlap_fraction"])
+        ),
+        recurrent_artifact_required_peak_signal=(
+            None
+            if row.get("recurrent_artifact_required_peak_signal", "") == ""
+            else float(row["recurrent_artifact_required_peak_signal"])
+        ),
     )
 
 
@@ -230,6 +242,16 @@ def reconstruct_track_rows(output_dir: Path) -> list[dict[str, str]]:
                     "bbox_right": detection.bbox_right,
                     "mean_signal": "" if detection.mean_signal is None else detection.mean_signal,
                     "peak_signal": "" if detection.peak_signal is None else detection.peak_signal,
+                    "recurrent_artifact_overlap_fraction": (
+                        ""
+                        if detection.recurrent_artifact_overlap_fraction is None
+                        else detection.recurrent_artifact_overlap_fraction
+                    ),
+                    "recurrent_artifact_required_peak_signal": (
+                        ""
+                        if detection.recurrent_artifact_required_peak_signal is None
+                        else detection.recurrent_artifact_required_peak_signal
+                    ),
                 }
             )
     write_csv(tracks_path, rows, TRACK_DETECTION_FIELDS)

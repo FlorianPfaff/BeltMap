@@ -56,6 +56,7 @@ outputs/
   progress_latest.json
   recurrent_artifact_counts.npy  # only when recurrent artifact map is built
   recurrent_artifact_counts.png  # only when recurrent artifact map is built
+  recurrent_artifact_detections.csv # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.npy     # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.png     # only when recurrent artifact filtering is enabled
   residual_frame_000000.png
@@ -201,6 +202,21 @@ rejecting detections whose belt-coordinate bounding boxes overlap this map too
 strongly. With `recurrent_artifact.mode = "soft"`, overlapping detections can
 survive if their peak residual is strong enough.
 
+## `recurrent_artifact_detections.csv`
+
+Purpose: per-detection recurrent-artifact diagnostic table written before final
+rejection is applied.
+
+Format: CSV with the same detection columns as `detections.csv`, plus
+`recurrent_artifact_rejected`.
+
+Rows include both kept and rejected first-pass detections. Use
+`recurrent_artifact_overlap_fraction` to inspect how strongly a component
+overlaps the belt-coordinate artifact map. In soft mode,
+`recurrent_artifact_required_peak_signal` is the peak residual the component
+had to exceed to survive the artifact filter. In hard mode this field is empty.
+The final `detections.csv` contains only the kept rows.
+
 ## `recurrent_artifact_counts.npy`
 
 Purpose: stores the distinct-revolution recurrence count used to build
@@ -282,6 +298,8 @@ Columns:
 | `bbox_right` | px | Right edge of the half-open crop-local bounding box. |
 | `mean_signal` | z | Mean normalized residual over the component. |
 | `peak_signal` | z | Maximum normalized residual over the component. |
+| `recurrent_artifact_overlap_fraction` | 1 | Fraction of the detection bbox covered by the recurrent artifact map; empty if recurrent artifact filtering was disabled. |
+| `recurrent_artifact_required_peak_signal` | z | Soft-mode peak residual needed to survive artifact filtering; empty in hard mode or when recurrent artifact filtering was disabled. |
 
 Notes:
 

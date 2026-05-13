@@ -42,13 +42,15 @@ from .recurrent_artifacts import (
     RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
     build_recurrent_artifact_map,
-    filter_recurrent_artifact_detections,
+    score_recurrent_artifact_detections,
 )
 
 DETECTION_FIELDS = [
     "frame_index", "image", "label", "y", "x", "area_px",
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
+    "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_required_peak_signal",
 ]
 PHASE_FIELDS = [
     "frame_index", "image", "phase_px", "phase_fraction", "phase_rad",
@@ -65,6 +67,12 @@ TRACK_DETECTION_FIELDS = [
     "frame_index", "image", "label", "y", "x", "area_px",
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
+    "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_required_peak_signal",
+]
+RECURRENT_ARTIFACT_DETECTION_FIELDS = [
+    *DETECTION_FIELDS,
+    "recurrent_artifact_rejected",
 ]
 TRACK_SCORE_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
@@ -211,6 +219,23 @@ def detection_rows_from_frames(detections_by_frame: list, paths: list[Path]) -> 
     rows: list[dict] = []
     for frame_index, detections in enumerate(detections_by_frame):
         rows.extend(detection_rows_for_frame(detections, paths[frame_index], frame_index))
+    return rows
+
+
+def recurrent_artifact_rows_from_scores(
+    scored_by_frame: list,
+    paths: list[Path],
+) -> list[dict]:
+    rows: list[dict] = []
+    for frame_index, scores in enumerate(scored_by_frame):
+        for score in scores:
+            row = detection_rows_for_frame(
+                [score.detection],
+                paths[frame_index],
+                frame_index,
+            )[0]
+            row["recurrent_artifact_rejected"] = score.rejected
+            rows.append(row)
     return rows
 
 
@@ -820,13 +845,32 @@ def main() -> None:
                 rt.OUT / "recurrent_artifact_map.png",
             )
             rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
-        detections_by_frame, recurrent_artifact_rejected = filter_recurrent_artifact_detections(
+        recurrent_artifact_scores = score_recurrent_artifact_detections(
             detections_by_frame,
             phase_px_by_frame,
             recurrent_artifact_mask,
             config=recurrent_artifact_config,
             detection_threshold=detection_threshold,
         )
+        recurrent_artifact_rows = recurrent_artifact_rows_from_scores(
+            recurrent_artifact_scores,
+            paths,
+        )
+        rt.write_csv(
+            rt.OUT / "recurrent_artifact_detections.csv",
+            recurrent_artifact_rows,
+            RECURRENT_ARTIFACT_DETECTION_FIELDS,
+        )
+        recurrent_artifact_rejected = sum(
+            1
+            for frame_scores in recurrent_artifact_scores
+            for score in frame_scores
+            if score.rejected
+        )
+        detections_by_frame = [
+            [score.detection for score in frame_scores if not score.rejected]
+            for frame_scores in recurrent_artifact_scores
+        ]
         detection_rows = detection_rows_from_frames(detections_by_frame, paths)
         rt.emit(
             "recurrent_artifact",
@@ -837,6 +881,7 @@ def main() -> None:
             artifact_pixels=recurrent_artifact_pixels,
             rejected_detections=recurrent_artifact_rejected,
             remaining_detections=len(detection_rows),
+            recurrent_artifact_detections_csv=rt.OUT / "recurrent_artifact_detections.csv",
             recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
             recurrent_artifact_counts_npy=(
                 rt.OUT / "recurrent_artifact_counts.npy"

@@ -121,6 +121,13 @@ The default `hard` mode removes those detections by overlap alone. The optional
 `detection.threshold * (1 + recurrent_artifact.soft_penalty_weight * overlap)`
 as the required peak residual.
 
+When recurrent artifact filtering is active, detections carry the diagnostic
+columns `recurrent_artifact_overlap_fraction` and
+`recurrent_artifact_required_peak_signal`. The driver also writes
+`recurrent_artifact_detections.csv` with both kept and rejected first-pass
+detections so threshold changes can be inspected without treating the artifact
+map as a black-box deletion step.
+
 This targets belt-fixed scratches and map ghosts. It should not remove ordinary
 loose particles unless they repeatedly appear at the same belt-coordinate
 location across separate revolutions.

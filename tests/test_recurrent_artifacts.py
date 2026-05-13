@@ -7,6 +7,7 @@ from beltmap import (
     belt_revolution_indices,
     build_recurrent_artifact_map,
     filter_recurrent_artifact_detections,
+    score_recurrent_artifact_detections,
 )
 
 
@@ -104,7 +105,37 @@ def test_soft_recurrent_filter_keeps_strong_peak_and_rejects_weak_peak():
     )
 
     assert rejected == 1
-    assert filtered == [[strong_recurring, off_artifact]]
+    assert [item.peak_signal for item in filtered[0]] == [12.0, 6.0]
+    assert filtered[0][0].recurrent_artifact_overlap_fraction == 1.0
+    assert filtered[0][0].recurrent_artifact_required_peak_signal == 10.0
+    assert filtered[0][1].recurrent_artifact_overlap_fraction == 0.0
+    assert filtered[0][1].recurrent_artifact_required_peak_signal == 5.0
+
+
+def test_recurrent_artifact_scores_include_rejected_candidates():
+    artifact_map = np.zeros((12, 12), dtype=bool)
+    artifact_map[1:3, 2:4] = True
+    weak_recurring = detection(0, 1, 2, 3, 4, peak_signal=6.0)
+    strong_recurring = detection(0, 1, 2, 3, 4, peak_signal=12.0)
+
+    scores = score_recurrent_artifact_detections(
+        [[weak_recurring, strong_recurring]],
+        phase_px_by_frame=[0.0],
+        artifact_map=artifact_map,
+        config=RecurrentArtifactConfig(
+            min_revolutions=0,
+            margin_px=0,
+            max_overlap_fraction=0.3,
+            mode="soft",
+            soft_penalty_weight=1.0,
+        ),
+        detection_threshold=5.0,
+    )
+
+    assert [score.rejected for score in scores[0]] == [True, False]
+    assert [score.overlap_fraction for score in scores[0]] == [1.0, 1.0]
+    assert [score.required_peak_signal for score in scores[0]] == [10.0, 10.0]
+    assert scores[0][0].detection.recurrent_artifact_overlap_fraction == 1.0
 
 
 def test_filter_accepts_config_without_build_min_revolutions_for_reused_map():

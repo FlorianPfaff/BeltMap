@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Sequence
 
 import numpy as np
@@ -34,6 +35,16 @@ class RecurrentArtifactMap:
     revolution_count: int
     candidate_detections: int
     artifact_pixels: int
+
+
+@dataclass(frozen=True)
+class RecurrentArtifactDetectionScore:
+    """Artifact-overlap decision for one detection."""
+
+    detection: ParticleDetection
+    overlap_fraction: float
+    required_peak_signal: float | None
+    rejected: bool
 
 
 def belt_revolution_indices(
@@ -111,6 +122,36 @@ def filter_recurrent_artifact_detections(
 ) -> tuple[list[list[ParticleDetection]], int]:
     """Reject detections whose belt-coordinate bbox mostly overlaps artifacts."""
 
+    scored = score_recurrent_artifact_detections(
+        detections_by_frame,
+        phase_px_by_frame,
+        artifact_map,
+        config=config,
+        detection_threshold=detection_threshold,
+    )
+    filtered: list[list[ParticleDetection]] = []
+    rejected = 0
+    for frame_scores in scored:
+        kept: list[ParticleDetection] = []
+        for score in frame_scores:
+            if score.rejected:
+                rejected += 1
+            else:
+                kept.append(score.detection)
+        filtered.append(kept)
+    return filtered, rejected
+
+
+def score_recurrent_artifact_detections(
+    detections_by_frame: Sequence[Sequence[ParticleDetection]],
+    phase_px_by_frame: Sequence[float],
+    artifact_map: NDArray[np.bool_],
+    *,
+    config: RecurrentArtifactConfig | None = None,
+    detection_threshold: float | None = None,
+) -> list[list[RecurrentArtifactDetectionScore]]:
+    """Score detections by their recurrent-artifact overlap and rejection state."""
+
     cfg = config or RecurrentArtifactConfig(min_revolutions=1)
     _validate_filter_config(cfg)
     mode = cfg.mode.strip().lower()
@@ -124,28 +165,41 @@ def filter_recurrent_artifact_detections(
     if artifact.ndim != 2 or artifact.size == 0:
         raise ValueError("artifact_map must be a non-empty 2-D array")
 
-    filtered: list[list[ParticleDetection]] = []
-    rejected = 0
+    scored: list[list[RecurrentArtifactDetectionScore]] = []
     for frame_index, detections in enumerate(detections_by_frame):
         phase_px = float(phase_px_by_frame[frame_index])
-        kept: list[ParticleDetection] = []
+        frame_scores: list[RecurrentArtifactDetectionScore] = []
         for detection in detections:
             overlap = detection_artifact_overlap_fraction(
                 detection,
                 phase_px=phase_px,
                 artifact_map=artifact,
             )
-            if _reject_detection(
-                detection,
+            required_peak = _required_peak_signal(
                 overlap=overlap,
                 config=cfg,
                 detection_threshold=detection_threshold,
-            ):
-                rejected += 1
-            else:
-                kept.append(detection)
-        filtered.append(kept)
-    return filtered, rejected
+            )
+            scored_detection = replace(
+                detection,
+                recurrent_artifact_overlap_fraction=overlap,
+                recurrent_artifact_required_peak_signal=required_peak,
+            )
+            frame_scores.append(
+                RecurrentArtifactDetectionScore(
+                    detection=scored_detection,
+                    overlap_fraction=overlap,
+                    required_peak_signal=required_peak,
+                    rejected=_reject_detection(
+                        scored_detection,
+                        overlap=overlap,
+                        config=cfg,
+                        detection_threshold=detection_threshold,
+                    ),
+                )
+            )
+        scored.append(frame_scores)
+    return scored
 
 
 def detection_artifact_overlap_fraction(
@@ -189,10 +243,25 @@ def _reject_detection(
     peak_signal = detection.peak_signal
     if peak_signal is None or not np.isfinite(peak_signal):
         return True
-    required_peak = detection_threshold * (
-        1.0 + config.soft_penalty_weight * overlap
+    required_peak = _required_peak_signal(
+        overlap=overlap,
+        config=config,
+        detection_threshold=detection_threshold,
     )
+    assert required_peak is not None
     return peak_signal <= required_peak
+
+
+def _required_peak_signal(
+    *,
+    overlap: float,
+    config: RecurrentArtifactConfig,
+    detection_threshold: float | None,
+) -> float | None:
+    if config.mode.strip().lower() != "soft":
+        return None
+    assert detection_threshold is not None
+    return detection_threshold * (1.0 + config.soft_penalty_weight * overlap)
 
 
 def _mark_detection_bbox(
