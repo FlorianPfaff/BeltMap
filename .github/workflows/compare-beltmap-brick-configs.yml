@@ -1,0 +1,464 @@
+name: Compare BeltMap Brick 10g/s configurations
+
+run-name: >-
+  Brick comparison max_frames=${{ inputs.max_frames || '1000' }}
+  stride=${{ inputs.frame_stride || '1' }}
+  velocity=${{ inputs.belt_velocity_px_per_frame || '59.3' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_frames:
+        description: "Frames per variant. Use a short run first; 0 processes all selected frames."
+        required: true
+        type: string
+        default: "1000"
+      frame_stride:
+        description: "Process every Nth frame after natural sorting."
+        required: true
+        type: string
+        default: "1"
+      belt_region:
+        description: "Crop: top,left,height,width. Default is the known Brick belt ROI."
+        required: true
+        type: string
+        default: "0,220,1330,1800"
+      belt_velocity_px_per_frame:
+        description: "Belt image velocity in px/frame, or 'auto'."
+        required: true
+        type: string
+        default: "59.3"
+      belt_period_px:
+        description: "Optional belt period/circumference in pixels. Empty = infer sequence map."
+        required: false
+        type: string
+        default: "14723"
+      detection_threshold:
+        description: "Threshold on normalized residual for bright brick particles."
+        required: true
+        type: string
+        default: "5.0"
+      min_area_px:
+        description: "Minimum connected-component particle area."
+        required: true
+        type: string
+        default: "4"
+      min_track_length:
+        description: "Minimum detections per track for velocity output."
+        required: true
+        type: string
+        default: "2"
+      map_sample_frames:
+        description: "Number of frames sampled to build the belt map."
+        required: true
+        type: string
+        default: "120"
+      debug_residual_preview_interval_frames:
+        description: "Also save residual previews every N frames. 0 = disabled."
+        required: true
+        type: string
+        default: "250"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  POETRY_NO_INTERACTION: "1"
+  POETRY_VERSION: "2.2.1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+
+jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: |
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
+
+      - name: Validate Zenodo URL is reachable
+        env:
+          DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
+        run: |
+          curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
+
+      - name: Install and test package
+        env:
+          BELTMAP_IMPLEMENTATION: scikit-image
+        run: |
+          rm -rf .venv
+          poetry install --with test --extras speed
+          poetry run pytest -q
+
+  compare-beltmap:
+    name: Compare ${{ matrix.variant }}
+    needs: preflight
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 420
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - variant: baseline
+            static_noise_sample_frames: "0"
+            static_noise_min_scale: "0"
+            static_noise_mask_threshold: "0"
+            static_noise_mask_margin_px: "8"
+            static_noise_mask_min_area_px: "4"
+            static_background_sample_frames: "0"
+            static_background_mask_threshold: "0"
+            static_background_mask_margin_px: "8"
+            static_background_mask_min_area_px: "4"
+            recurrent_artifact_min_revolutions: "0"
+            recurrent_artifact_margin_px: "2"
+            recurrent_artifact_max_overlap_fraction: "0.3"
+            recurrent_artifact_mode: hard
+            recurrent_artifact_soft_penalty_weight: "1.0"
+            registration_search_radius_px: "8.0"
+            registration_search_step_px: "0.5"
+            phase_refinement_iterations: "0"
+            phase_refinement_min_score: "0.0"
+            phase_refinement_max_abs_correction_px: "0"
+            phase_refinement_smoothing_window_frames: "25"
+          - variant: static-bg
+            static_noise_sample_frames: "0"
+            static_noise_min_scale: "0"
+            static_noise_mask_threshold: "0"
+            static_noise_mask_margin_px: "8"
+            static_noise_mask_min_area_px: "4"
+            static_background_sample_frames: "120"
+            static_background_mask_threshold: "4.0"
+            static_background_mask_margin_px: "16"
+            static_background_mask_min_area_px: "4"
+            recurrent_artifact_min_revolutions: "0"
+            recurrent_artifact_margin_px: "2"
+            recurrent_artifact_max_overlap_fraction: "0.3"
+            recurrent_artifact_mode: hard
+            recurrent_artifact_soft_penalty_weight: "1.0"
+            registration_search_radius_px: "8.0"
+            registration_search_step_px: "0.5"
+            phase_refinement_iterations: "0"
+            phase_refinement_min_score: "0.0"
+            phase_refinement_max_abs_correction_px: "0"
+            phase_refinement_smoothing_window_frames: "25"
+          - variant: static-noise-bg
+            static_noise_sample_frames: "120"
+            static_noise_min_scale: "0.5"
+            static_noise_mask_threshold: "4.0"
+            static_noise_mask_margin_px: "16"
+            static_noise_mask_min_area_px: "4"
+            static_background_sample_frames: "120"
+            static_background_mask_threshold: "4.0"
+            static_background_mask_margin_px: "16"
+            static_background_mask_min_area_px: "4"
+            recurrent_artifact_min_revolutions: "0"
+            recurrent_artifact_margin_px: "2"
+            recurrent_artifact_max_overlap_fraction: "0.3"
+            recurrent_artifact_mode: hard
+            recurrent_artifact_soft_penalty_weight: "1.0"
+            registration_search_radius_px: "8.0"
+            registration_search_step_px: "0.5"
+            phase_refinement_iterations: "0"
+            phase_refinement_min_score: "0.0"
+            phase_refinement_max_abs_correction_px: "0"
+            phase_refinement_smoothing_window_frames: "25"
+          - variant: phase-refined-map
+            static_noise_sample_frames: "0"
+            static_noise_min_scale: "0"
+            static_noise_mask_threshold: "0"
+            static_noise_mask_margin_px: "8"
+            static_noise_mask_min_area_px: "4"
+            static_background_sample_frames: "0"
+            static_background_mask_threshold: "0"
+            static_background_mask_margin_px: "8"
+            static_background_mask_min_area_px: "4"
+            recurrent_artifact_min_revolutions: "0"
+            recurrent_artifact_margin_px: "2"
+            recurrent_artifact_max_overlap_fraction: "0.3"
+            recurrent_artifact_mode: hard
+            recurrent_artifact_soft_penalty_weight: "1.0"
+            registration_search_radius_px: "12.0"
+            registration_search_step_px: "0.5"
+            phase_refinement_iterations: "1"
+            phase_refinement_min_score: "0.0"
+            phase_refinement_max_abs_correction_px: "4"
+            phase_refinement_smoothing_window_frames: "25"
+          - variant: recurrent-soft
+            static_noise_sample_frames: "0"
+            static_noise_min_scale: "0"
+            static_noise_mask_threshold: "0"
+            static_noise_mask_margin_px: "8"
+            static_noise_mask_min_area_px: "4"
+            static_background_sample_frames: "0"
+            static_background_mask_threshold: "0"
+            static_background_mask_margin_px: "8"
+            static_background_mask_min_area_px: "4"
+            recurrent_artifact_min_revolutions: "2"
+            recurrent_artifact_margin_px: "4"
+            recurrent_artifact_max_overlap_fraction: "0.3"
+            recurrent_artifact_mode: soft
+            recurrent_artifact_soft_penalty_weight: "1.0"
+            registration_search_radius_px: "8.0"
+            registration_search_step_px: "0.5"
+            phase_refinement_iterations: "0"
+            phase_refinement_min_score: "0.0"
+            phase_refinement_max_abs_correction_px: "0"
+            phase_refinement_smoothing_window_frames: "25"
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: |
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
+
+      - name: Install BeltMap and runtime dependencies
+        run: |
+          rm -rf .venv
+          poetry install --with test --extras speed
+          poetry run pytest -q
+
+      - name: Prepare Zenodo dataset from local runner dataset cache
+        env:
+          DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
+        run: |
+          set -euo pipefail
+
+          DATASET_CACHE_ROOT="$HOME/.cache/datasets"
+          DATASET_NAME="images_Brick_10gpers"
+          CACHE_IMAGES="$DATASET_CACHE_ROOT/$DATASET_NAME"
+          CACHE_ZIP="$DATASET_CACHE_ROOT/$DATASET_NAME.zip"
+          CACHE_TMP="$DATASET_CACHE_ROOT/$DATASET_NAME.tmp"
+
+          mkdir -p "$DATASET_CACHE_ROOT" data outputs
+
+          if find "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
+            echo "Local extracted dataset cache hit: $CACHE_IMAGES"
+          else
+            echo "Local extracted dataset cache miss or empty: $CACHE_IMAGES"
+            rm -rf "$CACHE_TMP"
+            mkdir -p "$CACHE_TMP"
+            if [ ! -s "$CACHE_ZIP" ]; then
+              echo "Local dataset zip cache miss; downloading Zenodo zip to $CACHE_ZIP"
+              rm -f "$CACHE_ZIP.tmp"
+              curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
+                -o "$CACHE_ZIP.tmp" "$DATASET_URL"
+              mv "$CACHE_ZIP.tmp" "$CACHE_ZIP"
+            else
+              echo "Local dataset zip cache hit: $CACHE_ZIP"
+            fi
+            echo "Extracting dataset atomically to $CACHE_IMAGES"
+            poetry run python -c \
+              'import sys; from zipfile import ZipFile; ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$CACHE_ZIP" "$CACHE_TMP"
+            rm -rf "$CACHE_IMAGES"
+            mv "$CACHE_TMP" "$CACHE_IMAGES"
+          fi
+
+          rm -rf data/images data/images_Brick_10gpers.zip
+          ln -s "$CACHE_IMAGES" data/images
+          if [ -s "$CACHE_ZIP" ]; then
+            ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
+          fi
+
+          echo "Dataset size summary:"
+          du -sh "$CACHE_IMAGES" data/images data/images_Brick_10gpers.zip 2>/dev/null || true
+          echo "Number of extracted image files:"
+          find data/images -type f | wc -l
+
+      - name: Write variant TOML config
+        env:
+          VARIANT: ${{ matrix.variant }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
+          BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
+          DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
+          MIN_AREA_PX: ${{ inputs.min_area_px }}
+          MIN_TRACK_LENGTH: ${{ inputs.min_track_length }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+          FRAME_STRIDE: ${{ inputs.frame_stride }}
+          MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
+          DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
+          STATIC_NOISE_SAMPLE_FRAMES: ${{ matrix.static_noise_sample_frames }}
+          STATIC_NOISE_MIN_SCALE: ${{ matrix.static_noise_min_scale }}
+          STATIC_NOISE_MASK_THRESHOLD: ${{ matrix.static_noise_mask_threshold }}
+          STATIC_NOISE_MASK_MARGIN_PX: ${{ matrix.static_noise_mask_margin_px }}
+          STATIC_NOISE_MASK_MIN_AREA_PX: ${{ matrix.static_noise_mask_min_area_px }}
+          STATIC_BACKGROUND_SAMPLE_FRAMES: ${{ matrix.static_background_sample_frames }}
+          STATIC_BACKGROUND_MASK_THRESHOLD: ${{ matrix.static_background_mask_threshold }}
+          STATIC_BACKGROUND_MASK_MARGIN_PX: ${{ matrix.static_background_mask_margin_px }}
+          STATIC_BACKGROUND_MASK_MIN_AREA_PX: ${{ matrix.static_background_mask_min_area_px }}
+          RECURRENT_ARTIFACT_MIN_REVOLUTIONS: ${{ matrix.recurrent_artifact_min_revolutions }}
+          RECURRENT_ARTIFACT_MARGIN_PX: ${{ matrix.recurrent_artifact_margin_px }}
+          RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION: ${{ matrix.recurrent_artifact_max_overlap_fraction }}
+          RECURRENT_ARTIFACT_MODE: ${{ matrix.recurrent_artifact_mode }}
+          RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT: ${{ matrix.recurrent_artifact_soft_penalty_weight }}
+          REGISTRATION_SEARCH_RADIUS_PX: ${{ matrix.registration_search_radius_px }}
+          REGISTRATION_SEARCH_STEP_PX: ${{ matrix.registration_search_step_px }}
+          PHASE_REFINEMENT_ITERATIONS: ${{ matrix.phase_refinement_iterations }}
+          PHASE_REFINEMENT_MIN_SCORE: ${{ matrix.phase_refinement_min_score }}
+          PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX: ${{ matrix.phase_refinement_max_abs_correction_px }}
+          PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES: ${{ matrix.phase_refinement_smoothing_window_frames }}
+        run: |
+          set -euo pipefail
+          rm -rf outputs
+          mkdir -p outputs
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def env(name: str) -> str:
+              return os.environ.get(name, "").strip()
+
+          lines = [
+              "[paths]",
+              'image_dir = "data/images"',
+              'output_dir = "outputs"',
+              "",
+              "[frames]",
+              f"max_frames = {json.dumps(env('MAX_FRAMES'))}",
+              f"stride = {json.dumps(env('FRAME_STRIDE'))}",
+              "",
+              "[belt]",
+              f"region = {json.dumps(env('BELT_REGION'))}",
+              f"velocity_px_per_frame = {json.dumps(env('BELT_VELOCITY_PX_PER_FRAME'))}",
+              f"period_px = {json.dumps(env('BELT_PERIOD_PX'))}",
+              "",
+              "[detection]",
+              f"threshold = {json.dumps(env('DETECTION_THRESHOLD'))}",
+              f"min_area_px = {json.dumps(env('MIN_AREA_PX'))}",
+              'max_area_px = "0"',
+              'min_bbox_width_px = "0"',
+              'min_bbox_height_px = "0"',
+              'max_bbox_aspect_ratio = "0"',
+              'min_bbox_extent = "0"',
+              "",
+              "[tracking]",
+              f"min_track_length = {json.dumps(env('MIN_TRACK_LENGTH'))}",
+              "",
+              "[map]",
+              f"sample_frames = {json.dumps(env('MAP_SAMPLE_FRAMES'))}",
+              'mask_iterations = "2"',
+              'particle_mask_mode = "hysteresis_abs"',
+              'particle_mask_threshold = "4.0"',
+              'particle_mask_grow_threshold = "1.5"',
+              'particle_mask_dilation_px = "24"',
+              'particle_mask_margin_px = "16"',
+              'particle_mask_min_area_px = "8"',
+              "",
+              "[static_noise]",
+              f"sample_frames = {json.dumps(env('STATIC_NOISE_SAMPLE_FRAMES'))}",
+              f"min_scale = {json.dumps(env('STATIC_NOISE_MIN_SCALE'))}",
+              f"mask_threshold = {json.dumps(env('STATIC_NOISE_MASK_THRESHOLD'))}",
+              f"mask_margin_px = {json.dumps(env('STATIC_NOISE_MASK_MARGIN_PX'))}",
+              f"mask_min_area_px = {json.dumps(env('STATIC_NOISE_MASK_MIN_AREA_PX'))}",
+              "",
+              "[static_background]",
+              f"sample_frames = {json.dumps(env('STATIC_BACKGROUND_SAMPLE_FRAMES'))}",
+              f"mask_threshold = {json.dumps(env('STATIC_BACKGROUND_MASK_THRESHOLD'))}",
+              f"mask_margin_px = {json.dumps(env('STATIC_BACKGROUND_MASK_MARGIN_PX'))}",
+              f"mask_min_area_px = {json.dumps(env('STATIC_BACKGROUND_MASK_MIN_AREA_PX'))}",
+              "",
+              "[recurrent_artifact]",
+              f"min_revolutions = {json.dumps(env('RECURRENT_ARTIFACT_MIN_REVOLUTIONS'))}",
+              f"margin_px = {json.dumps(env('RECURRENT_ARTIFACT_MARGIN_PX'))}",
+              f"max_overlap_fraction = {json.dumps(env('RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION'))}",
+              f"mode = {json.dumps(env('RECURRENT_ARTIFACT_MODE'))}",
+              f"soft_penalty_weight = {json.dumps(env('RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT'))}",
+              "",
+              "[registration]",
+              f"search_radius_px = {json.dumps(env('REGISTRATION_SEARCH_RADIUS_PX'))}",
+              f"search_step_px = {json.dumps(env('REGISTRATION_SEARCH_STEP_PX'))}",
+              "",
+              "[phase_refinement]",
+              f"iterations = {json.dumps(env('PHASE_REFINEMENT_ITERATIONS'))}",
+              f"min_score = {json.dumps(env('PHASE_REFINEMENT_MIN_SCORE'))}",
+              f"max_abs_correction_px = {json.dumps(env('PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX'))}",
+              f"smoothing_window_frames = {json.dumps(env('PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES'))}",
+              "",
+              "[auto_velocity]",
+              'search_radius_px = "90"',
+              "",
+              "[progress]",
+              'interval_frames = "25"',
+              'partial_output_interval_frames = "250"',
+              "",
+              "[debug]",
+              'residual_preview_frames = "3"',
+              f"residual_preview_interval_frames = {json.dumps(env('DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES'))}",
+          ]
+
+          config = Path("beltmap-run.toml")
+          config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"Variant: {env('VARIANT')}")
+          print(config.read_text(encoding="utf-8"))
+          PY
+
+      - name: Run BeltMap variant
+        run: |
+          poetry run beltmap-apply --config beltmap-run.toml --print-config
+
+      - name: Generate validation report and visual QC
+        if: always()
+        run: |
+          poetry run beltmap-validate --output-dir outputs
+
+      - name: Preserve comparison metadata
+        if: always()
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          cp beltmap-run.toml outputs/beltmap-run-${VARIANT}.toml || true
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          variant = os.environ["VARIANT"]
+          matrix = {
+              "variant": variant,
+              "static_noise_sample_frames": os.environ.get("STATIC_NOISE_SAMPLE_FRAMES"),
+              "static_background_sample_frames": os.environ.get("STATIC_BACKGROUND_SAMPLE_FRAMES"),
+              "recurrent_artifact_min_revolutions": os.environ.get("RECURRENT_ARTIFACT_MIN_REVOLUTIONS"),
+              "recurrent_artifact_mode": os.environ.get("RECURRENT_ARTIFACT_MODE"),
+              "registration_search_radius_px": os.environ.get("REGISTRATION_SEARCH_RADIUS_PX"),
+              "phase_refinement_iterations": os.environ.get("PHASE_REFINEMENT_ITERATIONS"),
+          }
+          Path("outputs/comparison_variant.json").write_text(json.dumps(matrix, indent=2), encoding="utf-8")
+          PY
+
+      - name: Upload BeltMap comparison outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: beltmap-brick-compare-${{ matrix.variant }}
+          path: outputs/**
+          if-no-files-found: warn
+          retention-days: 14
