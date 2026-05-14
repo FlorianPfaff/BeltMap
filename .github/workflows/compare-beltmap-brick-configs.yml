@@ -98,8 +98,6 @@ jobs:
           curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
 
       - name: Install and test package
-        env:
-          BELTMAP_IMPLEMENTATION: scikit-image
         run: |
           rm -rf .venv
           poetry install --with test --extras speed
@@ -116,110 +114,15 @@ jobs:
       matrix:
         include:
           - variant: baseline
-            static_noise_sample_frames: "0"
-            static_noise_min_scale: "0"
-            static_noise_mask_threshold: "0"
-            static_noise_mask_margin_px: "8"
-            static_noise_mask_min_area_px: "4"
-            static_background_sample_frames: "0"
-            static_background_mask_threshold: "0"
-            static_background_mask_margin_px: "8"
-            static_background_mask_min_area_px: "4"
-            recurrent_artifact_min_revolutions: "0"
-            recurrent_artifact_margin_px: "2"
-            recurrent_artifact_max_overlap_fraction: "0.3"
-            recurrent_artifact_mode: hard
-            recurrent_artifact_soft_penalty_weight: "1.0"
-            registration_search_radius_px: "8.0"
-            registration_search_step_px: "0.5"
-            phase_refinement_iterations: "0"
-            phase_refinement_min_score: "0.0"
-            phase_refinement_max_abs_correction_px: "0"
-            phase_refinement_smoothing_window_frames: "25"
+            params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: static-bg
-            static_noise_sample_frames: "0"
-            static_noise_min_scale: "0"
-            static_noise_mask_threshold: "0"
-            static_noise_mask_margin_px: "8"
-            static_noise_mask_min_area_px: "4"
-            static_background_sample_frames: "120"
-            static_background_mask_threshold: "4.0"
-            static_background_mask_margin_px: "16"
-            static_background_mask_min_area_px: "4"
-            recurrent_artifact_min_revolutions: "0"
-            recurrent_artifact_margin_px: "2"
-            recurrent_artifact_max_overlap_fraction: "0.3"
-            recurrent_artifact_mode: hard
-            recurrent_artifact_soft_penalty_weight: "1.0"
-            registration_search_radius_px: "8.0"
-            registration_search_step_px: "0.5"
-            phase_refinement_iterations: "0"
-            phase_refinement_min_score: "0.0"
-            phase_refinement_max_abs_correction_px: "0"
-            phase_refinement_smoothing_window_frames: "25"
+            params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: static-noise-bg
-            static_noise_sample_frames: "120"
-            static_noise_min_scale: "0.5"
-            static_noise_mask_threshold: "4.0"
-            static_noise_mask_margin_px: "16"
-            static_noise_mask_min_area_px: "4"
-            static_background_sample_frames: "120"
-            static_background_mask_threshold: "4.0"
-            static_background_mask_margin_px: "16"
-            static_background_mask_min_area_px: "4"
-            recurrent_artifact_min_revolutions: "0"
-            recurrent_artifact_margin_px: "2"
-            recurrent_artifact_max_overlap_fraction: "0.3"
-            recurrent_artifact_mode: hard
-            recurrent_artifact_soft_penalty_weight: "1.0"
-            registration_search_radius_px: "8.0"
-            registration_search_step_px: "0.5"
-            phase_refinement_iterations: "0"
-            phase_refinement_min_score: "0.0"
-            phase_refinement_max_abs_correction_px: "0"
-            phase_refinement_smoothing_window_frames: "25"
+            params_json: '{"static_noise":["120","0.5","4.0","16","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: phase-refined-map
-            static_noise_sample_frames: "0"
-            static_noise_min_scale: "0"
-            static_noise_mask_threshold: "0"
-            static_noise_mask_margin_px: "8"
-            static_noise_mask_min_area_px: "4"
-            static_background_sample_frames: "0"
-            static_background_mask_threshold: "0"
-            static_background_mask_margin_px: "8"
-            static_background_mask_min_area_px: "4"
-            recurrent_artifact_min_revolutions: "0"
-            recurrent_artifact_margin_px: "2"
-            recurrent_artifact_max_overlap_fraction: "0.3"
-            recurrent_artifact_mode: hard
-            recurrent_artifact_soft_penalty_weight: "1.0"
-            registration_search_radius_px: "12.0"
-            registration_search_step_px: "0.5"
-            phase_refinement_iterations: "1"
-            phase_refinement_min_score: "0.0"
-            phase_refinement_max_abs_correction_px: "4"
-            phase_refinement_smoothing_window_frames: "25"
+            params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["12.0","0.5"],"phase_refinement":["1","0.0","4","25"]}'
           - variant: recurrent-soft
-            static_noise_sample_frames: "0"
-            static_noise_min_scale: "0"
-            static_noise_mask_threshold: "0"
-            static_noise_mask_margin_px: "8"
-            static_noise_mask_min_area_px: "4"
-            static_background_sample_frames: "0"
-            static_background_mask_threshold: "0"
-            static_background_mask_margin_px: "8"
-            static_background_mask_min_area_px: "4"
-            recurrent_artifact_min_revolutions: "2"
-            recurrent_artifact_margin_px: "4"
-            recurrent_artifact_max_overlap_fraction: "0.3"
-            recurrent_artifact_mode: soft
-            recurrent_artifact_soft_penalty_weight: "1.0"
-            registration_search_radius_px: "8.0"
-            registration_search_step_px: "0.5"
-            phase_refinement_iterations: "0"
-            phase_refinement_min_score: "0.0"
-            phase_refinement_max_abs_correction_px: "0"
-            phase_refinement_smoothing_window_frames: "25"
+            params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["2","4","0.3","soft","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
 
     steps:
       - name: Check out BeltMap
@@ -295,6 +198,7 @@ jobs:
       - name: Write variant TOML config
         env:
           VARIANT: ${{ matrix.variant }}
+          PARAMS_JSON: ${{ matrix.params_json }}
           BELT_REGION: ${{ inputs.belt_region }}
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
           BELT_PERIOD_PX: ${{ inputs.belt_period_px }}
@@ -305,26 +209,6 @@ jobs:
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
           DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
-          STATIC_NOISE_SAMPLE_FRAMES: ${{ matrix.static_noise_sample_frames }}
-          STATIC_NOISE_MIN_SCALE: ${{ matrix.static_noise_min_scale }}
-          STATIC_NOISE_MASK_THRESHOLD: ${{ matrix.static_noise_mask_threshold }}
-          STATIC_NOISE_MASK_MARGIN_PX: ${{ matrix.static_noise_mask_margin_px }}
-          STATIC_NOISE_MASK_MIN_AREA_PX: ${{ matrix.static_noise_mask_min_area_px }}
-          STATIC_BACKGROUND_SAMPLE_FRAMES: ${{ matrix.static_background_sample_frames }}
-          STATIC_BACKGROUND_MASK_THRESHOLD: ${{ matrix.static_background_mask_threshold }}
-          STATIC_BACKGROUND_MASK_MARGIN_PX: ${{ matrix.static_background_mask_margin_px }}
-          STATIC_BACKGROUND_MASK_MIN_AREA_PX: ${{ matrix.static_background_mask_min_area_px }}
-          RECURRENT_ARTIFACT_MIN_REVOLUTIONS: ${{ matrix.recurrent_artifact_min_revolutions }}
-          RECURRENT_ARTIFACT_MARGIN_PX: ${{ matrix.recurrent_artifact_margin_px }}
-          RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION: ${{ matrix.recurrent_artifact_max_overlap_fraction }}
-          RECURRENT_ARTIFACT_MODE: ${{ matrix.recurrent_artifact_mode }}
-          RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT: ${{ matrix.recurrent_artifact_soft_penalty_weight }}
-          REGISTRATION_SEARCH_RADIUS_PX: ${{ matrix.registration_search_radius_px }}
-          REGISTRATION_SEARCH_STEP_PX: ${{ matrix.registration_search_step_px }}
-          PHASE_REFINEMENT_ITERATIONS: ${{ matrix.phase_refinement_iterations }}
-          PHASE_REFINEMENT_MIN_SCORE: ${{ matrix.phase_refinement_min_score }}
-          PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX: ${{ matrix.phase_refinement_max_abs_correction_px }}
-          PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES: ${{ matrix.phase_refinement_smoothing_window_frames }}
         run: |
           set -euo pipefail
           rm -rf outputs
@@ -336,6 +220,13 @@ jobs:
 
           def env(name: str) -> str:
               return os.environ.get(name, "").strip()
+
+          params = json.loads(env("PARAMS_JSON"))
+          static_noise = params["static_noise"]
+          static_background = params["static_background"]
+          recurrent_artifact = params["recurrent_artifact"]
+          registration = params["registration"]
+          phase_refinement = params["phase_refinement"]
 
           lines = [
               "[paths]",
@@ -374,34 +265,34 @@ jobs:
               'particle_mask_min_area_px = "8"',
               "",
               "[static_noise]",
-              f"sample_frames = {json.dumps(env('STATIC_NOISE_SAMPLE_FRAMES'))}",
-              f"min_scale = {json.dumps(env('STATIC_NOISE_MIN_SCALE'))}",
-              f"mask_threshold = {json.dumps(env('STATIC_NOISE_MASK_THRESHOLD'))}",
-              f"mask_margin_px = {json.dumps(env('STATIC_NOISE_MASK_MARGIN_PX'))}",
-              f"mask_min_area_px = {json.dumps(env('STATIC_NOISE_MASK_MIN_AREA_PX'))}",
+              f"sample_frames = {json.dumps(static_noise[0])}",
+              f"min_scale = {json.dumps(static_noise[1])}",
+              f"mask_threshold = {json.dumps(static_noise[2])}",
+              f"mask_margin_px = {json.dumps(static_noise[3])}",
+              f"mask_min_area_px = {json.dumps(static_noise[4])}",
               "",
               "[static_background]",
-              f"sample_frames = {json.dumps(env('STATIC_BACKGROUND_SAMPLE_FRAMES'))}",
-              f"mask_threshold = {json.dumps(env('STATIC_BACKGROUND_MASK_THRESHOLD'))}",
-              f"mask_margin_px = {json.dumps(env('STATIC_BACKGROUND_MASK_MARGIN_PX'))}",
-              f"mask_min_area_px = {json.dumps(env('STATIC_BACKGROUND_MASK_MIN_AREA_PX'))}",
+              f"sample_frames = {json.dumps(static_background[0])}",
+              f"mask_threshold = {json.dumps(static_background[1])}",
+              f"mask_margin_px = {json.dumps(static_background[2])}",
+              f"mask_min_area_px = {json.dumps(static_background[3])}",
               "",
               "[recurrent_artifact]",
-              f"min_revolutions = {json.dumps(env('RECURRENT_ARTIFACT_MIN_REVOLUTIONS'))}",
-              f"margin_px = {json.dumps(env('RECURRENT_ARTIFACT_MARGIN_PX'))}",
-              f"max_overlap_fraction = {json.dumps(env('RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION'))}",
-              f"mode = {json.dumps(env('RECURRENT_ARTIFACT_MODE'))}",
-              f"soft_penalty_weight = {json.dumps(env('RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT'))}",
+              f"min_revolutions = {json.dumps(recurrent_artifact[0])}",
+              f"margin_px = {json.dumps(recurrent_artifact[1])}",
+              f"max_overlap_fraction = {json.dumps(recurrent_artifact[2])}",
+              f"mode = {json.dumps(recurrent_artifact[3])}",
+              f"soft_penalty_weight = {json.dumps(recurrent_artifact[4])}",
               "",
               "[registration]",
-              f"search_radius_px = {json.dumps(env('REGISTRATION_SEARCH_RADIUS_PX'))}",
-              f"search_step_px = {json.dumps(env('REGISTRATION_SEARCH_STEP_PX'))}",
+              f"search_radius_px = {json.dumps(registration[0])}",
+              f"search_step_px = {json.dumps(registration[1])}",
               "",
               "[phase_refinement]",
-              f"iterations = {json.dumps(env('PHASE_REFINEMENT_ITERATIONS'))}",
-              f"min_score = {json.dumps(env('PHASE_REFINEMENT_MIN_SCORE'))}",
-              f"max_abs_correction_px = {json.dumps(env('PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX'))}",
-              f"smoothing_window_frames = {json.dumps(env('PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES'))}",
+              f"iterations = {json.dumps(phase_refinement[0])}",
+              f"min_score = {json.dumps(phase_refinement[1])}",
+              f"max_abs_correction_px = {json.dumps(phase_refinement[2])}",
+              f"smoothing_window_frames = {json.dumps(phase_refinement[3])}",
               "",
               "[auto_velocity]",
               'search_radius_px = "90"',
@@ -417,6 +308,28 @@ jobs:
 
           config = Path("beltmap-run.toml")
           config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          Path("outputs/comparison_variant.json").write_text(
+              json.dumps(
+                  {
+                      "variant": env("VARIANT"),
+                      "params": params,
+                      "inputs": {
+                          "max_frames": env("MAX_FRAMES"),
+                          "frame_stride": env("FRAME_STRIDE"),
+                          "belt_region": env("BELT_REGION"),
+                          "belt_velocity_px_per_frame": env("BELT_VELOCITY_PX_PER_FRAME"),
+                          "belt_period_px": env("BELT_PERIOD_PX"),
+                          "detection_threshold": env("DETECTION_THRESHOLD"),
+                          "min_area_px": env("MIN_AREA_PX"),
+                          "min_track_length": env("MIN_TRACK_LENGTH"),
+                          "map_sample_frames": env("MAP_SAMPLE_FRAMES"),
+                          "debug_residual_preview_interval_frames": env("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES"),
+                      },
+                  },
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
           print(f"Variant: {env('VARIANT')}")
           print(config.read_text(encoding="utf-8"))
           PY
@@ -430,29 +343,12 @@ jobs:
         run: |
           poetry run beltmap-validate --output-dir outputs
 
-      - name: Preserve comparison metadata
+      - name: Preserve generated config
         if: always()
         env:
           VARIANT: ${{ matrix.variant }}
         run: |
           cp beltmap-run.toml outputs/beltmap-run-${VARIANT}.toml || true
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          variant = os.environ["VARIANT"]
-          matrix = {
-              "variant": variant,
-              "static_noise_sample_frames": os.environ.get("STATIC_NOISE_SAMPLE_FRAMES"),
-              "static_background_sample_frames": os.environ.get("STATIC_BACKGROUND_SAMPLE_FRAMES"),
-              "recurrent_artifact_min_revolutions": os.environ.get("RECURRENT_ARTIFACT_MIN_REVOLUTIONS"),
-              "recurrent_artifact_mode": os.environ.get("RECURRENT_ARTIFACT_MODE"),
-              "registration_search_radius_px": os.environ.get("REGISTRATION_SEARCH_RADIUS_PX"),
-              "phase_refinement_iterations": os.environ.get("PHASE_REFINEMENT_ITERATIONS"),
-          }
-          Path("outputs/comparison_variant.json").write_text(json.dumps(matrix, indent=2), encoding="utf-8")
-          PY
 
       - name: Upload BeltMap comparison outputs
         if: always()
