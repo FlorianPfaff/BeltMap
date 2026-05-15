@@ -34,12 +34,12 @@ on:
         type: string
         default: "14723"
       detection_threshold:
-        description: "Threshold on normalized residual for bright brick particles."
+        description: "Default threshold on normalized residual for bright brick particles."
         required: true
         type: string
         default: "5.0"
       min_area_px:
-        description: "Minimum connected-component particle area."
+        description: "Default minimum connected-component particle area."
         required: true
         type: string
         default: "4"
@@ -73,30 +73,23 @@ jobs:
     name: Preflight checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
       - name: Check out BeltMap
         uses: actions/checkout@v6
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-
       - name: Install Poetry
         run: |
           python -m venv .poetry-bootstrap
           .poetry-bootstrap/bin/python -m pip install --upgrade pip
           .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
           echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
-          .poetry-bootstrap/bin/poetry --version
-
       - name: Validate Zenodo URL is reachable
         env:
           DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
-        run: |
-          curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
-
+        run: curl -L --fail --head --retry 3 --retry-delay 5 --connect-timeout 30 "$DATASET_URL"
       - name: Install and test package
         run: |
           rm -rf .venv
@@ -117,84 +110,68 @@ jobs:
             params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: static-bg
             params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
+          - variant: static-bg-threshold-6
+            params_json: '{"detection_threshold":"6.0","static_noise":["0","0","0","8","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
+          - variant: static-bg-minarea-6
+            params_json: '{"min_area_px":"6","static_noise":["0","0","0","8","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: static-noise-bg
             params_json: '{"static_noise":["120","0.5","4.0","16","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: phase-refined-map
             params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["12.0","0.5"],"phase_refinement":["1","0.0","4","25"]}'
           - variant: recurrent-soft
             params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["2","4","0.3","soft","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
-
     steps:
       - name: Check out BeltMap
         uses: actions/checkout@v6
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-
       - name: Install Poetry
         run: |
           python -m venv .poetry-bootstrap
           .poetry-bootstrap/bin/python -m pip install --upgrade pip
           .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
           echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
-          .poetry-bootstrap/bin/poetry --version
-
       - name: Install BeltMap and runtime dependencies
         run: |
           rm -rf .venv
           poetry install --with test --extras speed
           poetry run pytest -q
-
       - name: Prepare Zenodo dataset from local runner dataset cache
         env:
           DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
         run: |
           set -euo pipefail
-
           DATASET_CACHE_ROOT="$HOME/.cache/datasets"
           DATASET_NAME="images_Brick_10gpers"
           CACHE_IMAGES="$DATASET_CACHE_ROOT/$DATASET_NAME"
           CACHE_ZIP="$DATASET_CACHE_ROOT/$DATASET_NAME.zip"
           CACHE_TMP="$DATASET_CACHE_ROOT/$DATASET_NAME.tmp"
-
           mkdir -p "$DATASET_CACHE_ROOT" data outputs
-
-          if find "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
+          if find -L "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
             echo "Local extracted dataset cache hit: $CACHE_IMAGES"
           else
             echo "Local extracted dataset cache miss or empty: $CACHE_IMAGES"
             rm -rf "$CACHE_TMP"
             mkdir -p "$CACHE_TMP"
             if [ ! -s "$CACHE_ZIP" ]; then
-              echo "Local dataset zip cache miss; downloading Zenodo zip to $CACHE_ZIP"
               rm -f "$CACHE_ZIP.tmp"
-              curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
-                -o "$CACHE_ZIP.tmp" "$DATASET_URL"
+              curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 -o "$CACHE_ZIP.tmp" "$DATASET_URL"
               mv "$CACHE_ZIP.tmp" "$CACHE_ZIP"
-            else
-              echo "Local dataset zip cache hit: $CACHE_ZIP"
             fi
-            echo "Extracting dataset atomically to $CACHE_IMAGES"
-            poetry run python -c \
-              'import sys; from zipfile import ZipFile; ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
-              "$CACHE_ZIP" "$CACHE_TMP"
+            poetry run python -c 'import sys; from zipfile import ZipFile; ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$CACHE_ZIP" "$CACHE_TMP"
             rm -rf "$CACHE_IMAGES"
             mv "$CACHE_TMP" "$CACHE_IMAGES"
           fi
-
           rm -rf data/images data/images_Brick_10gpers.zip
           ln -s "$CACHE_IMAGES" data/images
-          if [ -s "$CACHE_ZIP" ]; then
-            ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
-          fi
-
+          [ ! -s "$CACHE_ZIP" ] || ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
           echo "Dataset size summary:"
-          du -sh "$CACHE_IMAGES" data/images data/images_Brick_10gpers.zip 2>/dev/null || true
+          du -shL data/images data/images_Brick_10gpers.zip 2>/dev/null || true
           echo "Number of extracted image files:"
-          find data/images -type f | wc -l
-
+          find -L data/images -type f | wc -l
+          printf 'data/images -> %s\n' "$(readlink -f data/images)"
       - name: Write variant TOML config
         env:
           VARIANT: ${{ matrix.variant }}
@@ -227,129 +204,64 @@ jobs:
           recurrent_artifact = params["recurrent_artifact"]
           registration = params["registration"]
           phase_refinement = params["phase_refinement"]
+          detection_threshold = params.get("detection_threshold", env("DETECTION_THRESHOLD"))
+          min_area_px = params.get("min_area_px", env("MIN_AREA_PX"))
 
-          lines = [
-              "[paths]",
-              'image_dir = "data/images"',
-              'output_dir = "outputs"',
-              "",
-              "[frames]",
-              f"max_frames = {json.dumps(env('MAX_FRAMES'))}",
-              f"stride = {json.dumps(env('FRAME_STRIDE'))}",
-              "",
-              "[belt]",
-              f"region = {json.dumps(env('BELT_REGION'))}",
-              f"velocity_px_per_frame = {json.dumps(env('BELT_VELOCITY_PX_PER_FRAME'))}",
-              f"period_px = {json.dumps(env('BELT_PERIOD_PX'))}",
-              "",
-              "[detection]",
-              f"threshold = {json.dumps(env('DETECTION_THRESHOLD'))}",
-              f"min_area_px = {json.dumps(env('MIN_AREA_PX'))}",
-              'max_area_px = "0"',
-              'min_bbox_width_px = "0"',
-              'min_bbox_height_px = "0"',
-              'max_bbox_aspect_ratio = "0"',
-              'min_bbox_extent = "0"',
-              "",
-              "[tracking]",
-              f"min_track_length = {json.dumps(env('MIN_TRACK_LENGTH'))}",
-              "",
-              "[map]",
-              f"sample_frames = {json.dumps(env('MAP_SAMPLE_FRAMES'))}",
-              'mask_iterations = "2"',
-              'particle_mask_mode = "hysteresis_abs"',
-              'particle_mask_threshold = "4.0"',
-              'particle_mask_grow_threshold = "1.5"',
-              'particle_mask_dilation_px = "24"',
-              'particle_mask_margin_px = "16"',
-              'particle_mask_min_area_px = "8"',
-              "",
-              "[static_noise]",
-              f"sample_frames = {json.dumps(static_noise[0])}",
-              f"min_scale = {json.dumps(static_noise[1])}",
-              f"mask_threshold = {json.dumps(static_noise[2])}",
-              f"mask_margin_px = {json.dumps(static_noise[3])}",
-              f"mask_min_area_px = {json.dumps(static_noise[4])}",
-              "",
-              "[static_background]",
-              f"sample_frames = {json.dumps(static_background[0])}",
-              f"mask_threshold = {json.dumps(static_background[1])}",
-              f"mask_margin_px = {json.dumps(static_background[2])}",
-              f"mask_min_area_px = {json.dumps(static_background[3])}",
-              "",
-              "[recurrent_artifact]",
-              f"min_revolutions = {json.dumps(recurrent_artifact[0])}",
-              f"margin_px = {json.dumps(recurrent_artifact[1])}",
-              f"max_overlap_fraction = {json.dumps(recurrent_artifact[2])}",
-              f"mode = {json.dumps(recurrent_artifact[3])}",
-              f"soft_penalty_weight = {json.dumps(recurrent_artifact[4])}",
-              "",
-              "[registration]",
-              f"search_radius_px = {json.dumps(registration[0])}",
-              f"search_step_px = {json.dumps(registration[1])}",
-              "",
-              "[phase_refinement]",
-              f"iterations = {json.dumps(phase_refinement[0])}",
-              f"min_score = {json.dumps(phase_refinement[1])}",
-              f"max_abs_correction_px = {json.dumps(phase_refinement[2])}",
-              f"smoothing_window_frames = {json.dumps(phase_refinement[3])}",
-              "",
-              "[auto_velocity]",
-              'search_radius_px = "90"',
-              "",
-              "[progress]",
-              'interval_frames = "25"',
-              'partial_output_interval_frames = "250"',
-              "",
-              "[debug]",
-              'residual_preview_frames = "3"',
-              f"residual_preview_interval_frames = {json.dumps(env('DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES'))}",
+          sections = [
+              ("paths", {"image_dir": "data/images", "output_dir": "outputs"}),
+              ("frames", {"max_frames": env("MAX_FRAMES"), "stride": env("FRAME_STRIDE")}),
+              ("belt", {"region": env("BELT_REGION"), "velocity_px_per_frame": env("BELT_VELOCITY_PX_PER_FRAME"), "period_px": env("BELT_PERIOD_PX")}),
+              ("detection", {"threshold": detection_threshold, "min_area_px": min_area_px, "max_area_px": "0", "min_bbox_width_px": "0", "min_bbox_height_px": "0", "max_bbox_aspect_ratio": "0", "min_bbox_extent": "0"}),
+              ("tracking", {"min_track_length": env("MIN_TRACK_LENGTH")}),
+              ("map", {"sample_frames": env("MAP_SAMPLE_FRAMES"), "mask_iterations": "2", "particle_mask_mode": "hysteresis_abs", "particle_mask_threshold": "4.0", "particle_mask_grow_threshold": "1.5", "particle_mask_dilation_px": "24", "particle_mask_margin_px": "16", "particle_mask_min_area_px": "8"}),
+              ("static_noise", {"sample_frames": static_noise[0], "min_scale": static_noise[1], "mask_threshold": static_noise[2], "mask_margin_px": static_noise[3], "mask_min_area_px": static_noise[4]}),
+              ("static_background", {"sample_frames": static_background[0], "mask_threshold": static_background[1], "mask_margin_px": static_background[2], "mask_min_area_px": static_background[3]}),
+              ("recurrent_artifact", {"min_revolutions": recurrent_artifact[0], "margin_px": recurrent_artifact[1], "max_overlap_fraction": recurrent_artifact[2], "mode": recurrent_artifact[3], "soft_penalty_weight": recurrent_artifact[4]}),
+              ("registration", {"search_radius_px": registration[0], "search_step_px": registration[1]}),
+              ("phase_refinement", {"iterations": phase_refinement[0], "min_score": phase_refinement[1], "max_abs_correction_px": phase_refinement[2], "smoothing_window_frames": phase_refinement[3]}),
+              ("auto_velocity", {"search_radius_px": "90"}),
+              ("progress", {"interval_frames": "25", "partial_output_interval_frames": "250"}),
+              ("debug", {"residual_preview_frames": "3", "residual_preview_interval_frames": env("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES")}),
           ]
+          lines = []
+          for section, values in sections:
+              lines.append(f"[{section}]")
+              for key, value in values.items():
+                  lines.append(f"{key} = {json.dumps(value)}")
+              lines.append("")
 
-          config = Path("beltmap-run.toml")
-          config.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          Path("outputs/comparison_variant.json").write_text(
-              json.dumps(
-                  {
-                      "variant": env("VARIANT"),
-                      "params": params,
-                      "inputs": {
-                          "max_frames": env("MAX_FRAMES"),
-                          "frame_stride": env("FRAME_STRIDE"),
-                          "belt_region": env("BELT_REGION"),
-                          "belt_velocity_px_per_frame": env("BELT_VELOCITY_PX_PER_FRAME"),
-                          "belt_period_px": env("BELT_PERIOD_PX"),
-                          "detection_threshold": env("DETECTION_THRESHOLD"),
-                          "min_area_px": env("MIN_AREA_PX"),
-                          "min_track_length": env("MIN_TRACK_LENGTH"),
-                          "map_sample_frames": env("MAP_SAMPLE_FRAMES"),
-                          "debug_residual_preview_interval_frames": env("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES"),
-                      },
-                  },
-                  indent=2,
-              ),
-              encoding="utf-8",
-          )
+          Path("beltmap-run.toml").write_text("\n".join(lines), encoding="utf-8")
+          Path("outputs/comparison_variant.json").write_text(json.dumps({
+              "variant": env("VARIANT"),
+              "params": params,
+              "resolved_detection_threshold": detection_threshold,
+              "resolved_min_area_px": min_area_px,
+              "inputs": {
+                  "max_frames": env("MAX_FRAMES"),
+                  "frame_stride": env("FRAME_STRIDE"),
+                  "belt_region": env("BELT_REGION"),
+                  "belt_velocity_px_per_frame": env("BELT_VELOCITY_PX_PER_FRAME"),
+                  "belt_period_px": env("BELT_PERIOD_PX"),
+                  "detection_threshold": env("DETECTION_THRESHOLD"),
+                  "min_area_px": env("MIN_AREA_PX"),
+                  "min_track_length": env("MIN_TRACK_LENGTH"),
+                  "map_sample_frames": env("MAP_SAMPLE_FRAMES"),
+                  "debug_residual_preview_interval_frames": env("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES"),
+              },
+          }, indent=2), encoding="utf-8")
           print(f"Variant: {env('VARIANT')}")
-          print(config.read_text(encoding="utf-8"))
+          print(Path("beltmap-run.toml").read_text(encoding="utf-8"))
           PY
-
       - name: Run BeltMap variant
-        run: |
-          poetry run beltmap-apply --config beltmap-run.toml --print-config
-
+        run: poetry run beltmap-apply --config beltmap-run.toml --print-config
       - name: Generate validation report and visual QC
         if: always()
-        run: |
-          poetry run beltmap-validate --output-dir outputs
-
+        run: poetry run beltmap-validate --output-dir outputs
       - name: Preserve generated config
         if: always()
         env:
           VARIANT: ${{ matrix.variant }}
-        run: |
-          cp beltmap-run.toml outputs/beltmap-run-${VARIANT}.toml || true
-
+        run: cp beltmap-run.toml outputs/beltmap-run-${VARIANT}.toml || true
       - name: Upload BeltMap comparison outputs
         if: always()
         uses: actions/upload-artifact@v7
@@ -357,4 +269,102 @@ jobs:
           name: beltmap-brick-compare-${{ matrix.variant }}
           path: outputs/**
           if-no-files-found: warn
+          retention-days: 14
+
+  summarize-comparison:
+    name: Summarize comparison
+    needs: compare-beltmap
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download comparison artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: beltmap-brick-compare-*
+          path: comparison-artifacts
+      - name: Build comparison summary
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          rows = []
+          for summary_path in sorted(Path("comparison-artifacts").glob("*/validation_summary.json")):
+              artifact_dir = summary_path.parent
+              summary = json.loads(summary_path.read_text(encoding="utf-8"))
+              variant = artifact_dir.name.replace("beltmap-brick-compare-", "")
+              variant_path = artifact_dir / "comparison_variant.json"
+              if variant_path.exists():
+                  variant = json.loads(variant_path.read_text(encoding="utf-8")).get("variant", variant)
+              run = summary.get("run", {})
+              detections = summary.get("detections", {})
+              velocities = summary.get("velocities", {})
+              tracks = summary.get("track_lengths", {})
+              ratio = velocities.get("velocity_ratio_y", {})
+              track_len = tracks.get("n_detections", {})
+              rows.append({
+                  "variant": variant,
+                  "n_detections": run.get("n_detections"),
+                  "n_tracks": run.get("n_tracks"),
+                  "n_velocity_estimates": run.get("n_velocity_estimates"),
+                  "n_filtered_velocity_estimates": run.get("n_filtered_velocity_estimates"),
+                  "tracks_ge_5": tracks.get("tracks_ge_5"),
+                  "tracks_ge_10": tracks.get("tracks_ge_10"),
+                  "median_velocity_ratio_y": ratio.get("median"),
+                  "median_track_length": track_len.get("median"),
+                  "zero_detection_frames": detections.get("zero_detection_frames"),
+                  "artifact": artifact_dir.name,
+              })
+
+          rows.sort(key=lambda row: (-(row["n_filtered_velocity_estimates"] or 0), -(row["tracks_ge_10"] or 0), -(row["n_detections"] or 0)))
+
+          def fmt(value):
+              if value is None:
+                  return ""
+              if isinstance(value, float):
+                  return f"{value:.4g}"
+              return str(value)
+
+          lines = [
+              "# BeltMap Brick configuration comparison",
+              "",
+              "| rank | variant | detections | tracks | velocity estimates | filtered velocities | tracks >= 5 | tracks >= 10 | median velocity ratio | median track length | zero-detection frames |",
+              "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+          ]
+          for rank, row in enumerate(rows, start=1):
+              lines.append("| " + " | ".join([
+                  str(rank),
+                  row["variant"],
+                  fmt(row["n_detections"]),
+                  fmt(row["n_tracks"]),
+                  fmt(row["n_velocity_estimates"]),
+                  fmt(row["n_filtered_velocity_estimates"]),
+                  fmt(row["tracks_ge_5"]),
+                  fmt(row["tracks_ge_10"]),
+                  fmt(row["median_velocity_ratio_y"]),
+                  fmt(row["median_track_length"]),
+                  fmt(row["zero_detection_frames"]),
+              ]) + " |")
+          if rows:
+              lines += ["", f"Best by filtered velocity estimates: `{rows[0]['variant']}`.", "", "Use visual QC images in the corresponding artifact before promoting a configuration to the full run."]
+          else:
+              lines += ["", "No validation summaries were found."]
+
+          Path("comparison_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          with Path("comparison_summary.csv").open("w", newline="", encoding="utf-8") as handle:
+              writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()) if rows else ["variant"])
+              writer.writeheader()
+              writer.writerows(rows)
+          print(Path("comparison_summary.md").read_text(encoding="utf-8"))
+          PY
+          cat comparison_summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload comparison summary
+        uses: actions/upload-artifact@v7
+        with:
+          name: beltmap-brick-comparison-summary
+          path: |
+            comparison_summary.md
+            comparison_summary.csv
+          if-no-files-found: error
           retention-days: 14
