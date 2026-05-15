@@ -99,7 +99,7 @@ jobs:
   compare-beltmap:
     name: Compare ${{ matrix.variant }}
     needs: preflight
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 420
     strategy:
       fail-fast: false
