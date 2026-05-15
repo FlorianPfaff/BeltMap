@@ -261,7 +261,7 @@ jobs:
         if: always()
         env:
           VARIANT: ${{ matrix.variant }}
-        run: cp beltmap-run.toml outputs/beltmap-run-${VARIANT}.toml || true
+        run: cp beltmap-run.toml "outputs/beltmap-run-${VARIANT}.toml" || true
       - name: Upload BeltMap comparison outputs
         if: always()
         uses: actions/upload-artifact@v7
