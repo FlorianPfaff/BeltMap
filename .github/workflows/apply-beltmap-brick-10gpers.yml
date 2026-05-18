@@ -135,15 +135,10 @@ on:
         type: string
         default: "25"
       progress_intervals:
-        description: "Progress and partial-output intervals as progress,partial. Partial 0 = final only."
+        description: "Intervals as progress,partial,debug-preview. Partial/debug 0 = disabled."
         required: true
         type: string
-        default: "25,250"
-      debug_residual_preview_interval_frames:
-        description: "Also save residual previews every N frames. 0 = disabled."
-        required: true
-        type: string
-        default: "0"
+        default: "25,250,0"
 
 permissions:
   contents: read
@@ -253,7 +248,6 @@ jobs:
           VELOCITY_SEARCH_RADIUS_PX: "90"
           PROGRESS_INTERVALS: ${{ inputs.progress_intervals }}
           DEBUG_RESIDUAL_PREVIEW_FRAMES: "3"
-          DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
           poetry run python - <<'PY'
           import json
@@ -265,6 +259,16 @@ jobs:
               values = [part.strip() for part in os.environ[name].split(",")]
               if len(values) != count:
                   raise SystemExit(f"{name} must contain {count} comma-separated values")
+              return values
+
+          def parse_progress_intervals():
+              values = [part.strip() for part in os.environ["PROGRESS_INTERVALS"].split(",")]
+              if len(values) == 2:
+                  values.append("0")
+              elif len(values) != 3:
+                  raise SystemExit(
+                      "PROGRESS_INTERVALS must contain progress,partial[,debug_preview]"
+                  )
               return values
 
           def parse_static_options():
@@ -300,7 +304,7 @@ jobs:
           static_noise, static_background = parse_static_options()
           recurrent_artifact = parse_recurrent_artifact_options()
           registration_search = parse_csv_values("REGISTRATION_SEARCH", 2)
-          progress = parse_csv_values("PROGRESS_INTERVALS", 2)
+          progress = parse_progress_intervals()
           checks = {
               "driver": driver.__name__,
               "belt_velocity_px_per_frame": os.environ["BELT_VELOCITY_PX_PER_FRAME"],
@@ -340,7 +344,7 @@ jobs:
               "progress_interval_frames": int(progress[0]),
               "partial_output_interval_frames": int(progress[1]),
               "debug_residual_preview_frames": int(os.environ["DEBUG_RESIDUAL_PREVIEW_FRAMES"]),
-              "debug_residual_preview_interval_frames": int(os.environ["DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES"]),
+              "debug_residual_preview_interval_frames": int(progress[2]),
           }
           float(os.environ["DETECTION_THRESHOLD"])
           int(os.environ["MIN_AREA_PX"])
@@ -500,7 +504,6 @@ jobs:
           VELOCITY_SEARCH_RADIUS_PX: "90"
           PROGRESS_INTERVALS: ${{ inputs.progress_intervals }}
           DEBUG_RESIDUAL_PREVIEW_FRAMES: "3"
-          DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES: ${{ inputs.debug_residual_preview_interval_frames }}
         run: |
           poetry run python - <<'PY'
           import json
@@ -547,6 +550,16 @@ jobs:
               values = [part.strip() for part in env_value(env_name).split(",")]
               if len(values) != count:
                   raise SystemExit(f"{env_name} must contain {count} comma-separated values")
+              return values
+
+          def parse_progress_intervals() -> list[str]:
+              values = [part.strip() for part in env_value("PROGRESS_INTERVALS").split(",")]
+              if len(values) == 2:
+                  values.append("0")
+              elif len(values) != 3:
+                  raise SystemExit(
+                      "PROGRESS_INTERVALS must contain progress,partial[,debug_preview]"
+                  )
               return values
 
           def parse_static_options() -> tuple[list[str], list[str]]:
@@ -686,14 +699,14 @@ jobs:
           lines.append("")
 
           lines.append("[progress]")
-          progress_intervals = parse_csv_values("PROGRESS_INTERVALS", 2)
+          progress_intervals = parse_progress_intervals()
           lines.append(f"interval_frames = {json.dumps(progress_intervals[0])}")
           lines.append(f"partial_output_interval_frames = {json.dumps(progress_intervals[1])}")
           lines.append("")
 
           lines.append("[debug]")
           append_value(lines, "residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES")
-          append_value(lines, "residual_preview_interval_frames", "DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES")
+          lines.append(f"residual_preview_interval_frames = {json.dumps(progress_intervals[2])}")
 
           config_path = Path("beltmap-run.toml")
           config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
