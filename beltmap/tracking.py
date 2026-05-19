@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import hypot
+from math import hypot, log
 from typing import Any, Sequence
 
 import numpy as np
@@ -18,6 +18,7 @@ _IMPORT_UNCHECKED = object()
 _IMPORT_MISSING = object()
 _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
+_TRACKING_ASSIGNMENT_METHODS = {"global", "greedy"}
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class ParticleDetection:
     mean_signal: float | None = None
     peak_signal: float | None = None
     recurrent_artifact_overlap_fraction: float | None = None
+    recurrent_artifact_probability: float | None = None
     recurrent_artifact_required_peak_signal: float | None = None
 
 
@@ -61,6 +63,11 @@ class ParticleTrackingConfig:
     max_frame_gap: float = 1.0
     velocity_prior_y_px_per_frame: float = 0.0
     velocity_prior_x_px_per_frame: float = 0.0
+    assignment_method: str = "global"
+    area_cost_weight_px: float = 0.0
+    signal_cost_weight_px: float = 0.0
+    lateral_cost_weight: float = 0.0
+    max_area_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +133,22 @@ class ParticleTrackScore:
     passes_lateral_velocity: bool
     accepted: bool
     plausibility_score: float
+
+
+@dataclass(frozen=True)
+class _AssociationCandidate:
+    cost: float
+    distance_px: float
+    track_id: int
+    detection_index: int
+
+
+@dataclass
+class _FlowEdge:
+    to: int
+    rev: int
+    capacity: int
+    cost: float
 
 
 def extract_particle_detections(
@@ -202,7 +225,7 @@ def track_particle_detections(
     config: ParticleTrackingConfig | None = None,
     frame_indices: Sequence[float] | None = None,
 ) -> list[ParticleTrack]:
-    """Associate particle detections across frames with greedy nearest neighbors."""
+    """Associate particle detections across frames with configurable assignment."""
 
     cfg = config or ParticleTrackingConfig()
     _validate_tracking_config(cfg)
@@ -228,24 +251,22 @@ def track_particle_detections(
 
         assert frame_index is not None
         active_track_ids = _drop_expired_tracks(active_track_ids, tracks, frame_index, cfg)
-        candidates: list[tuple[float, int, int]] = []
-        for track_id in active_track_ids:
-            last = tracks[track_id][-1]
-            dt = frame_index - last.frame_index
-            if dt <= 0 or dt > cfg.max_frame_gap:
-                continue
-            predicted_y = last.y + cfg.velocity_prior_y_px_per_frame * dt
-            predicted_x = last.x + cfg.velocity_prior_x_px_per_frame * dt
-            for detection_index, detection in enumerate(current):
-                distance = hypot(detection.y - predicted_y, detection.x - predicted_x)
-                if distance <= cfg.max_match_distance_px:
-                    candidates.append((distance, track_id, detection_index))
+        candidates = _association_candidates(
+            active_track_ids,
+            tracks,
+            current,
+            frame_index=frame_index,
+            config=cfg,
+        )
 
         assigned_tracks: set[int] = set()
         assigned_detections: set[int] = set()
-        for _distance, track_id, detection_index in sorted(candidates):
-            if track_id in assigned_tracks or detection_index in assigned_detections:
-                continue
+        for track_id, detection_index in _select_associations(
+            candidates,
+            active_track_ids,
+            detection_count=len(current),
+            config=cfg,
+        ):
             tracks[track_id].append(current[detection_index])
             assigned_tracks.add(track_id)
             assigned_detections.add(detection_index)
@@ -455,10 +476,32 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
 
 
 def _validate_tracking_config(config: ParticleTrackingConfig) -> None:
-    if config.max_match_distance_px <= 0:
+    if not np.isfinite(config.max_match_distance_px) or config.max_match_distance_px <= 0:
         raise ValueError("max_match_distance_px must be positive")
-    if config.max_frame_gap <= 0:
+    if not np.isfinite(config.max_frame_gap) or config.max_frame_gap <= 0:
         raise ValueError("max_frame_gap must be positive")
+    if not np.isfinite(config.velocity_prior_y_px_per_frame):
+        raise ValueError("velocity_prior_y_px_per_frame must be finite")
+    if not np.isfinite(config.velocity_prior_x_px_per_frame):
+        raise ValueError("velocity_prior_x_px_per_frame must be finite")
+    method = str(config.assignment_method).strip().lower()
+    if method not in _TRACKING_ASSIGNMENT_METHODS:
+        choices = ", ".join(sorted(_TRACKING_ASSIGNMENT_METHODS))
+        raise ValueError(f"assignment_method must be one of {choices}")
+    if not np.isfinite(config.area_cost_weight_px) or config.area_cost_weight_px < 0:
+        raise ValueError("area_cost_weight_px must be non-negative")
+    if not np.isfinite(config.signal_cost_weight_px) or config.signal_cost_weight_px < 0:
+        raise ValueError("signal_cost_weight_px must be non-negative")
+    if not np.isfinite(config.lateral_cost_weight) or config.lateral_cost_weight < 0:
+        raise ValueError("lateral_cost_weight must be non-negative")
+    if (
+        config.max_area_ratio is not None
+        and (
+            not np.isfinite(config.max_area_ratio)
+            or config.max_area_ratio < 1.0
+        )
+    ):
+        raise ValueError("max_area_ratio must be at least 1 when set")
 
 
 def _component_shape_passes(
@@ -706,6 +749,240 @@ def _connected_components_numpy(
                     stack.append((next_row, next_col))
         components.append((np.asarray(rows), np.asarray(cols)))
     return components
+
+
+def _association_candidates(
+    active_track_ids: Sequence[int],
+    tracks: list[list[ParticleDetection]],
+    detections: Sequence[ParticleDetection],
+    *,
+    frame_index: float,
+    config: ParticleTrackingConfig,
+) -> list[_AssociationCandidate]:
+    candidates: list[_AssociationCandidate] = []
+    for track_id in active_track_ids:
+        last = tracks[track_id][-1]
+        dt = frame_index - last.frame_index
+        if dt <= 0 or dt > config.max_frame_gap:
+            continue
+        predicted_y = last.y + config.velocity_prior_y_px_per_frame * dt
+        predicted_x = last.x + config.velocity_prior_x_px_per_frame * dt
+        for detection_index, detection in enumerate(detections):
+            candidate = _association_candidate(
+                last,
+                detection,
+                predicted_y=predicted_y,
+                predicted_x=predicted_x,
+                track_id=track_id,
+                detection_index=detection_index,
+                config=config,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+    return candidates
+
+
+def _association_candidate(
+    last: ParticleDetection,
+    detection: ParticleDetection,
+    *,
+    predicted_y: float,
+    predicted_x: float,
+    track_id: int,
+    detection_index: int,
+    config: ParticleTrackingConfig,
+) -> _AssociationCandidate | None:
+    dy = detection.y - predicted_y
+    dx = detection.x - predicted_x
+    distance = hypot(dy, dx)
+    if distance > config.max_match_distance_px:
+        return None
+
+    area_ratio = _positive_ratio(float(last.area_px), float(detection.area_px))
+    if (
+        config.max_area_ratio is not None
+        and area_ratio is not None
+        and area_ratio > config.max_area_ratio
+    ):
+        return None
+
+    cost = distance
+    if config.area_cost_weight_px > 0 and area_ratio is not None:
+        cost += config.area_cost_weight_px * abs(log(area_ratio))
+    if config.signal_cost_weight_px > 0:
+        signal_ratio = _positive_ratio(
+            _detection_signal(last),
+            _detection_signal(detection),
+        )
+        if signal_ratio is not None:
+            cost += config.signal_cost_weight_px * abs(log(signal_ratio))
+    if config.lateral_cost_weight > 0:
+        cost += config.lateral_cost_weight * abs(dx)
+    if not np.isfinite(cost):
+        return None
+    return _AssociationCandidate(
+        cost=float(cost),
+        distance_px=float(distance),
+        track_id=track_id,
+        detection_index=detection_index,
+    )
+
+
+def _positive_ratio(first: float | None, second: float | None) -> float | None:
+    if first is None or second is None:
+        return None
+    if first <= 0 or second <= 0:
+        return None
+    if not np.isfinite(first) or not np.isfinite(second):
+        return None
+    return max(first, second) / min(first, second)
+
+
+def _detection_signal(detection: ParticleDetection) -> float | None:
+    for value in (detection.mean_signal, detection.peak_signal):
+        if value is not None and np.isfinite(value) and value > 0:
+            return float(value)
+    return None
+
+
+def _select_associations(
+    candidates: Sequence[_AssociationCandidate],
+    active_track_ids: Sequence[int],
+    *,
+    detection_count: int,
+    config: ParticleTrackingConfig,
+) -> list[tuple[int, int]]:
+    if not candidates:
+        return []
+    method = str(config.assignment_method).strip().lower()
+    if method == "greedy":
+        return _select_greedy_associations(candidates)
+    return _select_global_associations(candidates, active_track_ids, detection_count)
+
+
+def _select_greedy_associations(
+    candidates: Sequence[_AssociationCandidate],
+) -> list[tuple[int, int]]:
+    assignments: list[tuple[int, int]] = []
+    assigned_tracks: set[int] = set()
+    assigned_detections: set[int] = set()
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (item.cost, item.distance_px, item.track_id, item.detection_index),
+    ):
+        if candidate.track_id in assigned_tracks or candidate.detection_index in assigned_detections:
+            continue
+        assignments.append((candidate.track_id, candidate.detection_index))
+        assigned_tracks.add(candidate.track_id)
+        assigned_detections.add(candidate.detection_index)
+    return assignments
+
+
+def _select_global_associations(
+    candidates: Sequence[_AssociationCandidate],
+    active_track_ids: Sequence[int],
+    detection_count: int,
+) -> list[tuple[int, int]]:
+    candidate_track_ids = {candidate.track_id for candidate in candidates}
+    track_ids = [track_id for track_id in active_track_ids if track_id in candidate_track_ids]
+    track_index = {track_id: index for index, track_id in enumerate(track_ids)}
+    edges = [
+        (track_index[candidate.track_id], candidate.detection_index, candidate.cost)
+        for candidate in candidates
+    ]
+    return [
+        (track_ids[left_index], detection_index)
+        for left_index, detection_index in _min_cost_max_cardinality_matching(
+            len(track_ids),
+            detection_count,
+            edges,
+        )
+    ]
+
+
+def _min_cost_max_cardinality_matching(
+    num_left: int,
+    num_right: int,
+    edges: Sequence[tuple[int, int, float]],
+) -> list[tuple[int, int]]:
+    """Return min-cost matching among all maximum-cardinality bipartite matchings."""
+
+    if num_left <= 0 or num_right <= 0 or not edges:
+        return []
+    source = 0
+    left_offset = 1
+    right_offset = left_offset + num_left
+    sink = right_offset + num_right
+    graph: list[list[_FlowEdge]] = [[] for _ in range(sink + 1)]
+
+    for left_index in range(num_left):
+        _add_flow_edge(graph, source, left_offset + left_index, 1, 0.0)
+    for right_index in range(num_right):
+        _add_flow_edge(graph, right_offset + right_index, sink, 1, 0.0)
+    for left_index, right_index, cost in sorted(edges, key=lambda item: (item[2], item[0], item[1])):
+        if 0 <= left_index < num_left and 0 <= right_index < num_right and np.isfinite(cost):
+            _add_flow_edge(graph, left_offset + left_index, right_offset + right_index, 1, float(cost))
+
+    while _augment_shortest_path(graph, source, sink):
+        pass
+
+    assignments: list[tuple[int, int]] = []
+    for left_index in range(num_left):
+        node = left_offset + left_index
+        for edge in graph[node]:
+            right_index = edge.to - right_offset
+            if 0 <= right_index < num_right and edge.capacity == 0:
+                assignments.append((left_index, right_index))
+                break
+    return assignments
+
+
+def _add_flow_edge(
+    graph: list[list[_FlowEdge]],
+    source: int,
+    target: int,
+    capacity: int,
+    cost: float,
+) -> None:
+    graph[source].append(_FlowEdge(to=target, rev=len(graph[target]), capacity=capacity, cost=cost))
+    graph[target].append(_FlowEdge(to=source, rev=len(graph[source]) - 1, capacity=0, cost=-cost))
+
+
+def _augment_shortest_path(graph: list[list[_FlowEdge]], source: int, sink: int) -> bool:
+    distances = [float("inf")] * len(graph)
+    parent_node = [-1] * len(graph)
+    parent_edge = [-1] * len(graph)
+    distances[source] = 0.0
+    queue = [source]
+    in_queue = [False] * len(graph)
+    in_queue[source] = True
+    head = 0
+    while head < len(queue):
+        node = queue[head]
+        head += 1
+        in_queue[node] = False
+        for edge_index, edge in enumerate(graph[node]):
+            if edge.capacity <= 0:
+                continue
+            next_distance = distances[node] + edge.cost
+            if next_distance + 1e-12 < distances[edge.to]:
+                distances[edge.to] = next_distance
+                parent_node[edge.to] = node
+                parent_edge[edge.to] = edge_index
+                if not in_queue[edge.to]:
+                    queue.append(edge.to)
+                    in_queue[edge.to] = True
+    if parent_node[sink] < 0:
+        return False
+
+    node = sink
+    while node != source:
+        previous = parent_node[node]
+        edge = graph[previous][parent_edge[node]]
+        edge.capacity -= 1
+        graph[node][edge.rev].capacity += 1
+        node = previous
+    return True
 
 
 def _drop_expired_tracks(

@@ -44,6 +44,7 @@ from .recurrent_artifacts import (
     belt_revolution_indices,
     build_recurrent_artifact_map,
     score_recurrent_artifact_detections,
+    score_recurrent_artifact_detections_excluding_current_revolution,
 )
 
 DETECTION_FIELDS = [
@@ -51,6 +52,7 @@ DETECTION_FIELDS = [
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
     "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_probability",
     "recurrent_artifact_required_peak_signal",
 ]
 PHASE_FIELDS = [
@@ -69,6 +71,7 @@ TRACK_DETECTION_FIELDS = [
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
     "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_probability",
     "recurrent_artifact_required_peak_signal",
 ]
 RECURRENT_ARTIFACT_DETECTION_FIELDS = [
@@ -143,14 +146,24 @@ def load_recurrent_artifact_map(
     artifact_map = np.load(path)
     if artifact_map.ndim != 2:
         raise ValueError(
-            "REUSE_RECURRENT_ARTIFACT_MAP_PATH must point to a 2-D recurrent_artifact_map.npy"
+            "REUSE_RECURRENT_ARTIFACT_MAP_PATH must point to a 2-D recurrent "
+            "artifact mask or probability .npy"
         )
     if artifact_map.shape != map_shape:
         raise ValueError(
             "reused recurrent artifact map shape does not match belt map and crop width: "
             f"{artifact_map.shape} != {map_shape}"
         )
-    return np.asarray(artifact_map, dtype=bool)
+    if artifact_map.dtype == np.bool_ or np.issubdtype(artifact_map.dtype, np.bool_):
+        return np.asarray(artifact_map, dtype=bool)
+    artifact_map = np.asarray(artifact_map, dtype=np.float32)
+    if not np.all(np.isfinite(artifact_map)):
+        raise ValueError("reused recurrent artifact probability map must be finite")
+    if np.any((artifact_map < 0.0) | (artifact_map > 1.0)):
+        raise ValueError(
+            "reused recurrent artifact probability map values must be in [0, 1]"
+        )
+    return artifact_map
 
 
 def validate_reused_phase_estimates(
@@ -282,7 +295,7 @@ def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray |
         raw=residual.raw,
         local_noise=local_noise,
         normalized=normalized,
-        mask=residual.mask,
+        mask=valid,
         expected_background=residual.expected_background,
         clean_render=residual.clean_render,
     )
@@ -332,7 +345,7 @@ def subtract_static_background(
         raw=raw,
         local_noise=local_noise,
         normalized=normalized,
-        mask=residual.mask,
+        mask=norm_valid,
         expected_background=expected,
         clean_render=residual.clean_render,
     )
@@ -647,7 +660,27 @@ def main() -> None:
         0.0,
     )
     detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
+    residual_noise_radius_px = rt.env_int("RESIDUAL_NOISE_RADIUS_PX", 15, minimum=0)
+    residual_clip_sigma = optional_positive_float("RESIDUAL_CLIP_SIGMA", 5.0)
+    residual_min_noise = rt.env_float("RESIDUAL_MIN_NOISE", 1e-6, minimum=0.0)
+    if residual_min_noise <= 0:
+        raise ValueError("RESIDUAL_MIN_NOISE must be positive")
+    residual_noise_exclusion_sigma = optional_positive_float("RESIDUAL_NOISE_EXCLUSION_SIGMA", 4.0)
+    residual_noise_exclusion_radius_px = rt.env_int(
+        "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", 2, minimum=0
+    )
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
+    tracking_assignment_method = os.getenv("TRACKING_ASSIGNMENT_METHOD", "global").strip().lower()
+    tracking_area_cost_weight_px = rt.env_float(
+        "TRACKING_AREA_COST_WEIGHT_PX", 0.0, minimum=0.0
+    )
+    tracking_signal_cost_weight_px = rt.env_float(
+        "TRACKING_SIGNAL_COST_WEIGHT_PX", 0.0, minimum=0.0
+    )
+    tracking_lateral_cost_weight = rt.env_float(
+        "TRACKING_LATERAL_COST_WEIGHT", 0.0, minimum=0.0
+    )
+    tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
     map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
@@ -655,6 +688,14 @@ def main() -> None:
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    map_aggregation = os.getenv("MAP_AGGREGATION", "mean").strip().lower()
+    map_robust_iterations = rt.env_int("MAP_ROBUST_ITERATIONS", 1, minimum=0)
+    map_robust_huber_delta = rt.env_float(
+        "MAP_ROBUST_HUBER_DELTA", 3.0, minimum=1e-9
+    )
+    map_robust_min_scale = rt.env_float(
+        "MAP_ROBUST_MIN_SCALE", 1.0, minimum=1e-9
+    )
     reuse_belt_map_path = optional_path("REUSE_BELT_MAP_PATH")
     reuse_phase_estimates_path = optional_path("REUSE_PHASE_ESTIMATES_PATH")
     reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")
@@ -679,6 +720,11 @@ def main() -> None:
             0.3,
             minimum=0.0,
         ),
+        min_recurrence_probability=rt.env_float(
+            "RECURRENT_ARTIFACT_MIN_RECURRENCE_PROBABILITY",
+            0.0,
+            minimum=0.0,
+        ),
         mode=os.getenv("RECURRENT_ARTIFACT_MODE", "hard").strip().lower(),
         soft_penalty_weight=rt.env_float(
             "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT",
@@ -688,6 +734,10 @@ def main() -> None:
     )
     if recurrent_artifact_config.max_overlap_fraction > 1:
         raise ValueError("RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION must be in [0, 1]")
+    if recurrent_artifact_config.min_recurrence_probability > 1:
+        raise ValueError(
+            "RECURRENT_ARTIFACT_MIN_RECURRENCE_PROBABILITY must be in [0, 1]"
+        )
     if recurrent_artifact_config.mode not in RECURRENT_ARTIFACT_MODES:
         choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
         raise ValueError(f"RECURRENT_ARTIFACT_MODE must be one of {choices}")
@@ -718,7 +768,17 @@ def main() -> None:
         detection_min_bbox_height_px=detection_min_bbox_height_px,
         detection_max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         detection_min_bbox_extent=detection_min_bbox_extent,
+        residual_noise_radius_px=residual_noise_radius_px,
+        residual_clip_sigma=residual_clip_sigma,
+        residual_min_noise=residual_min_noise,
+        residual_noise_exclusion_sigma=residual_noise_exclusion_sigma,
+        residual_noise_exclusion_radius_px=residual_noise_exclusion_radius_px,
         min_track_length=min_track_length,
+        tracking_assignment_method=tracking_assignment_method,
+        tracking_area_cost_weight_px=tracking_area_cost_weight_px,
+        tracking_signal_cost_weight_px=tracking_signal_cost_weight_px,
+        tracking_lateral_cost_weight=tracking_lateral_cost_weight,
+        tracking_max_area_ratio=tracking_max_area_ratio,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
         map_particle_mask_mode=map_particle_mask_mode,
@@ -726,6 +786,10 @@ def main() -> None:
         map_particle_mask_dilation_px=map_particle_mask_dilation_px,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
+        map_aggregation=map_aggregation,
+        map_robust_iterations=map_robust_iterations,
+        map_robust_huber_delta=map_robust_huber_delta,
+        map_robust_min_scale=map_robust_min_scale,
         reuse_belt_map_path=reuse_belt_map_path,
         reuse_phase_estimates_path=reuse_phase_estimates_path,
         reuse_static_noise_path=reuse_static_noise_path,
@@ -743,6 +807,7 @@ def main() -> None:
         recurrent_artifact_min_revolutions=recurrent_artifact_config.min_revolutions,
         recurrent_artifact_margin_px=recurrent_artifact_config.margin_px,
         recurrent_artifact_max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+        recurrent_artifact_min_recurrence_probability=recurrent_artifact_config.min_recurrence_probability,
         recurrent_artifact_mode=recurrent_artifact_config.mode,
         recurrent_artifact_soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
         registration_search_radius_px=registration_config.search_radius_px,
@@ -797,6 +862,10 @@ def main() -> None:
             mask_dilation_px=map_particle_mask_dilation_px,
             mask_margin_px=map_particle_mask_margin_px,
             mask_min_area_px=map_particle_mask_min_area_px,
+            aggregation=map_aggregation,
+            robust_iterations=map_robust_iterations,
+            robust_huber_delta=map_robust_huber_delta,
+            robust_min_scale=map_robust_min_scale,
             phase_feedback_config=PhaseFeedbackConfig(
                 iterations=phase_refinement_iterations,
                 min_score=phase_refinement_min_score,
@@ -836,7 +905,13 @@ def main() -> None:
         max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         min_bbox_extent=detection_min_bbox_extent,
     )
-    residual_config = ResidualConfig()
+    residual_config = ResidualConfig(
+        noise_radius_px=residual_noise_radius_px,
+        clip_sigma=residual_clip_sigma,
+        noise_exclusion_sigma=residual_noise_exclusion_sigma,
+        noise_exclusion_radius_px=residual_noise_exclusion_radius_px,
+        min_noise=residual_min_noise,
+    )
     reused_phase_estimates = (
         load_phase_estimates(reuse_phase_estimates_path)
         if reuse_phase_estimates_path is not None
@@ -1057,6 +1132,13 @@ def main() -> None:
                 artifact_pixels=recurrent_artifact_pixels,
                 recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
             )
+            recurrent_artifact_scores = score_recurrent_artifact_detections(
+                detections_by_frame,
+                phase_px_by_frame,
+                recurrent_artifact_mask,
+                config=recurrent_artifact_config,
+                detection_threshold=detection_threshold,
+            )
         else:
             recurrent_artifact_source = "built"
             rt.emit(
@@ -1065,15 +1147,20 @@ def main() -> None:
                 min_revolutions=recurrent_artifact_config.min_revolutions,
                 margin_px=recurrent_artifact_config.margin_px,
                 max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+                min_recurrence_probability=(
+                    recurrent_artifact_config.min_recurrence_probability
+                ),
                 mode=recurrent_artifact_config.mode,
                 soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
             )
+            revolution_by_frame = belt_revolution_indices(len(paths), motion_model)
             recurrent_result = build_recurrent_artifact_map(
                 detections_by_frame,
                 phase_px_by_frame,
-                belt_revolution_indices(len(paths), motion_model),
+                revolution_by_frame,
                 map_shape=map_shape,
                 config=recurrent_artifact_config,
+                frame_shape=(region[2], region[3]),
             )
             recurrent_artifact_mask = recurrent_result.mask
             recurrent_artifact_pixels = recurrent_result.artifact_pixels
@@ -1081,18 +1168,33 @@ def main() -> None:
             recurrent_artifact_candidate_detections = recurrent_result.candidate_detections
             np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_result.mask)
             np.save(rt.OUT / "recurrent_artifact_counts.npy", recurrent_result.counts)
+            np.save(
+                rt.OUT / "recurrent_artifact_exposure_counts.npy",
+                recurrent_result.exposure_counts,
+            )
+            np.save(
+                rt.OUT / "recurrent_artifact_probability.npy",
+                recurrent_result.probability,
+            )
             rt.save_png(
                 recurrent_result.mask.astype(np.float32),
                 rt.OUT / "recurrent_artifact_map.png",
             )
             rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
-        recurrent_artifact_scores = score_recurrent_artifact_detections(
-            detections_by_frame,
-            phase_px_by_frame,
-            recurrent_artifact_mask,
-            config=recurrent_artifact_config,
-            detection_threshold=detection_threshold,
-        )
+            rt.save_png(
+                recurrent_result.probability,
+                rt.OUT / "recurrent_artifact_probability.png",
+            )
+            recurrent_artifact_scores = (
+                score_recurrent_artifact_detections_excluding_current_revolution(
+                    detections_by_frame,
+                    phase_px_by_frame,
+                    revolution_by_frame,
+                    recurrent_result,
+                    config=recurrent_artifact_config,
+                    detection_threshold=detection_threshold,
+                )
+            )
         recurrent_artifact_rows = recurrent_artifact_rows_from_scores(
             recurrent_artifact_scores,
             paths,
@@ -1129,6 +1231,16 @@ def main() -> None:
                 if recurrent_artifact_source == "built"
                 else None
             ),
+            recurrent_artifact_exposure_counts_npy=(
+                rt.OUT / "recurrent_artifact_exposure_counts.npy"
+                if recurrent_artifact_source == "built"
+                else None
+            ),
+            recurrent_artifact_probability_npy=(
+                rt.OUT / "recurrent_artifact_probability.npy"
+                if recurrent_artifact_source == "built"
+                else None
+            ),
         )
 
     write_detection_outputs(detections_by_frame, detection_rows)
@@ -1139,8 +1251,25 @@ def main() -> None:
     tracking_config = ParticleTrackingConfig(
         max_match_distance_px=float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity)),
         velocity_prior_y_px_per_frame=0.8 * belt_velocity,
+        assignment_method=tracking_assignment_method,
+        area_cost_weight_px=tracking_area_cost_weight_px,
+        signal_cost_weight_px=tracking_signal_cost_weight_px,
+        lateral_cost_weight=tracking_lateral_cost_weight,
+        max_area_ratio=tracking_max_area_ratio,
     )
-    rt.emit("track", "starting particle tracking", frames=len(detections_by_frame), max_match_distance_px=tracking_config.max_match_distance_px, velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame)
+    rt.emit(
+        "track",
+        "starting particle tracking",
+        frames=len(detections_by_frame),
+        max_match_distance_px=tracking_config.max_match_distance_px,
+        velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame,
+        velocity_prior_x_px_per_frame=tracking_config.velocity_prior_x_px_per_frame,
+        assignment_method=tracking_config.assignment_method,
+        area_cost_weight_px=tracking_config.area_cost_weight_px,
+        signal_cost_weight_px=tracking_config.signal_cost_weight_px,
+        lateral_cost_weight=tracking_config.lateral_cost_weight,
+        max_area_ratio=tracking_config.max_area_ratio,
+    )
     tracks = track_particle_detections(detections_by_frame, config=tracking_config, frame_indices=[float(i) for i in range(len(paths))])
     rt.emit("track", "finished particle tracking", tracks=len(tracks))
     track_rows = track_detection_rows(tracks, paths)
@@ -1216,6 +1345,11 @@ def main() -> None:
         "detection_min_bbox_height_px": detection_min_bbox_height_px,
         "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
         "detection_min_bbox_extent": detection_min_bbox_extent,
+        "tracking_assignment_method": tracking_config.assignment_method,
+        "tracking_area_cost_weight_px": tracking_config.area_cost_weight_px,
+        "tracking_signal_cost_weight_px": tracking_config.signal_cost_weight_px,
+        "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
+        "tracking_max_area_ratio": tracking_config.max_area_ratio,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
@@ -1223,6 +1357,10 @@ def main() -> None:
         "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
+        "map_aggregation": map_aggregation,
+        "map_robust_iterations": map_robust_iterations,
+        "map_robust_huber_delta": map_robust_huber_delta,
+        "map_robust_min_scale": map_robust_min_scale,
         "phase_refinement_iterations": phase_refinement_iterations,
         "phase_refinement_min_score": phase_refinement_min_score,
         "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,
@@ -1241,6 +1379,7 @@ def main() -> None:
         "recurrent_artifact_min_revolutions": recurrent_artifact_config.min_revolutions,
         "recurrent_artifact_margin_px": recurrent_artifact_config.margin_px,
         "recurrent_artifact_max_overlap_fraction": recurrent_artifact_config.max_overlap_fraction,
+        "recurrent_artifact_min_recurrence_probability": recurrent_artifact_config.min_recurrence_probability,
         "recurrent_artifact_mode": recurrent_artifact_config.mode,
         "recurrent_artifact_soft_penalty_weight": recurrent_artifact_config.soft_penalty_weight,
         "recurrent_artifact_filter_used": recurrent_artifact_enabled,

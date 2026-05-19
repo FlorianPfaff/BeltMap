@@ -12,7 +12,8 @@ from numpy.typing import NDArray
 from .phase import BeltMotionModel
 from .tracking import ParticleDetection
 
-RECURRENT_ARTIFACT_MODES = {"hard", "soft"}
+RECURRENT_ARTIFACT_MODES = {"hard", "probabilistic", "soft"}
+RECURRENT_ARTIFACT_COUNT_DTYPE = np.uint32
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class RecurrentArtifactConfig:
     max_overlap_fraction: float = 0.3
     mode: str = "hard"
     soft_penalty_weight: float = 1.0
+    min_recurrence_probability: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ class RecurrentArtifactMap:
 
     mask: NDArray[np.bool_]
     counts: NDArray[np.unsignedinteger]
+    exposure_counts: NDArray[np.unsignedinteger]
+    probability: NDArray[np.floating]
     revolution_count: int
     candidate_detections: int
     artifact_pixels: int
@@ -43,6 +47,7 @@ class RecurrentArtifactDetectionScore:
 
     detection: ParticleDetection
     overlap_fraction: float
+    artifact_probability: float
     required_peak_signal: float | None
     rejected: bool
 
@@ -72,8 +77,9 @@ def build_recurrent_artifact_map(
     *,
     map_shape: tuple[int, int],
     config: RecurrentArtifactConfig | None = None,
+    frame_shape: tuple[int, int] | None = None,
 ) -> RecurrentArtifactMap:
-    """Build a belt-coordinate mask from detections recurring across revolutions."""
+    """Build a belt-coordinate prior from detections recurring across revolutions."""
 
     cfg = config or RecurrentArtifactConfig()
     _validate_config(cfg)
@@ -82,40 +88,129 @@ def build_recurrent_artifact_map(
     if len(revolution_by_frame) != len(detections_by_frame):
         raise ValueError("revolution_by_frame must match detections_by_frame length")
     map_height, map_width = _validate_map_shape(map_shape)
+    frame_height = _validate_frame_shape(frame_shape, map_width)
 
-    counts = np.zeros((map_height, map_width), dtype=np.uint16)
+    counts = np.zeros((map_height, map_width), dtype=RECURRENT_ARTIFACT_COUNT_DTYPE)
+    exposure_counts = np.zeros(
+        (map_height, map_width), dtype=RECURRENT_ARTIFACT_COUNT_DTYPE
+    )
     unique_revolutions = sorted({int(revolution) for revolution in revolution_by_frame})
     candidate_detections = 0
     for revolution in unique_revolutions:
-        revolution_mask = np.zeros((map_height, map_width), dtype=bool)
-        for frame_index, detections in enumerate(detections_by_frame):
-            if int(revolution_by_frame[frame_index]) != revolution:
-                continue
-            phase_px = float(phase_px_by_frame[frame_index])
-            for detection in detections:
-                _mark_detection_bbox(
-                    revolution_mask,
-                    detection,
-                    phase_px=phase_px,
-                    margin_px=cfg.margin_px,
-                )
-                candidate_detections += 1
+        revolution_mask, revolution_candidates = _build_revolution_detection_mask(
+            detections_by_frame,
+            phase_px_by_frame,
+            revolution_by_frame,
+            revolution=revolution,
+            map_shape=(map_height, map_width),
+            margin_px=cfg.margin_px,
+        )
+        revolution_exposure = _build_revolution_exposure_mask(
+            phase_px_by_frame,
+            revolution_by_frame,
+            revolution=revolution,
+            map_shape=(map_height, map_width),
+            frame_height=frame_height,
+        )
+        candidate_detections += revolution_candidates
         counts += revolution_mask.astype(counts.dtype)
+        exposure_counts += revolution_exposure.astype(exposure_counts.dtype)
 
-    mask = counts >= cfg.min_revolutions
+    probability = _recurrence_probability(counts, exposure_counts)
+    mask = (counts >= cfg.min_revolutions) & (
+        probability >= cfg.min_recurrence_probability
+    )
     return RecurrentArtifactMap(
         mask=mask,
         counts=counts,
+        exposure_counts=exposure_counts,
+        probability=probability,
         revolution_count=len(unique_revolutions),
         candidate_detections=candidate_detections,
         artifact_pixels=int(np.count_nonzero(mask)),
     )
 
 
+def score_recurrent_artifact_detections_excluding_current_revolution(
+    detections_by_frame: Sequence[Sequence[ParticleDetection]],
+    phase_px_by_frame: Sequence[float],
+    revolution_by_frame: Sequence[int],
+    recurrent_map: RecurrentArtifactMap,
+    *,
+    config: RecurrentArtifactConfig | None = None,
+    detection_threshold: float | None = None,
+) -> list[list[RecurrentArtifactDetectionScore]]:
+    """Score detections against artifact evidence from other revolutions only.
+
+    This is intended for maps built from the same detections being filtered.
+    A detection's current belt revolution is subtracted before scoring, so a
+    one-off particle cannot create the artifact evidence that rejects itself.
+
+    ``min_revolutions`` keeps its total-revolution meaning: for
+    ``min_revolutions=2`` one other revolution is sufficient, while
+    ``min_revolutions=1`` still requires one other revolution to avoid
+    self-only rejection.
+    """
+
+    cfg = config or RecurrentArtifactConfig(min_revolutions=1)
+    _validate_config(cfg)
+    if len(phase_px_by_frame) != len(detections_by_frame):
+        raise ValueError("phase_px_by_frame must match detections_by_frame length")
+    if len(revolution_by_frame) != len(detections_by_frame):
+        raise ValueError("revolution_by_frame must match detections_by_frame length")
+
+    counts = np.asarray(recurrent_map.counts, dtype=np.int64)
+    map_height, map_width = _validate_map_shape(counts.shape)
+    if tuple(recurrent_map.mask.shape) != (map_height, map_width):
+        raise ValueError("recurrent_map mask and counts shapes must match")
+
+    unique_revolutions = sorted({int(revolution) for revolution in revolution_by_frame})
+    other_revolutions_required = max(1, cfg.min_revolutions - 1)
+    artifact_maps_by_revolution: dict[int, NDArray[np.bool_]] = {}
+    for revolution in unique_revolutions:
+        revolution_mask, _ = _build_revolution_detection_mask(
+            detections_by_frame,
+            phase_px_by_frame,
+            revolution_by_frame,
+            revolution=revolution,
+            map_shape=(map_height, map_width),
+            margin_px=cfg.margin_px,
+        )
+        other_counts = counts - revolution_mask.astype(counts.dtype)
+        other_probability = _recurrence_probability(
+            other_counts.astype(RECURRENT_ARTIFACT_COUNT_DTYPE, copy=False),
+            recurrent_map.exposure_counts,
+        )
+        other_mask = (other_counts >= other_revolutions_required) & (
+            other_probability >= cfg.min_recurrence_probability
+        )
+        if cfg.mode.strip().lower() == "probabilistic":
+            artifact_maps_by_revolution[revolution] = np.where(
+                other_mask,
+                other_probability,
+                0.0,
+            )
+        else:
+            artifact_maps_by_revolution[revolution] = other_mask
+
+    scored: list[list[RecurrentArtifactDetectionScore]] = []
+    for frame_index, detections in enumerate(detections_by_frame):
+        revolution = int(revolution_by_frame[frame_index])
+        frame_scores = score_recurrent_artifact_detections(
+            [detections],
+            [float(phase_px_by_frame[frame_index])],
+            artifact_maps_by_revolution[revolution],
+            config=cfg,
+            detection_threshold=detection_threshold,
+        )[0]
+        scored.append(frame_scores)
+    return scored
+
+
 def filter_recurrent_artifact_detections(
     detections_by_frame: Sequence[Sequence[ParticleDetection]],
     phase_px_by_frame: Sequence[float],
-    artifact_map: NDArray[np.bool_],
+    artifact_map: RecurrentArtifactMap | NDArray[np.bool_] | NDArray[np.floating],
     *,
     config: RecurrentArtifactConfig | None = None,
     detection_threshold: float | None = None,
@@ -145,7 +240,7 @@ def filter_recurrent_artifact_detections(
 def score_recurrent_artifact_detections(
     detections_by_frame: Sequence[Sequence[ParticleDetection]],
     phase_px_by_frame: Sequence[float],
-    artifact_map: NDArray[np.bool_],
+    artifact_map: RecurrentArtifactMap | NDArray[np.bool_] | NDArray[np.floating],
     *,
     config: RecurrentArtifactConfig | None = None,
     detection_threshold: float | None = None,
@@ -155,15 +250,18 @@ def score_recurrent_artifact_detections(
     cfg = config or RecurrentArtifactConfig(min_revolutions=1)
     _validate_filter_config(cfg)
     mode = cfg.mode.strip().lower()
-    if mode == "soft" and detection_threshold is None:
-        raise ValueError("detection_threshold is required for soft recurrent filtering")
+    if mode in {"probabilistic", "soft"} and detection_threshold is None:
+        raise ValueError(
+            "detection_threshold is required for soft/probabilistic recurrent filtering"
+        )
     if detection_threshold is not None and not np.isfinite(detection_threshold):
         raise ValueError("detection_threshold must be finite")
     if len(phase_px_by_frame) != len(detections_by_frame):
         raise ValueError("phase_px_by_frame must match detections_by_frame length")
-    artifact = np.asarray(artifact_map, dtype=bool)
-    if artifact.ndim != 2 or artifact.size == 0:
-        raise ValueError("artifact_map must be a non-empty 2-D array")
+    artifact = _artifact_prior_array(
+        artifact_map,
+        probabilistic=mode == "probabilistic",
+    )
 
     scored: list[list[RecurrentArtifactDetectionScore]] = []
     for frame_index, detections in enumerate(detections_by_frame):
@@ -175,24 +273,33 @@ def score_recurrent_artifact_detections(
                 phase_px=phase_px,
                 artifact_map=artifact,
             )
+            artifact_probability = detection_artifact_probability(
+                detection,
+                phase_px=phase_px,
+                artifact_map=artifact,
+            )
             required_peak = _required_peak_signal(
                 overlap=overlap,
+                artifact_probability=artifact_probability,
                 config=cfg,
                 detection_threshold=detection_threshold,
             )
             scored_detection = replace(
                 detection,
                 recurrent_artifact_overlap_fraction=overlap,
+                recurrent_artifact_probability=artifact_probability,
                 recurrent_artifact_required_peak_signal=required_peak,
             )
             frame_scores.append(
                 RecurrentArtifactDetectionScore(
                     detection=scored_detection,
                     overlap_fraction=overlap,
+                    artifact_probability=artifact_probability,
                     required_peak_signal=required_peak,
                     rejected=_reject_detection(
                         scored_detection,
                         overlap=overlap,
+                        artifact_probability=artifact_probability,
                         config=cfg,
                         detection_threshold=detection_threshold,
                     ),
@@ -206,36 +313,41 @@ def detection_artifact_overlap_fraction(
     detection: ParticleDetection,
     *,
     phase_px: float,
-    artifact_map: NDArray[np.bool_],
+    artifact_map: NDArray[np.bool_] | NDArray[np.floating],
 ) -> float:
-    """Approximate artifact overlap using the detection bounding box."""
+    """Approximate artifact-map support overlap using the detection bounding box."""
 
-    artifact = np.asarray(artifact_map, dtype=bool)
-    map_height, map_width = _validate_map_shape(artifact.shape)
-    left = max(0, int(detection.bbox_left))
-    right = min(map_width, int(detection.bbox_right))
-    if right <= left or detection.bbox_bottom <= detection.bbox_top:
+    patch = _artifact_patch(detection, phase_px=phase_px, artifact_map=artifact_map)
+    if patch.size == 0:
         return 0.0
-    rows = _belt_rows_for_image_rows(
-        range(int(detection.bbox_top), int(detection.bbox_bottom)),
-        phase_px=phase_px,
-        map_height=map_height,
-    )
-    if rows.size == 0:
+    return float(np.count_nonzero(patch > 0) / patch.size)
+
+
+def detection_artifact_probability(
+    detection: ParticleDetection,
+    *,
+    phase_px: float,
+    artifact_map: NDArray[np.bool_] | NDArray[np.floating],
+) -> float:
+    """Return the mean recurrent-artifact prior over a detection bounding box."""
+
+    patch = _artifact_patch(detection, phase_px=phase_px, artifact_map=artifact_map)
+    if patch.size == 0:
         return 0.0
-    patch = artifact[rows, left:right]
-    return float(np.count_nonzero(patch) / patch.size)
+    return float(np.mean(patch.astype(np.float64, copy=False)))
 
 
 def _reject_detection(
     detection: ParticleDetection,
     *,
     overlap: float,
+    artifact_probability: float,
     config: RecurrentArtifactConfig,
     detection_threshold: float | None,
 ) -> bool:
     mode = config.mode.strip().lower()
-    if overlap <= config.max_overlap_fraction:
+    decision_value = artifact_probability if mode == "probabilistic" else overlap
+    if decision_value <= config.max_overlap_fraction:
         return False
     if mode == "hard":
         return True
@@ -245,6 +357,7 @@ def _reject_detection(
         return True
     required_peak = _required_peak_signal(
         overlap=overlap,
+        artifact_probability=artifact_probability,
         config=config,
         detection_threshold=detection_threshold,
     )
@@ -255,13 +368,43 @@ def _reject_detection(
 def _required_peak_signal(
     *,
     overlap: float,
+    artifact_probability: float,
     config: RecurrentArtifactConfig,
     detection_threshold: float | None,
 ) -> float | None:
-    if config.mode.strip().lower() != "soft":
+    mode = config.mode.strip().lower()
+    if mode == "hard":
         return None
     assert detection_threshold is not None
-    return detection_threshold * (1.0 + config.soft_penalty_weight * overlap)
+    penalty = artifact_probability if mode == "probabilistic" else overlap
+    return detection_threshold * (1.0 + config.soft_penalty_weight * penalty)
+
+
+def _build_revolution_detection_mask(
+    detections_by_frame: Sequence[Sequence[ParticleDetection]],
+    phase_px_by_frame: Sequence[float],
+    revolution_by_frame: Sequence[int],
+    *,
+    revolution: int,
+    map_shape: tuple[int, int],
+    margin_px: int,
+) -> tuple[NDArray[np.bool_], int]:
+    map_height, map_width = _validate_map_shape(map_shape)
+    revolution_mask = np.zeros((map_height, map_width), dtype=bool)
+    candidate_detections = 0
+    for frame_index, detections in enumerate(detections_by_frame):
+        if int(revolution_by_frame[frame_index]) != revolution:
+            continue
+        phase_px = float(phase_px_by_frame[frame_index])
+        for detection in detections:
+            _mark_detection_bbox(
+                revolution_mask,
+                detection,
+                phase_px=phase_px,
+                margin_px=margin_px,
+            )
+            candidate_detections += 1
+    return revolution_mask, candidate_detections
 
 
 def _mark_detection_bbox(
@@ -288,6 +431,46 @@ def _mark_detection_bbox(
         mask[rows, left:right] = True
 
 
+def _build_revolution_exposure_mask(
+    phase_px_by_frame: Sequence[float],
+    revolution_by_frame: Sequence[int],
+    *,
+    revolution: int,
+    map_shape: tuple[int, int],
+    frame_height: int | None,
+) -> NDArray[np.bool_]:
+    map_height, map_width = _validate_map_shape(map_shape)
+    exposure = np.zeros((map_height, map_width), dtype=bool)
+    if frame_height is None:
+        exposure[:, :] = True
+        return exposure
+    for frame_index, frame_revolution in enumerate(revolution_by_frame):
+        if int(frame_revolution) != revolution:
+            continue
+        _mark_frame_exposure(
+            exposure,
+            phase_px=float(phase_px_by_frame[frame_index]),
+            frame_height=frame_height,
+        )
+    return exposure
+
+
+def _mark_frame_exposure(
+    mask: NDArray[np.bool_],
+    *,
+    phase_px: float,
+    frame_height: int,
+) -> None:
+    map_height, _map_width = _validate_map_shape(mask.shape)
+    rows = _belt_rows_for_image_rows(
+        range(frame_height),
+        phase_px=phase_px,
+        map_height=map_height,
+    )
+    if rows.size:
+        mask[rows, :] = True
+
+
 def _belt_rows_for_image_rows(
     image_rows: range,
     *,
@@ -301,6 +484,66 @@ def _belt_rows_for_image_rows(
     return np.unique(belt_rows)
 
 
+def _artifact_patch(
+    detection: ParticleDetection,
+    *,
+    phase_px: float,
+    artifact_map: NDArray[np.bool_] | NDArray[np.floating],
+) -> NDArray[np.bool_] | NDArray[np.floating]:
+    artifact = np.asarray(artifact_map)
+    map_height, map_width = _validate_map_shape(artifact.shape)
+    left = max(0, int(detection.bbox_left))
+    right = min(map_width, int(detection.bbox_right))
+    if right <= left or detection.bbox_bottom <= detection.bbox_top:
+        return artifact[:0, :0]
+    rows = _belt_rows_for_image_rows(
+        range(int(detection.bbox_top), int(detection.bbox_bottom)),
+        phase_px=phase_px,
+        map_height=map_height,
+    )
+    if rows.size == 0:
+        return artifact[:0, :0]
+    return artifact[rows, left:right]
+
+
+def _artifact_prior_array(
+    artifact_map: RecurrentArtifactMap | NDArray[np.bool_] | NDArray[np.floating],
+    *,
+    probabilistic: bool,
+) -> NDArray[np.bool_] | NDArray[np.floating]:
+    if isinstance(artifact_map, RecurrentArtifactMap):
+        if probabilistic:
+            return np.where(artifact_map.mask, artifact_map.probability, 0.0).astype(
+                np.float32,
+                copy=False,
+            )
+        return np.asarray(artifact_map.mask, dtype=bool)
+
+    artifact = np.asarray(artifact_map)
+    if artifact.ndim != 2 or artifact.size == 0:
+        raise ValueError("artifact_map must be a non-empty 2-D array")
+    if artifact.dtype == np.bool_ or np.issubdtype(artifact.dtype, np.bool_):
+        return np.asarray(artifact, dtype=bool)
+    if not np.issubdtype(artifact.dtype, np.number):
+        raise ValueError("artifact_map must be boolean or numeric")
+    prior = np.asarray(artifact, dtype=np.float32)
+    if not np.all(np.isfinite(prior)):
+        raise ValueError("numeric artifact_map must be finite")
+    if np.any((prior < 0.0) | (prior > 1.0)):
+        raise ValueError("numeric artifact_map probabilities must be in [0, 1]")
+    return prior
+
+
+def _recurrence_probability(
+    counts: NDArray[np.unsignedinteger],
+    exposure_counts: NDArray[np.unsignedinteger],
+) -> NDArray[np.floating]:
+    probability = np.zeros(counts.shape, dtype=np.float32)
+    exposed = exposure_counts > 0
+    probability[exposed] = counts[exposed] / exposure_counts[exposed]
+    return probability
+
+
 def _validate_config(config: RecurrentArtifactConfig) -> None:
     if config.min_revolutions < 1:
         raise ValueError("min_revolutions must be at least 1")
@@ -312,6 +555,8 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         raise ValueError("margin_px must be non-negative")
     if not 0 <= config.max_overlap_fraction <= 1:
         raise ValueError("max_overlap_fraction must be in [0, 1]")
+    if not 0 <= config.min_recurrence_probability <= 1:
+        raise ValueError("min_recurrence_probability must be in [0, 1]")
     if config.mode.strip().lower() not in RECURRENT_ARTIFACT_MODES:
         choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
         raise ValueError(f"mode must be one of {choices}")
@@ -326,3 +571,22 @@ def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
     if height <= 0 or width <= 0:
         raise ValueError("map shape must be non-empty")
     return height, width
+
+
+def _validate_frame_shape(
+    shape: tuple[int, int] | None,
+    map_width: int,
+) -> int | None:
+    if shape is None:
+        return None
+    if len(shape) != 2:
+        raise ValueError("frame_shape must be 2-D")
+    frame_height, frame_width = (int(shape[0]), int(shape[1]))
+    if frame_height <= 0 or frame_width <= 0:
+        raise ValueError("frame_shape must be non-empty")
+    if frame_width != map_width:
+        raise ValueError(
+            "frame_shape width must match recurrent artifact map width: "
+            f"{frame_width} != {map_width}"
+        )
+    return frame_height

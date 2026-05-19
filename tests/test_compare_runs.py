@@ -140,6 +140,48 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     assert rows[0]["detection_threshold"] == "4.0"
 
 
+def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    truth_path = tmp_path / "labels.csv"
+    write_csv(
+        truth_path,
+        [
+            {
+                "frame_index": 0,
+                "bbox_top": 1,
+                "bbox_left": 2,
+                "bbox_bottom": 4,
+                "bbox_right": 5,
+            },
+            {"frame_index": 2, "bbox_top": "", "bbox_left": "", "bbox_bottom": "", "bbox_right": ""},
+        ],
+    )
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+        frames=[0, 2],
+        truth_path=truth_path,
+        truth_iou_threshold=0.25,
+    )
+
+    report = artifacts.report.read_text(encoding="utf-8")
+    assert "## Labeled real-data target" in report
+    assert "labeled F1" in report
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["labeled_detection_available"] == "True"
+    assert rows[0]["labeled_scored_frames"] == "2"
+    assert rows[0]["labeled_truth_boxes"] == "1"
+    assert rows[0]["labeled_predicted_boxes"] == "1"
+    assert rows[0]["labeled_true_positives"] == "1"
+    assert rows[0]["labeled_false_positives"] == "0"
+    assert rows[0]["labeled_false_negatives"] == "0"
+    assert rows[0]["labeled_f1"] == "1.0"
+
+
 def test_compare_main_prints_artifact_paths(tmp_path, capsys):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"

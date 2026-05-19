@@ -13,19 +13,19 @@ from beltmap import (
     render_belt_view,
 )
 from beltmap import _driver_runtime as rt
+from beltmap._driver_map import build_belt_map
+from beltmap._driver_motion import (
+    validate_auto_velocity_estimate,
+    validate_auto_velocity_region,
+)
 from beltmap.driver import (
     apply_static_noise_floor,
     learn_static_residual_noise_map,
     load_phase_estimates,
     load_recurrent_artifact_map,
-    validate_reused_phase_estimates,
-)
-from scripts.apply_beltmap_to_images import (
-    DATA,
-    build_belt_map,
     phase_estimate_row,
-    validate_auto_velocity_estimate,
-    validate_auto_velocity_region,
+    subtract_static_background,
+    validate_reused_phase_estimates,
 )
 
 
@@ -84,7 +84,7 @@ def test_phase_estimate_row_reports_circular_coordinates():
 
     row = phase_estimate_row(
         3,
-        DATA / "example.bmp",
+        rt.DATA / "example.bmp",
         residual,
         period_px=100.0,
     )
@@ -179,13 +179,68 @@ def test_static_noise_floor_renormalizes_residual_without_changing_raw_values():
     )
 
     assert adjusted.raw is residual.raw
-    assert adjusted.mask is residual.mask
+    np.testing.assert_array_equal(adjusted.mask, residual.mask)
     np.testing.assert_allclose(adjusted.local_noise, [[4.0, 2.0], [5.0, 2.0]])
     np.testing.assert_allclose(
         adjusted.normalized,
         [[0.5, 4.0], [0.6, np.nan]],
         equal_nan=True,
     )
+
+
+def test_static_noise_floor_marks_pixels_without_valid_normalization_invalid():
+    residual = ResidualImage(
+        raw=np.array([[4.0, 6.0]]),
+        local_noise=np.array([[np.nan, 2.0]]),
+        normalized=np.array([[np.nan, 3.0]]),
+        mask=np.array([[True, True]]),
+        expected_background=np.zeros((1, 2)),
+    )
+
+    adjusted = apply_static_noise_floor(
+        residual,
+        np.array([[np.nan, 1.0]]),
+    )
+
+    np.testing.assert_array_equal(adjusted.mask, [[False, True]])
+    assert np.isnan(adjusted.normalized[0, 0])
+    assert adjusted.normalized[0, 1] == pytest.approx(3.0)
+
+
+def test_static_background_correction_marks_invalid_raw_pixels_invalid():
+    residual = ResidualImage(
+        raw=np.array(
+            [
+                [2.0, np.nan],
+                [3.0, 4.0],
+            ]
+        ),
+        local_noise=np.ones((2, 2)),
+        normalized=np.array(
+            [
+                [2.0, np.nan],
+                [3.0, 4.0],
+            ]
+        ),
+        mask=np.ones((2, 2), dtype=bool),
+        expected_background=np.zeros((2, 2)),
+    )
+
+    adjusted = subtract_static_background(
+        residual,
+        np.zeros((2, 2)),
+        residual_config=ResidualConfig(noise_radius_px=0),
+    )
+
+    np.testing.assert_array_equal(
+        adjusted.mask,
+        [
+            [True, False],
+            [True, True],
+        ],
+    )
+    assert np.isnan(adjusted.raw[0, 1])
+    assert np.isnan(adjusted.normalized[0, 1])
 
 
 def test_learn_static_residual_noise_map_estimates_per_pixel_mad(tmp_path, monkeypatch):

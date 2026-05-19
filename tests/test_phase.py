@@ -2,9 +2,12 @@ import numpy as np
 
 from beltmap import (
     BeltMotionModel,
+    PhaseEstimate,
     PhaseRegistrationConfig,
+    PhaseTrajectorySmoothingConfig,
     estimate_phase,
     render_belt_view,
+    smooth_phase_estimates,
 )
 from beltmap.phase import _box_blur, _prepare_for_registration, _uniform_filter_axis
 
@@ -157,3 +160,74 @@ def test_registration_refines_phase_with_particle_outliers():
     assert circular_error <= 0.25
     assert estimate.method == "registration"
     assert estimate.correction_px < 0
+
+
+def test_smooth_phase_estimates_rejects_registration_outlier():
+    estimates = []
+    for frame_index in range(9):
+        correction = 0.2 * frame_index
+        if frame_index == 4:
+            correction = 7.5
+        estimates.append(
+            PhaseEstimate(
+                phase_px=correction,
+                frame_index=float(frame_index),
+                predicted_phase_px=0.0,
+                correction_px=correction,
+                score=1.0,
+                method="registration",
+            )
+        )
+
+    smoothed = smooth_phase_estimates(
+        estimates,
+        config=PhaseTrajectorySmoothingConfig(
+            window_radius_frames=3,
+            min_support=3,
+            robust_sigma=2.0,
+            max_abs_correction_px=10.0,
+        ),
+    )
+
+    np.testing.assert_allclose(
+        [estimate.correction_px for estimate in smoothed],
+        [0.2 * frame_index for frame_index in range(9)],
+        atol=1e-9,
+    )
+    assert smoothed[4].method == "registration_smoothed"
+
+
+def test_smooth_phase_estimates_uses_cyclic_corrections():
+    estimates = [
+        PhaseEstimate(
+            phase_px=98.0,
+            frame_index=0.0,
+            predicted_phase_px=0.0,
+            correction_px=98.0,
+            score=1.0,
+            method="registration",
+        ),
+        PhaseEstimate(
+            phase_px=98.5,
+            frame_index=1.0,
+            predicted_phase_px=0.5,
+            correction_px=98.0,
+            score=1.0,
+            method="registration",
+        ),
+    ]
+
+    smoothed = smooth_phase_estimates(
+        estimates,
+        period_px=100.0,
+        config=PhaseTrajectorySmoothingConfig(window_radius_frames=1, min_support=1),
+    )
+
+    np.testing.assert_allclose(
+        [estimate.correction_px for estimate in smoothed],
+        [-2.0, -2.0],
+    )
+    np.testing.assert_allclose(
+        [estimate.phase_px for estimate in smoothed],
+        [98.0, 98.5],
+    )

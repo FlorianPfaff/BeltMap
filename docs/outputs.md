@@ -627,15 +627,25 @@ beltmap-compare \
   --run T4.0=outputs/T4p0 \
   --run T3.5=outputs/T3p5 \
   --frames 0,248,496 \
+  --truth-path labels/brick_validation_boxes.csv \
   --report-dir outputs/threshold_comparison
 ```
+
+`--truth-path` is optional. When supplied, it may point to a CSV file with
+`frame_index`, `bbox_top`, `bbox_left`, `bbox_bottom`, and `bbox_right` columns,
+or to a JSON file containing a `particles`, `annotations`, `labels`, or
+`detections` list with equivalent `top`, `left`, `bottom`, and `right` fields.
+Coordinates are crop-local and use the same half-open box convention as
+`detections.csv`. A sparse validation set can include labeled empty frames with
+CSV rows that contain only `frame_index`, or with a JSON `scored_frames` list.
+Predictions outside the scored frame set are ignored by the labeled metrics.
 
 Files:
 
 | File | Meaning |
 |---|---|
-| `comparison_report.md` | Markdown summary table, visual contact sheet, and interpretation checklist. |
-| `summary.csv` | Machine-readable summary metrics for each compared run. |
+| `comparison_report.md` | Markdown summary table, optional labeled detection target, visual contact sheet, and interpretation checklist. |
+| `summary.csv` | Machine-readable proxy metrics and, when `--truth-path` is supplied, labeled detection precision/recall/F1 for each compared run. |
 | `detections_per_frame_comparison.png` | Detection-count time series for all runs. |
 | `velocity_ratio_histogram_comparison.png` | Overlaid velocity-ratio histograms. |
 | `detection_contact_sheet.png` | Side-by-side residual preview images with detection boxes. |

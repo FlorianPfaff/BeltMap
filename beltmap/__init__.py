@@ -5,9 +5,11 @@ from .phase import (
     BeltMotionModel,
     PhaseEstimate,
     PhaseRegistrationConfig,
+    PhaseTrajectorySmoothingConfig,
     estimate_phase,
     refine_phase_by_registration,
     render_belt_view,
+    smooth_phase_estimates,
 )
 from .rendering import (
     BeltRegion,
@@ -29,6 +31,7 @@ from .recurrent_artifacts import (
     build_recurrent_artifact_map,
     filter_recurrent_artifact_detections,
     score_recurrent_artifact_detections,
+    score_recurrent_artifact_detections_excluding_current_revolution,
 )
 from .tracking import (
     ParticleComponentConfig,
@@ -52,6 +55,7 @@ __all__ = [
     "CleanBeltRender",
     "PhaseEstimate",
     "PhaseRegistrationConfig",
+    "PhaseTrajectorySmoothingConfig",
     "ParticleComponentConfig",
     "ParticleDetection",
     "ParticleTrack",
@@ -78,8 +82,10 @@ __all__ = [
     "refine_phase_by_registration",
     "render_clean_belt_residual",
     "render_belt_view",
+    "smooth_phase_estimates",
     "render_expected_clean_belt",
     "score_particle_velocities",
     "score_recurrent_artifact_detections",
+    "score_recurrent_artifact_detections_excluding_current_revolution",
     "track_particle_detections",
 ]

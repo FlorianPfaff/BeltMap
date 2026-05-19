@@ -99,6 +99,11 @@ underscores.
 | `detection.min_bbox_height_px` | `DETECTION_MIN_BBOX_HEIGHT_PX` | `--detection-min-bbox-height-px` | `0` | px | Optional minimum component bounding-box height. `0` disables this gate. |
 | `detection.max_bbox_aspect_ratio` | `DETECTION_MAX_BBOX_ASPECT_RATIO` | `--detection-max-bbox-aspect-ratio` | `0` | ratio | Optional maximum bounding-box aspect ratio `max(height/width, width/height)`. `0` disables this gate. |
 | `detection.min_bbox_extent` | `DETECTION_MIN_BBOX_EXTENT` | `--detection-min-bbox-extent` | `0` | fraction | Optional minimum component extent `area / (bbox_width * bbox_height)`. `0` disables this gate. |
+| `residual.noise_radius_px` | `RESIDUAL_NOISE_RADIUS_PX` | `--residual-noise-radius-px` | `15` | px | Local box radius used to estimate the residual-noise scale. |
+| `residual.clip_sigma` | `RESIDUAL_CLIP_SIGMA` | `--residual-clip-sigma` | `5.0` | sigma | Symmetric residual clipping level before local variance estimation. `0` disables clipping. |
+| `residual.min_noise` | `RESIDUAL_MIN_NOISE` | `--residual-min-noise` | `1e-6` | gray | Minimum local residual-noise scale. Must be positive. |
+| `residual.noise_exclusion_sigma` | `RESIDUAL_NOISE_EXCLUSION_SIGMA` | `--residual-noise-exclusion-sigma` | `4.0` | sigma | Positive-residual threshold for excluding particle-like pixels from local-noise estimation. `0` disables this exclusion. |
+| `residual.noise_exclusion_radius_px` | `RESIDUAL_NOISE_EXCLUSION_RADIUS_PX` | `--residual-noise-exclusion-radius-px` | `2` | px | Dilation radius around particle-like pixels excluded from local-noise windows. |
 | `tracking.min_track_length` | `MIN_TRACK_LENGTH` | `--min-track-length` | `2` | detections | Minimum number of detections required before a particle track contributes a velocity row. Must be at least 1 at driver parsing and at least 2 for velocity estimation. |
 | `tracking.max_match_distance_px` | `MAX_MATCH_DISTANCE_PX` | `--max-match-distance-px` | `max(5, 1.5 * abs(belt_velocity))` | px | Maximum frame-to-frame nearest-neighbor association distance for tracking. Leave unset to derive it from the belt speed. |
 | `track_filter.min_length` | `TRACK_FILTER_MIN_LENGTH` | `--track-filter-min-length` | `max(5, tracking.min_track_length)` | detections | Minimum detections per accepted filtered velocity row. Raw `velocities.csv` is not modified. |
@@ -200,6 +205,27 @@ When `reuse.phase_estimates_path` is also set, the driver uses those per-frame
 phases directly. Otherwise it recomputes per-frame phases by registering each
 selected frame against the reused map, then proceeds with residual rendering,
 detection, tracking, and velocity estimation.
+
+## Residual normalization
+
+By default, BeltMap now excludes strong positive residuals from the local
+noise-scale window before computing the normalized residual. This prevents bright
+particles from inflating their own local denominator and becoming harder to
+detect:
+
+```toml
+[residual]
+noise_radius_px = 15
+clip_sigma = 5.0
+noise_exclusion_sigma = 4.0
+noise_exclusion_radius_px = 2
+```
+
+Set `residual.noise_exclusion_sigma = 0` to recover the previous behavior. The
+exclusion mask is used only to estimate `local_noise`; the particle pixels remain
+valid output pixels and are still normalized by the surrounding local noise.
+Static noise maps, when enabled, are still applied afterwards as a per-pixel
+floor through `max(local_noise, static_noise)`.
 
 ## Static residual-noise map
 

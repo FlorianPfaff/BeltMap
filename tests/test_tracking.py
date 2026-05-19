@@ -170,6 +170,101 @@ def test_track_particle_detections_uses_velocity_prior():
     assert velocity.belt_minus_particle_velocity_y_px_per_frame == 2.0
 
 
+def test_track_particle_detections_global_assignment_maximizes_cardinality():
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0,
+                1,
+                y=0.0,
+                x=0.0,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=0,
+                bbox_bottom=2,
+                bbox_right=2,
+            ),
+            ParticleDetection(
+                0,
+                2,
+                y=0.0,
+                x=-0.1,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=0,
+                bbox_bottom=2,
+                bbox_right=2,
+            ),
+        ],
+        [
+            ParticleDetection(
+                1,
+                1,
+                y=0.0,
+                x=1.0,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=1,
+                bbox_bottom=2,
+                bbox_right=3,
+            ),
+            ParticleDetection(
+                1,
+                2,
+                y=0.0,
+                x=2.0,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=2,
+                bbox_bottom=2,
+                bbox_right=4,
+            ),
+        ],
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(max_match_distance_px=2.05),
+    )
+
+    assert sorted(track.n_detections for track in tracks) == [2, 2]
+
+
+def test_track_particle_detections_can_use_legacy_greedy_assignment():
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0, 1, y=0.0, x=0.0, area_px=4,
+                bbox_top=0, bbox_left=0, bbox_bottom=2, bbox_right=2,
+            ),
+            ParticleDetection(
+                0, 2, y=0.0, x=-0.1, area_px=4,
+                bbox_top=0, bbox_left=0, bbox_bottom=2, bbox_right=2,
+            ),
+        ],
+        [
+            ParticleDetection(
+                1, 1, y=0.0, x=1.0, area_px=4,
+                bbox_top=0, bbox_left=1, bbox_bottom=2, bbox_right=3,
+            ),
+            ParticleDetection(
+                1, 2, y=0.0, x=2.0, area_px=4,
+                bbox_top=0, bbox_left=2, bbox_bottom=2, bbox_right=4,
+            ),
+        ],
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=2.05,
+            assignment_method="greedy",
+        ),
+    )
+
+    assert sorted(track.n_detections for track in tracks) == [1, 1, 2]
+
+
 def test_extract_particle_velocities_vs_belt_from_masks():
     masks = []
     for frame_index in range(5):

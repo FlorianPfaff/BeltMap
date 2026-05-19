@@ -170,6 +170,28 @@ This writes `comparison_report.md`, `summary.csv`, detection-count and
 velocity-ratio plots, and a side-by-side residual preview contact sheet with
 detection boxes.
 
+When a small real-data validation subset has been labeled, pass it to the same
+comparison command to rank variants by detection precision, recall, and F1 on
+the labeled frames rather than by proxy metrics alone:
+
+```bash
+beltmap-compare \
+  --run T4.0=outputs/T4p0 \
+  --run T3.5=outputs/T3p5 \
+  --truth-path labels/brick_validation_boxes.csv \
+  --truth-iou-threshold 0.25 \
+  --frames 0,248,496,744,992 \
+  --report-dir outputs/threshold_comparison
+```
+
+The label file may be a CSV with `frame_index`, `bbox_top`, `bbox_left`,
+`bbox_bottom`, and `bbox_right` columns, or a JSON object/list with equivalent
+`top`, `left`, `bottom`, and `right` fields. Coordinates are crop-local and use
+the same half-open bounding-box convention as `detections.csv`. To include
+labeled empty frames, add CSV rows containing only `frame_index`, or use a JSON
+object with `scored_frames`. Detections outside the scored frame set are ignored
+by the labeled metrics.
+
 Post-process track velocities with conservative physical gates using:
 
 ```bash

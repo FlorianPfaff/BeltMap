@@ -93,6 +93,11 @@ min_bbox_extent = 0.15
 [tracking]
 min_track_length = 2
 max_match_distance_px = 75
+assignment_method = "global"
+area_cost_weight_px = 2.5
+signal_cost_weight_px = 0.5
+lateral_cost_weight = 1.0
+max_area_ratio = 3.0
 
 [track_filter]
 min_length = 5
@@ -107,6 +112,10 @@ particle_mask_grow_threshold = 1.5
 particle_mask_dilation_px = 24
 particle_mask_margin_px = 16
 particle_mask_min_area_px = 8
+aggregation = "huber"
+robust_iterations = 2
+robust_huber_delta = 2.5
+robust_min_scale = 0.75
 
 [static_noise]
 sample_frames = 250
@@ -125,6 +134,7 @@ mask_min_area_px = 5
 min_revolutions = 3
 margin_px = 4
 max_overlap_fraction = 0.35
+min_recurrence_probability = 0.25
 mode = "soft"
 soft_penalty_weight = 1.5
 
@@ -159,6 +169,10 @@ allow_full_frame = true
         "MAP_PARTICLE_MASK_MIN_AREA_PX": "8",
         "MAP_PARTICLE_MASK_MODE": "hysteresis_abs",
         "MAP_PARTICLE_MASK_THRESHOLD": "4",
+        "MAP_AGGREGATION": "huber",
+        "MAP_ROBUST_HUBER_DELTA": "2.5",
+        "MAP_ROBUST_ITERATIONS": "2",
+        "MAP_ROBUST_MIN_SCALE": "0.75",
         "MAX_MATCH_DISTANCE_PX": "75",
         "MIN_AREA_PX": "4",
         "MIN_TRACK_LENGTH": "2",
@@ -169,6 +183,7 @@ allow_full_frame = true
         "REUSE_STATIC_NOISE_PATH": "previous/static_noise.npy",
         "RECURRENT_ARTIFACT_MARGIN_PX": "4",
         "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION": "0.35",
+        "RECURRENT_ARTIFACT_MIN_RECURRENCE_PROBABILITY": "0.25",
         "RECURRENT_ARTIFACT_MIN_REVOLUTIONS": "3",
         "RECURRENT_ARTIFACT_MODE": "soft",
         "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT": "1.5",
@@ -181,6 +196,11 @@ allow_full_frame = true
         "STATIC_NOISE_MASK_THRESHOLD": "4",
         "STATIC_NOISE_MIN_SCALE": "0.25",
         "STATIC_NOISE_SAMPLE_FRAMES": "250",
+        "TRACKING_AREA_COST_WEIGHT_PX": "2.5",
+        "TRACKING_ASSIGNMENT_METHOD": "global",
+        "TRACKING_LATERAL_COST_WEIGHT": "1",
+        "TRACKING_MAX_AREA_RATIO": "3",
+        "TRACKING_SIGNAL_COST_WEIGHT_PX": "0.5",
         "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME": "12.5",
         "TRACK_FILTER_MAX_VELOCITY_RATIO_Y": "1.05",
         "TRACK_FILTER_MIN_LENGTH": "5",
@@ -291,14 +311,24 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["particle_mask_mode"] == "positive"
     assert parsed["map"]["particle_mask_grow_threshold"] == 2.0
     assert parsed["map"]["particle_mask_dilation_px"] == 0
+    assert parsed["map"]["aggregation"] == "mean"
+    assert parsed["map"]["robust_iterations"] == 1
+    assert parsed["map"]["robust_huber_delta"] == 3.0
+    assert parsed["map"]["robust_min_scale"] == 1.0
     assert parsed["static_noise"]["sample_frames"] == 0
     assert parsed["static_noise"]["mask_margin_px"] == 8
     assert parsed["static_background"]["sample_frames"] == 0
     assert parsed["static_background"]["mask_margin_px"] == 8
     assert parsed["recurrent_artifact"]["min_revolutions"] == 0
     assert parsed["recurrent_artifact"]["max_overlap_fraction"] == 0.3
+    assert parsed["recurrent_artifact"]["min_recurrence_probability"] == 0.0
     assert parsed["recurrent_artifact"]["mode"] == "hard"
     assert parsed["recurrent_artifact"]["soft_penalty_weight"] == 1.0
+    assert parsed["tracking"]["assignment_method"] == "global"
+    assert parsed["tracking"]["area_cost_weight_px"] == 0.0
+    assert parsed["tracking"]["signal_cost_weight_px"] == 0.0
+    assert parsed["tracking"]["lateral_cost_weight"] == 0.0
+    assert parsed["tracking"]["max_area_ratio"] == 0.0
 
 
 def test_main_write_config_template_exits_without_running_driver(tmp_path, monkeypatch):
