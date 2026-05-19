@@ -16,6 +16,7 @@ from . import (
     BeltMotionModel,
     PhaseEstimate,
     ParticleComponentConfig,
+    ParticleMaskCleanupConfig,
     ParticleTrackingConfig,
     PhaseRegistrationConfig,
     ResidualConfig,
@@ -50,6 +51,9 @@ DETECTION_FIELDS = [
     "frame_index", "image", "label", "y", "x", "area_px",
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
+    "bbox_aspect_ratio", "bbox_extent", "moment_aspect_ratio", "compactness",
+    "core_area_px", "core_fraction", "local_background_signal",
+    "mean_local_contrast", "peak_local_contrast", "border_margin_px",
     "recurrent_artifact_overlap_fraction",
     "recurrent_artifact_required_peak_signal",
 ]
@@ -63,14 +67,7 @@ VELOCITY_FIELDS = [
     "belt_velocity_y_px_per_frame", "velocity_ratio_y",
     "belt_minus_particle_velocity_y_px_per_frame",
 ]
-TRACK_DETECTION_FIELDS = [
-    "track_id", "track_detection_index",
-    "frame_index", "image", "label", "y", "x", "area_px",
-    "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
-    "mean_signal", "peak_signal",
-    "recurrent_artifact_overlap_fraction",
-    "recurrent_artifact_required_peak_signal",
-]
+TRACK_DETECTION_FIELDS = ["track_id", "track_detection_index", *DETECTION_FIELDS]
 RECURRENT_ARTIFACT_DETECTION_FIELDS = [
     *DETECTION_FIELDS,
     "recurrent_artifact_rejected",
@@ -647,6 +644,25 @@ def main() -> None:
         0.0,
     )
     detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
+    detection_max_moment_aspect_ratio = optional_positive_float("DETECTION_MAX_MOMENT_ASPECT_RATIO", 0.0)
+    detection_min_compactness = optional_positive_float("DETECTION_MIN_COMPACTNESS", 0.0)
+    detection_min_border_margin_px = optional_positive_int("DETECTION_MIN_BORDER_MARGIN_PX")
+    detection_min_mean_signal = optional_positive_float("DETECTION_MIN_MEAN_SIGNAL", 0.0)
+    detection_min_peak_signal = optional_positive_float("DETECTION_MIN_PEAK_SIGNAL", 0.0)
+    detection_signal_core_threshold = optional_positive_float("DETECTION_SIGNAL_CORE_THRESHOLD", 0.0)
+    detection_min_core_area_px = optional_positive_int("DETECTION_MIN_CORE_AREA_PX")
+    detection_min_core_fraction = optional_positive_float("DETECTION_MIN_CORE_FRACTION", 0.0)
+    detection_local_contrast_margin_px = rt.env_int(
+        "DETECTION_LOCAL_CONTRAST_MARGIN_PX",
+        4,
+        minimum=0,
+    )
+    detection_min_mean_local_contrast = optional_positive_float("DETECTION_MIN_MEAN_LOCAL_CONTRAST", 0.0)
+    detection_min_peak_local_contrast = optional_positive_float("DETECTION_MIN_PEAK_LOCAL_CONTRAST", 0.0)
+    detection_mask_closing_radius_px = rt.env_int("DETECTION_MASK_CLOSING_RADIUS_PX", 0, minimum=0)
+    detection_mask_fill_holes = rt.env_bool("DETECTION_MASK_FILL_HOLES", False)
+    detection_mask_opening_radius_px = rt.env_int("DETECTION_MASK_OPENING_RADIUS_PX", 0, minimum=0)
+    detection_mask_min_area_px = rt.env_int("DETECTION_MASK_MIN_AREA_PX", 0, minimum=0)
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
@@ -718,6 +734,21 @@ def main() -> None:
         detection_min_bbox_height_px=detection_min_bbox_height_px,
         detection_max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         detection_min_bbox_extent=detection_min_bbox_extent,
+        detection_max_moment_aspect_ratio=detection_max_moment_aspect_ratio,
+        detection_min_compactness=detection_min_compactness,
+        detection_min_border_margin_px=detection_min_border_margin_px,
+        detection_min_mean_signal=detection_min_mean_signal,
+        detection_min_peak_signal=detection_min_peak_signal,
+        detection_signal_core_threshold=detection_signal_core_threshold,
+        detection_min_core_area_px=detection_min_core_area_px,
+        detection_min_core_fraction=detection_min_core_fraction,
+        detection_local_contrast_margin_px=detection_local_contrast_margin_px,
+        detection_min_mean_local_contrast=detection_min_mean_local_contrast,
+        detection_min_peak_local_contrast=detection_min_peak_local_contrast,
+        detection_mask_closing_radius_px=detection_mask_closing_radius_px,
+        detection_mask_fill_holes=detection_mask_fill_holes,
+        detection_mask_opening_radius_px=detection_mask_opening_radius_px,
+        detection_mask_min_area_px=detection_mask_min_area_px,
         min_track_length=min_track_length,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
@@ -835,6 +866,23 @@ def main() -> None:
         min_bbox_height_px=detection_min_bbox_height_px,
         max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         min_bbox_extent=detection_min_bbox_extent,
+        max_moment_aspect_ratio=detection_max_moment_aspect_ratio,
+        min_compactness=detection_min_compactness,
+        min_border_margin_px=detection_min_border_margin_px,
+        min_mean_signal=detection_min_mean_signal,
+        min_peak_signal=detection_min_peak_signal,
+        signal_core_threshold=detection_signal_core_threshold,
+        min_core_area_px=detection_min_core_area_px,
+        min_core_fraction=detection_min_core_fraction,
+        local_contrast_margin_px=detection_local_contrast_margin_px,
+        min_mean_local_contrast=detection_min_mean_local_contrast,
+        min_peak_local_contrast=detection_min_peak_local_contrast,
+    )
+    mask_cleanup_config = ParticleMaskCleanupConfig(
+        closing_radius_px=detection_mask_closing_radius_px,
+        fill_holes=detection_mask_fill_holes,
+        opening_radius_px=detection_mask_opening_radius_px,
+        min_component_area_px=detection_mask_min_area_px,
     )
     residual_config = ResidualConfig()
     reused_phase_estimates = (
@@ -1013,7 +1061,11 @@ def main() -> None:
         phase_px_by_frame.append(float(phase_row["phase_px"]))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
-        mask = detect_particles_from_residual(residual, threshold=detection_threshold)
+        mask = detect_particles_from_residual(
+            residual,
+            threshold=detection_threshold,
+            cleanup=mask_cleanup_config,
+        )
         detections = extract_particle_detections(mask, residual=residual, frame_index=float(frame_index), config=component_config)
         detections_by_frame.append(detections)
         detection_rows.extend(detection_rows_for_frame(detections, path, frame_index))
@@ -1216,6 +1268,21 @@ def main() -> None:
         "detection_min_bbox_height_px": detection_min_bbox_height_px,
         "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
         "detection_min_bbox_extent": detection_min_bbox_extent,
+        "detection_max_moment_aspect_ratio": detection_max_moment_aspect_ratio,
+        "detection_min_compactness": detection_min_compactness,
+        "detection_min_border_margin_px": detection_min_border_margin_px,
+        "detection_min_mean_signal": detection_min_mean_signal,
+        "detection_min_peak_signal": detection_min_peak_signal,
+        "detection_signal_core_threshold": detection_signal_core_threshold,
+        "detection_min_core_area_px": detection_min_core_area_px,
+        "detection_min_core_fraction": detection_min_core_fraction,
+        "detection_local_contrast_margin_px": detection_local_contrast_margin_px,
+        "detection_min_mean_local_contrast": detection_min_mean_local_contrast,
+        "detection_min_peak_local_contrast": detection_min_peak_local_contrast,
+        "detection_mask_closing_radius_px": detection_mask_closing_radius_px,
+        "detection_mask_fill_holes": detection_mask_fill_holes,
+        "detection_mask_opening_radius_px": detection_mask_opening_radius_px,
+        "detection_mask_min_area_px": detection_mask_min_area_px,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
@@ -1231,7 +1298,13 @@ def main() -> None:
         "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
         "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
         "reuse_static_noise_path": "" if reuse_static_noise_path is None else str(reuse_static_noise_path),
+        "reuse_static_background_path": "" if reuse_static_background_path is None else str(reuse_static_background_path),
         "reuse_recurrent_artifact_map_path": "" if reuse_recurrent_artifact_map_path is None else str(reuse_recurrent_artifact_map_path),
+        "static_background_sample_frames": static_background_sample_frames,
+        "static_background_mask_threshold": static_background_mask_threshold,
+        "static_background_mask_margin_px": static_background_mask_margin_px,
+        "static_background_mask_min_area_px": static_background_mask_min_area_px,
+        "static_background_map_used": static_background_map is not None,
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
         "static_noise_mask_threshold": static_noise_mask_threshold,

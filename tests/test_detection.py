@@ -1,6 +1,10 @@
 import numpy as np
 
-from beltmap import ResidualImage, detect_particles_from_residual
+from beltmap import (
+    ParticleMaskCleanupConfig,
+    ResidualImage,
+    detect_particles_from_residual,
+)
 
 
 def test_detect_particles_from_residual_thresholds_bright_pixels():
@@ -77,3 +81,43 @@ def test_detect_particles_from_residual_combines_optional_mask():
     )
 
     np.testing.assert_array_equal(particle_mask, allowed)
+
+
+def test_detect_particles_from_residual_can_close_and_fill_fragmented_masks():
+    residual = np.zeros((9, 9), dtype=float)
+    residual[2:7, 2] = 6.0
+    residual[2:7, 6] = 6.0
+    residual[2, 2:7] = 6.0
+    residual[6, 2:7] = 6.0
+    residual[3:6, 3] = 6.0
+    residual[3:6, 5] = 6.0
+
+    raw_mask = detect_particles_from_residual(residual, threshold=5.0)
+    cleaned = detect_particles_from_residual(
+        residual,
+        threshold=5.0,
+        cleanup=ParticleMaskCleanupConfig(
+            closing_radius_px=1,
+            fill_holes=True,
+        ),
+    )
+
+    assert not bool(raw_mask[4, 4])
+    assert bool(cleaned[4, 4])
+    assert np.count_nonzero(cleaned) > np.count_nonzero(raw_mask)
+
+
+def test_detect_particles_cleanup_removes_small_threshold_components():
+    residual = np.zeros((7, 7), dtype=float)
+    residual[1, 1] = 6.0
+    residual[3:5, 3:5] = 6.0
+
+    particle_mask = detect_particles_from_residual(
+        residual,
+        threshold=5.0,
+        cleanup=ParticleMaskCleanupConfig(min_component_area_px=4),
+    )
+
+    expected = np.zeros_like(residual, dtype=bool)
+    expected[3:5, 3:5] = True
+    np.testing.assert_array_equal(particle_mask, expected)

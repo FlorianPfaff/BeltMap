@@ -30,6 +30,17 @@ class ParticleComponentConfig:
     min_bbox_height_px: int | None = None
     max_bbox_aspect_ratio: float | None = None
     min_bbox_extent: float | None = None
+    max_moment_aspect_ratio: float | None = None
+    min_compactness: float | None = None
+    min_border_margin_px: int | None = None
+    min_mean_signal: float | None = None
+    min_peak_signal: float | None = None
+    signal_core_threshold: float | None = None
+    min_core_area_px: int | None = None
+    min_core_fraction: float | None = None
+    local_contrast_margin_px: int = 4
+    min_mean_local_contrast: float | None = None
+    min_peak_local_contrast: float | None = None
     connectivity: int = 8
     weighted_centroid: bool = True
 
@@ -51,6 +62,16 @@ class ParticleDetection:
     peak_signal: float | None = None
     recurrent_artifact_overlap_fraction: float | None = None
     recurrent_artifact_required_peak_signal: float | None = None
+    bbox_aspect_ratio: float | None = None
+    bbox_extent: float | None = None
+    moment_aspect_ratio: float | None = None
+    compactness: float | None = None
+    core_area_px: int | None = None
+    core_fraction: float | None = None
+    local_background_signal: float | None = None
+    mean_local_contrast: float | None = None
+    peak_local_contrast: float | None = None
+    border_margin_px: int | None = None
 
 
 @dataclass(frozen=True)
@@ -163,15 +184,37 @@ def extract_particle_detections(
         right = int(np.max(cols)) + 1
         height = bottom - top
         width = right - left
+        bbox_aspect_ratio = max(height / width, width / height)
+        bbox_extent = area / (height * width)
+        moment_aspect_ratio = _component_moment_aspect_ratio(rows, cols)
+        compactness = _component_compactness(rows, cols)
+        border_margin_px = min(top, left, mask.shape[0] - bottom, mask.shape[1] - right)
         if not _component_shape_passes(
             area=area,
             height=height,
             width=width,
+            moment_aspect_ratio=moment_aspect_ratio,
+            compactness=compactness,
+            border_margin_px=border_margin_px,
             config=cfg,
         ):
             continue
 
         values = signal[rows, cols] if signal is not None else None
+        signal_metrics = _component_signal_metrics(
+            signal=signal,
+            values=values,
+            rows=rows,
+            cols=cols,
+            top=top,
+            left=left,
+            bottom=bottom,
+            right=right,
+            area=area,
+            config=cfg,
+        )
+        if not _component_signal_passes(signal_metrics, config=cfg):
+            continue
         y, x = _component_centroid(
             rows,
             cols,
@@ -189,8 +232,18 @@ def extract_particle_detections(
                 bbox_left=left,
                 bbox_bottom=bottom,
                 bbox_right=right,
-                mean_signal=None if values is None else float(np.mean(values)),
-                peak_signal=None if values is None else float(np.max(values)),
+                mean_signal=signal_metrics["mean_signal"],
+                peak_signal=signal_metrics["peak_signal"],
+                bbox_aspect_ratio=float(bbox_aspect_ratio),
+                bbox_extent=float(bbox_extent),
+                moment_aspect_ratio=float(moment_aspect_ratio),
+                compactness=float(compactness),
+                core_area_px=signal_metrics["core_area_px"],
+                core_fraction=signal_metrics["core_fraction"],
+                local_background_signal=signal_metrics["local_background_signal"],
+                mean_local_contrast=signal_metrics["mean_local_contrast"],
+                peak_local_contrast=signal_metrics["peak_local_contrast"],
+                border_margin_px=int(border_margin_px),
             )
         )
     return detections
@@ -450,6 +503,34 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
         raise ValueError("max_bbox_aspect_ratio must be at least 1 when set")
     if config.min_bbox_extent is not None and not (0.0 <= config.min_bbox_extent <= 1.0):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
+    if (
+        config.max_moment_aspect_ratio is not None
+        and config.max_moment_aspect_ratio < 1.0
+    ):
+        raise ValueError("max_moment_aspect_ratio must be at least 1 when set")
+    if config.min_compactness is not None and not (0.0 <= config.min_compactness <= 1.0):
+        raise ValueError("min_compactness must be in [0, 1] when set")
+    if config.min_border_margin_px is not None and config.min_border_margin_px < 0:
+        raise ValueError("min_border_margin_px must be non-negative when set")
+    for name, value in (
+        ("min_mean_signal", config.min_mean_signal),
+        ("min_peak_signal", config.min_peak_signal),
+        ("signal_core_threshold", config.signal_core_threshold),
+        ("min_mean_local_contrast", config.min_mean_local_contrast),
+        ("min_peak_local_contrast", config.min_peak_local_contrast),
+    ):
+        if value is not None and not np.isfinite(value):
+            raise ValueError(f"{name} must be finite when set")
+    if config.min_core_area_px is not None and config.min_core_area_px < 1:
+        raise ValueError("min_core_area_px must be positive when set")
+    if config.min_core_fraction is not None and not (0.0 <= config.min_core_fraction <= 1.0):
+        raise ValueError("min_core_fraction must be in [0, 1] when set")
+    if (config.min_core_area_px is not None or config.min_core_fraction is not None) and config.signal_core_threshold is None:
+        raise ValueError("signal_core_threshold must be set when core gates are enabled")
+    if config.local_contrast_margin_px < 0:
+        raise ValueError("local_contrast_margin_px must be non-negative")
+    if (config.min_mean_local_contrast is not None or config.min_peak_local_contrast is not None) and config.local_contrast_margin_px < 1:
+        raise ValueError("local_contrast_margin_px must be positive when local contrast gates are enabled")
     if config.connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
 
@@ -466,6 +547,9 @@ def _component_shape_passes(
     area: int,
     height: int,
     width: int,
+    moment_aspect_ratio: float,
+    compactness: float,
+    border_margin_px: int,
     config: ParticleComponentConfig,
 ) -> bool:
     if config.min_bbox_width_px is not None and width < config.min_bbox_width_px:
@@ -481,7 +565,167 @@ def _component_shape_passes(
         extent = area / bbox_area
         if extent < config.min_bbox_extent:
             return False
+    if (
+        config.max_moment_aspect_ratio is not None
+        and moment_aspect_ratio > config.max_moment_aspect_ratio
+    ):
+        return False
+    if config.min_compactness is not None and compactness < config.min_compactness:
+        return False
+    if (
+        config.min_border_margin_px is not None
+        and border_margin_px < config.min_border_margin_px
+    ):
+        return False
     return True
+
+
+def _component_signal_metrics(
+    *,
+    signal: FloatArray | None,
+    values: FloatArray | None,
+    rows: NDArray[np.integer],
+    cols: NDArray[np.integer],
+    top: int,
+    left: int,
+    bottom: int,
+    right: int,
+    area: int,
+    config: ParticleComponentConfig,
+) -> dict[str, float | int | None]:
+    if values is None:
+        return {
+            "mean_signal": None,
+            "peak_signal": None,
+            "core_area_px": None,
+            "core_fraction": None,
+            "local_background_signal": None,
+            "mean_local_contrast": None,
+            "peak_local_contrast": None,
+        }
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size == 0:
+        mean_signal = None
+        peak_signal = None
+    else:
+        mean_signal = float(np.mean(finite_values))
+        peak_signal = float(np.max(finite_values))
+
+    core_area_px: int | None = None
+    core_fraction: float | None = None
+    if config.signal_core_threshold is not None:
+        core_area_px = int(np.count_nonzero(np.isfinite(values) & (values >= config.signal_core_threshold)))
+        core_fraction = core_area_px / area
+
+    local_background = _component_local_background(
+        signal,
+        top=top,
+        left=left,
+        bottom=bottom,
+        right=right,
+        margin_px=config.local_contrast_margin_px,
+    )
+    mean_local_contrast = None if mean_signal is None or local_background is None else mean_signal - local_background
+    peak_local_contrast = None if peak_signal is None or local_background is None else peak_signal - local_background
+    return {
+        "mean_signal": mean_signal,
+        "peak_signal": peak_signal,
+        "core_area_px": core_area_px,
+        "core_fraction": core_fraction,
+        "local_background_signal": local_background,
+        "mean_local_contrast": mean_local_contrast,
+        "peak_local_contrast": peak_local_contrast,
+    }
+
+
+def _component_signal_passes(
+    metrics: dict[str, float | int | None],
+    *,
+    config: ParticleComponentConfig,
+) -> bool:
+    for key, minimum in (
+        ("mean_signal", config.min_mean_signal),
+        ("peak_signal", config.min_peak_signal),
+        ("mean_local_contrast", config.min_mean_local_contrast),
+        ("peak_local_contrast", config.min_peak_local_contrast),
+    ):
+        value = metrics[key]
+        if minimum is not None and (value is None or float(value) < minimum):
+            return False
+    core_area = metrics["core_area_px"]
+    if config.min_core_area_px is not None and (
+        core_area is None or int(core_area) < config.min_core_area_px
+    ):
+        return False
+    core_fraction = metrics["core_fraction"]
+    if config.min_core_fraction is not None and (
+        core_fraction is None or float(core_fraction) < config.min_core_fraction
+    ):
+        return False
+    return True
+
+
+def _component_local_background(
+    signal: FloatArray | None,
+    *,
+    top: int,
+    left: int,
+    bottom: int,
+    right: int,
+    margin_px: int,
+) -> float | None:
+    if signal is None or margin_px <= 0:
+        return None
+    row_start = max(0, top - margin_px)
+    row_stop = min(signal.shape[0], bottom + margin_px)
+    col_start = max(0, left - margin_px)
+    col_stop = min(signal.shape[1], right + margin_px)
+    patch = signal[row_start:row_stop, col_start:col_stop]
+    ring = np.ones(patch.shape, dtype=bool)
+    ring[top - row_start : bottom - row_start, left - col_start : right - col_start] = False
+    values = patch[ring]
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return None
+    return float(np.median(values))
+
+
+def _component_moment_aspect_ratio(
+    rows: NDArray[np.integer],
+    cols: NDArray[np.integer],
+) -> float:
+    if rows.size < 2:
+        return 1.0
+    centered_rows = rows.astype(np.float64) - float(np.mean(rows))
+    centered_cols = cols.astype(np.float64) - float(np.mean(cols))
+    cov_yy = float(np.mean(centered_rows * centered_rows))
+    cov_xx = float(np.mean(centered_cols * centered_cols))
+    cov_yx = float(np.mean(centered_rows * centered_cols))
+    trace = cov_yy + cov_xx
+    determinant = cov_yy * cov_xx - cov_yx * cov_yx
+    discriminant = max(0.0, trace * trace - 4.0 * determinant)
+    eigen_max = 0.5 * (trace + np.sqrt(discriminant))
+    eigen_min = 0.5 * (trace - np.sqrt(discriminant))
+    if eigen_max <= 0:
+        return 1.0
+    return float(np.sqrt(eigen_max / max(eigen_min, 1e-9)))
+
+
+def _component_compactness(rows: NDArray[np.integer], cols: NDArray[np.integer]) -> float:
+    top = int(np.min(rows))
+    left = int(np.min(cols))
+    bottom = int(np.max(rows)) + 1
+    right = int(np.max(cols)) + 1
+    component = np.zeros((bottom - top + 2, right - left + 2), dtype=bool)
+    component[rows - top + 1, cols - left + 1] = True
+    center = component[1:-1, 1:-1]
+    perimeter = int(np.count_nonzero(center & ~component[:-2, 1:-1]))
+    perimeter += int(np.count_nonzero(center & ~component[2:, 1:-1]))
+    perimeter += int(np.count_nonzero(center & ~component[1:-1, :-2]))
+    perimeter += int(np.count_nonzero(center & ~component[1:-1, 2:]))
+    if perimeter <= 0:
+        return 0.0
+    return float(4.0 * np.pi * rows.size / (perimeter * perimeter))
 
 
 def _validate_track_filter_config(config: TrackFilterConfig) -> None:
@@ -533,7 +777,7 @@ def _component_centroid(
     weighted: bool,
 ) -> tuple[float, float]:
     if values is not None and weighted:
-        weights = np.clip(values, 0.0, None)
+        weights = np.where(np.isfinite(values), np.clip(values, 0.0, None), 0.0)
         weight_sum = float(np.sum(weights))
         if weight_sum > 0:
             return (

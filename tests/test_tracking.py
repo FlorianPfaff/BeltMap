@@ -85,6 +85,42 @@ def test_extract_particle_detections_applies_shape_gates():
     assert detections[0].area_px == 16
 
 
+def test_extract_particle_detections_applies_signal_core_contrast_and_shape_gates():
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[4:10, 4:10] = True
+    mask[12, 2:16] = True
+    residual = np.zeros(mask.shape, dtype=float)
+    residual[4:10, 4:10] = 4.5
+    residual[6:8, 6:8] = 8.0
+    residual[12, 2:16] = 9.0
+
+    detections = extract_particle_detections(
+        mask,
+        residual=residual,
+        config=ParticleComponentConfig(
+            min_area_px=4,
+            max_moment_aspect_ratio=4.0,
+            min_compactness=0.35,
+            signal_core_threshold=7.0,
+            min_core_area_px=4,
+            min_core_fraction=0.1,
+            local_contrast_margin_px=2,
+            min_peak_local_contrast=6.0,
+        ),
+    )
+
+    assert len(detections) == 1
+    detection = detections[0]
+    assert detection.area_px == 36
+    assert detection.core_area_px == 4
+    np.testing.assert_allclose(detection.core_fraction, 4 / 36)
+    assert detection.peak_local_contrast == 8.0
+    assert detection.bbox_aspect_ratio == 1.0
+    assert detection.moment_aspect_ratio is not None
+    assert detection.compactness is not None
+    assert detection.border_margin_px == 4
+
+
 def test_connected_components_prefers_accelerated_scipy_labeler(monkeypatch):
     mask = np.array([[True]])
     expected = [(np.array([0]), np.array([0]))]

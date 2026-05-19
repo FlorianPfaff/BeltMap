@@ -33,6 +33,21 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("detection_min_bbox_height_px", "DETECTION_MIN_BBOX_HEIGHT_PX", "int", (("detection_min_bbox_height_px",), ("detection", "min_bbox_height_px")), "Optional minimum detection bounding-box height. Use 0 to disable.", "PX"),
     ("detection_max_bbox_aspect_ratio", "DETECTION_MAX_BBOX_ASPECT_RATIO", "float", (("detection_max_bbox_aspect_ratio",), ("detection", "max_bbox_aspect_ratio")), "Optional maximum detection bounding-box aspect ratio. Use 0 to disable.", "RATIO"),
     ("detection_min_bbox_extent", "DETECTION_MIN_BBOX_EXTENT", "float", (("detection_min_bbox_extent",), ("detection", "min_bbox_extent")), "Optional minimum area/bounding-box-area extent. Use 0 to disable.", "FRACTION"),
+    ("detection_max_moment_aspect_ratio", "DETECTION_MAX_MOMENT_ASPECT_RATIO", "float", (("detection_max_moment_aspect_ratio",), ("detection", "max_moment_aspect_ratio")), "Optional maximum second-moment aspect ratio. Use 0 to disable.", "RATIO"),
+    ("detection_min_compactness", "DETECTION_MIN_COMPACTNESS", "float", (("detection_min_compactness",), ("detection", "min_compactness")), "Optional minimum 4*pi*area/perimeter^2 compactness. Use 0 to disable.", "FRACTION"),
+    ("detection_min_border_margin_px", "DETECTION_MIN_BORDER_MARGIN_PX", "int", (("detection_min_border_margin_px",), ("detection", "min_border_margin_px")), "Optional minimum distance from component bbox to crop border. Use 0 to disable.", "PX"),
+    ("detection_min_mean_signal", "DETECTION_MIN_MEAN_SIGNAL", "float", (("detection_min_mean_signal",), ("detection", "min_mean_signal")), "Optional minimum component mean normalized residual. Use 0 to disable.", "Z"),
+    ("detection_min_peak_signal", "DETECTION_MIN_PEAK_SIGNAL", "float", (("detection_min_peak_signal",), ("detection", "min_peak_signal")), "Optional minimum component peak normalized residual. Use 0 to disable.", "Z"),
+    ("detection_signal_core_threshold", "DETECTION_SIGNAL_CORE_THRESHOLD", "float", (("detection_signal_core_threshold",), ("detection", "signal_core_threshold")), "Normalized residual threshold used to count bright core pixels. Use 0 to disable core gates.", "Z"),
+    ("detection_min_core_area_px", "DETECTION_MIN_CORE_AREA_PX", "int", (("detection_min_core_area_px",), ("detection", "min_core_area_px")), "Optional minimum number of component pixels above signal_core_threshold. Use 0 to disable.", "PX"),
+    ("detection_min_core_fraction", "DETECTION_MIN_CORE_FRACTION", "float", (("detection_min_core_fraction",), ("detection", "min_core_fraction")), "Optional minimum fraction of component pixels above signal_core_threshold. Use 0 to disable.", "FRACTION"),
+    ("detection_local_contrast_margin_px", "DETECTION_LOCAL_CONTRAST_MARGIN_PX", "int", (("detection_local_contrast_margin_px",), ("detection", "local_contrast_margin_px")), "Pixels around a component bbox used for local-background contrast diagnostics.", "PX"),
+    ("detection_min_mean_local_contrast", "DETECTION_MIN_MEAN_LOCAL_CONTRAST", "float", (("detection_min_mean_local_contrast",), ("detection", "min_mean_local_contrast")), "Optional minimum mean local contrast over surrounding residual background. Use 0 to disable.", "Z"),
+    ("detection_min_peak_local_contrast", "DETECTION_MIN_PEAK_LOCAL_CONTRAST", "float", (("detection_min_peak_local_contrast",), ("detection", "min_peak_local_contrast")), "Optional minimum peak local contrast over surrounding residual background. Use 0 to disable.", "Z"),
+    ("detection_mask_closing_radius_px", "DETECTION_MASK_CLOSING_RADIUS_PX", "int", (("detection_mask_closing_radius_px",), ("detection", "mask_closing_radius_px")), "Binary closing radius applied to threshold masks. Use 0 to disable.", "PX"),
+    ("detection_mask_fill_holes", "DETECTION_MASK_FILL_HOLES", "bool", (("detection_mask_fill_holes",), ("detection", "mask_fill_holes")), "Fill holes inside threshold-mask components before connected-component extraction.", None),
+    ("detection_mask_opening_radius_px", "DETECTION_MASK_OPENING_RADIUS_PX", "int", (("detection_mask_opening_radius_px",), ("detection", "mask_opening_radius_px")), "Binary opening radius applied after closing/fill-hole cleanup. Use 0 to disable.", "PX"),
+    ("detection_mask_min_area_px", "DETECTION_MASK_MIN_AREA_PX", "int", (("detection_mask_min_area_px",), ("detection", "mask_min_area_px")), "Optional minimum threshold-mask component area after morphology. Use 0 to disable.", "PX"),
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
     ("track_filter_min_length", "TRACK_FILTER_MIN_LENGTH", "int", (("track_filter_min_length",), ("track_filter", "min_length")), "Minimum detections per accepted filtered track.", "N"),
@@ -115,6 +130,21 @@ min_bbox_width_px = 0
 min_bbox_height_px = 0
 max_bbox_aspect_ratio = 0.0
 min_bbox_extent = 0.0
+max_moment_aspect_ratio = 0.0
+min_compactness = 0.0
+min_border_margin_px = 0
+min_mean_signal = 0.0
+min_peak_signal = 0.0
+signal_core_threshold = 0.0
+min_core_area_px = 0
+min_core_fraction = 0.0
+local_contrast_margin_px = 4
+min_mean_local_contrast = 0.0
+min_peak_local_contrast = 0.0
+mask_closing_radius_px = 0
+mask_fill_holes = false
+mask_opening_radius_px = 0
+mask_min_area_px = 0
 
 [tracking]
 min_track_length = 2
