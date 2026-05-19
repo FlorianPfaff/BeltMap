@@ -4,6 +4,7 @@ from beltmap import (
     ParticleMaskCleanupConfig,
     ResidualImage,
     detect_particles_from_residual,
+    hysteresis_particle_mask,
 )
 
 
@@ -121,3 +122,35 @@ def test_detect_particles_cleanup_removes_small_threshold_components():
     expected = np.zeros_like(residual, dtype=bool)
     expected[3:5, 3:5] = True
     np.testing.assert_array_equal(particle_mask, expected)
+
+
+def test_hysteresis_particle_mask_keeps_only_grow_components_with_seed():
+    seed = np.zeros((7, 9), dtype=bool)
+    grow = np.zeros_like(seed)
+    seed[2, 2] = True
+    grow[1:4, 1:4] = True
+    grow[4:6, 6:8] = True
+
+    mask = hysteresis_particle_mask(seed, grow, connectivity=8)
+
+    expected = np.zeros_like(seed)
+    expected[1:4, 1:4] = True
+    np.testing.assert_array_equal(mask, expected)
+
+
+def test_detect_particles_from_residual_can_use_hysteresis_grow_threshold():
+    residual = np.zeros((8, 10), dtype=float)
+    residual[2, 2] = 6.0
+    residual[1:4, 1:4] = 3.0
+    residual[2, 2] = 6.0
+    residual[5:7, 7:9] = 3.5
+
+    mask = detect_particles_from_residual(
+        residual,
+        threshold=5.0,
+        grow_threshold=3.0,
+    )
+
+    expected = np.zeros_like(residual, dtype=bool)
+    expected[1:4, 1:4] = True
+    np.testing.assert_array_equal(mask, expected)

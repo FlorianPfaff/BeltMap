@@ -4,6 +4,7 @@ from .detection import (
     ParticleMaskCleanupConfig,
     cleanup_particle_mask,
     detect_particles_from_residual,
+    hysteresis_particle_mask,
 )
 from .phase import (
     BeltMotionModel,
@@ -73,6 +74,7 @@ __all__ = [
     "build_recurrent_artifact_map",
     "cleanup_particle_mask",
     "detect_particles_from_residual",
+    "hysteresis_particle_mask",
     "estimate_particle_velocities_vs_belt",
     "estimate_local_noise",
     "estimate_phase",

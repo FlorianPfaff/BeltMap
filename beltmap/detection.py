@@ -40,6 +40,7 @@ def detect_particles_from_residual(
     threshold: float,
     mask: ArrayLike | None = None,
     cleanup: ParticleMaskCleanupConfig | None = None,
+    grow_threshold: float | None = None,
 ) -> NDArray[np.bool_]:
     """Detect bright particles by thresholding a normalized residual image.
 
@@ -53,10 +54,21 @@ def detect_particles_from_residual(
     Set ``cleanup`` to close one-pixel gaps, fill holes, or remove very small
     threshold components before connected-component extraction.  This is useful
     for additive static-background residuals that otherwise fragment particles.
+
+    Set ``grow_threshold`` below ``threshold`` to use hysteresis segmentation:
+    strong pixels above ``threshold`` seed candidates, and connected support
+    pixels above ``grow_threshold`` are retained only when they belong to a
+    seeded component. This is often better than raw thresholding for
+    static-background-corrected residuals that fragment true particles.
     """
 
     if not np.isfinite(threshold):
         raise ValueError("threshold must be finite")
+    if grow_threshold is not None and not np.isfinite(grow_threshold):
+        raise ValueError("grow_threshold must be finite when set")
+
+    cfg = cleanup or ParticleMaskCleanupConfig()
+    _validate_cleanup_config(cfg)
 
     if isinstance(residual, ResidualImage):
         values = np.asarray(residual.normalized, dtype=np.float64)
@@ -75,7 +87,66 @@ def detect_particles_from_residual(
         valid &= user_mask
 
     threshold_mask = valid & (values > threshold)
-    return cleanup_particle_mask(threshold_mask, valid_mask=valid, config=cleanup)
+    if grow_threshold is not None and grow_threshold < threshold:
+        grow_mask = valid & (values > grow_threshold)
+        threshold_mask = hysteresis_particle_mask(
+            seed_mask=threshold_mask,
+            grow_mask=grow_mask,
+            valid_mask=valid,
+            connectivity=cfg.connectivity,
+        )
+    return cleanup_particle_mask(threshold_mask, valid_mask=valid, config=cfg)
+
+
+def hysteresis_particle_mask(
+    seed_mask: ArrayLike,
+    grow_mask: ArrayLike,
+    *,
+    valid_mask: ArrayLike | None = None,
+    connectivity: int = 8,
+) -> NDArray[np.bool_]:
+    """Grow weak support components only when they contain a strong seed."""
+
+    if connectivity not in (4, 8):
+        raise ValueError("connectivity must be 4 or 8")
+    seed = np.asarray(seed_mask, dtype=bool)
+    grow = np.asarray(grow_mask, dtype=bool)
+    if seed.shape != grow.shape:
+        raise ValueError("seed_mask and grow_mask must have the same shape")
+    if seed.ndim != 2 or seed.size == 0:
+        raise ValueError("seed_mask and grow_mask must be non-empty 2-D arrays")
+    if valid_mask is None:
+        valid = np.ones(seed.shape, dtype=bool)
+    else:
+        valid = np.asarray(valid_mask, dtype=bool)
+        if valid.shape != seed.shape:
+            raise ValueError("valid_mask must have the same shape as seed_mask")
+    seed &= valid
+    grow &= valid
+
+    kept = np.zeros(grow.shape, dtype=bool)
+    for rows, cols in _connected_components(grow, connectivity=connectivity):
+        if np.any(seed[rows, cols]):
+            kept[rows, cols] = True
+    return kept
+
+
+def _connected_components(
+    mask: NDArray[np.bool_],
+    *,
+    connectivity: int,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]]:
+    ndimage = _load_scipy_ndimage()
+    if ndimage is not None:
+        labels, component_count = ndimage.label(
+            mask,
+            structure=_component_structure(connectivity),
+        )
+        components: list[tuple[NDArray[np.integer], NDArray[np.integer]]] = []
+        for label in range(1, int(component_count) + 1):
+            components.append(np.nonzero(labels == label))
+        return components
+    return _connected_components_numpy(mask, connectivity=connectivity)
 
 
 def cleanup_particle_mask(
@@ -259,7 +330,7 @@ def _remove_small_components(
                 kept |= component
         return kept
 
-    for rows, cols in _connected_components_numpy(mask, connectivity=connectivity):
+    for rows, cols in _connected_components(mask, connectivity=connectivity):
         if rows.size >= min_area_px:
             kept[rows, cols] = True
     return kept

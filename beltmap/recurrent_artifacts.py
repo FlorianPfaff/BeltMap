@@ -13,6 +13,11 @@ from .phase import BeltMotionModel
 from .tracking import ParticleDetection
 
 RECURRENT_ARTIFACT_MODES = {"hard", "soft"}
+RECURRENT_ARTIFACT_SOFT_SIGNALS = {
+    "peak_signal",
+    "peak_local_contrast",
+    "peak_and_local_contrast",
+}
 
 
 @dataclass(frozen=True)
@@ -24,6 +29,7 @@ class RecurrentArtifactConfig:
     max_overlap_fraction: float = 0.3
     mode: str = "hard"
     soft_penalty_weight: float = 1.0
+    soft_signal: str = "peak_signal"
 
 
 @dataclass(frozen=True)
@@ -240,16 +246,42 @@ def _reject_detection(
     if mode == "hard":
         return True
     assert detection_threshold is not None
-    peak_signal = detection.peak_signal
-    if peak_signal is None or not np.isfinite(peak_signal):
-        return True
     required_peak = _required_peak_signal(
         overlap=overlap,
         config=config,
         detection_threshold=detection_threshold,
     )
     assert required_peak is not None
-    return peak_signal <= required_peak
+    return not _soft_signal_passes(
+        detection,
+        required_signal=required_peak,
+        soft_signal=config.soft_signal,
+    )
+
+
+def _soft_signal_passes(
+    detection: ParticleDetection,
+    *,
+    required_signal: float,
+    soft_signal: str,
+) -> bool:
+    mode = soft_signal.strip().lower()
+    values: list[float | None]
+    if mode == "peak_signal":
+        values = [detection.peak_signal]
+    elif mode == "peak_local_contrast":
+        values = [getattr(detection, "peak_local_contrast", None)]
+    elif mode == "peak_and_local_contrast":
+        values = [
+            detection.peak_signal,
+            getattr(detection, "peak_local_contrast", None),
+        ]
+    else:
+        raise ValueError(f"unsupported recurrent artifact soft signal {soft_signal!r}")
+    return all(
+        value is not None and np.isfinite(value) and value > required_signal
+        for value in values
+    )
 
 
 def _required_peak_signal(
@@ -317,6 +349,9 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         raise ValueError(f"mode must be one of {choices}")
     if not np.isfinite(config.soft_penalty_weight) or config.soft_penalty_weight < 0:
         raise ValueError("soft_penalty_weight must be finite and non-negative")
+    if config.soft_signal.strip().lower() not in RECURRENT_ARTIFACT_SOFT_SIGNALS:
+        choices = ", ".join(sorted(RECURRENT_ARTIFACT_SOFT_SIGNALS))
+        raise ValueError(f"soft_signal must be one of {choices}")
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:

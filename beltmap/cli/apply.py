@@ -33,6 +33,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("detection_min_bbox_height_px", "DETECTION_MIN_BBOX_HEIGHT_PX", "int", (("detection_min_bbox_height_px",), ("detection", "min_bbox_height_px")), "Optional minimum detection bounding-box height. Use 0 to disable.", "PX"),
     ("detection_max_bbox_aspect_ratio", "DETECTION_MAX_BBOX_ASPECT_RATIO", "float", (("detection_max_bbox_aspect_ratio",), ("detection", "max_bbox_aspect_ratio")), "Optional maximum detection bounding-box aspect ratio. Use 0 to disable.", "RATIO"),
     ("detection_min_bbox_extent", "DETECTION_MIN_BBOX_EXTENT", "float", (("detection_min_bbox_extent",), ("detection", "min_bbox_extent")), "Optional minimum area/bounding-box-area extent. Use 0 to disable.", "FRACTION"),
+    ("detection_mask_mode", "DETECTION_MASK_MODE", "path", (("detection_mask_mode",), ("detection", "mask_mode")), "Final detection mask mode: threshold or hysteresis.", "MODE"),
+    ("detection_grow_threshold", "DETECTION_GROW_THRESHOLD", "float", (("detection_grow_threshold",), ("detection", "grow_threshold")), "Weak support threshold used by hysteresis detection. Use 0 to auto-select half the strong threshold.", "Z"),
     ("detection_max_moment_aspect_ratio", "DETECTION_MAX_MOMENT_ASPECT_RATIO", "float", (("detection_max_moment_aspect_ratio",), ("detection", "max_moment_aspect_ratio")), "Optional maximum second-moment aspect ratio. Use 0 to disable.", "RATIO"),
     ("detection_min_compactness", "DETECTION_MIN_COMPACTNESS", "float", (("detection_min_compactness",), ("detection", "min_compactness")), "Optional minimum 4*pi*area/perimeter^2 compactness. Use 0 to disable.", "FRACTION"),
     ("detection_min_border_margin_px", "DETECTION_MIN_BORDER_MARGIN_PX", "int", (("detection_min_border_margin_px",), ("detection", "min_border_margin_px")), "Optional minimum distance from component bbox to crop border. Use 0 to disable.", "PX"),
@@ -48,6 +50,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("detection_mask_fill_holes", "DETECTION_MASK_FILL_HOLES", "bool", (("detection_mask_fill_holes",), ("detection", "mask_fill_holes")), "Fill holes inside threshold-mask components before connected-component extraction.", None),
     ("detection_mask_opening_radius_px", "DETECTION_MASK_OPENING_RADIUS_PX", "int", (("detection_mask_opening_radius_px",), ("detection", "mask_opening_radius_px")), "Binary opening radius applied after closing/fill-hole cleanup. Use 0 to disable.", "PX"),
     ("detection_mask_min_area_px", "DETECTION_MASK_MIN_AREA_PX", "int", (("detection_mask_min_area_px",), ("detection", "mask_min_area_px")), "Optional minimum threshold-mask component area after morphology. Use 0 to disable.", "PX"),
+    ("write_candidate_detections", "WRITE_CANDIDATE_DETECTIONS", "bool", (("write_candidate_detections",), ("diagnostics", "write_candidate_detections")), "Write candidate_detections.csv before component gates are applied.", None),
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
     ("track_filter_min_length", "TRACK_FILTER_MIN_LENGTH", "int", (("track_filter_min_length",), ("track_filter", "min_length")), "Minimum detections per accepted filtered track.", "N"),
@@ -73,11 +76,17 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("static_background_mask_threshold", "STATIC_BACKGROUND_MASK_THRESHOLD", "float", (("static_background_mask_threshold",), ("static_background", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static background. Use 0 to disable.", "Z"),
     ("static_background_mask_margin_px", "STATIC_BACKGROUND_MASK_MARGIN_PX", "int", (("static_background_mask_margin_px",), ("static_background", "mask_margin_px")), "Safety margin around particle boxes while learning static background.", "PX"),
     ("static_background_mask_min_area_px", "STATIC_BACKGROUND_MASK_MIN_AREA_PX", "int", (("static_background_mask_min_area_px",), ("static_background", "mask_min_area_px")), "Minimum component area for particle masks while learning static background.", "PX"),
+    ("static_background_noise_retain_fraction", "STATIC_BACKGROUND_NOISE_RETAIN_FRACTION", "float", (("static_background_noise_retain_fraction",), ("static_background", "noise_retain_fraction")), "Keep this fraction of the pre-static-background local-noise estimate as a floor after subtraction.", "FRACTION"),
+    ("static_background_min_corrected_noise", "STATIC_BACKGROUND_MIN_CORRECTED_NOISE", "float", (("static_background_min_corrected_noise",), ("static_background", "min_corrected_noise")), "Minimum corrected local-noise floor after static-background subtraction.", "GRAY"),
+    ("residual_bias_correction_mode", "RESIDUAL_BIAS_CORRECTION_MODE", "path", (("residual_bias_correction_mode",), ("residual_correction", "bias_mode")), "Per-frame additive residual-bias correction mode: none, median, or row_median.", "MODE"),
+    ("residual_bias_mask_threshold", "RESIDUAL_BIAS_MASK_THRESHOLD", "float", (("residual_bias_mask_threshold",), ("residual_correction", "bias_mask_threshold")), "Optional normalized residual threshold used to exclude bright particles from the per-frame bias estimate. Use 0 to disable.", "Z"),
+    ("residual_bias_row_smoothing_window_px", "RESIDUAL_BIAS_ROW_SMOOTHING_WINDOW_PX", "int", (("residual_bias_row_smoothing_window_px",), ("residual_correction", "bias_row_smoothing_window_px")), "Smoothing window for row_median residual-bias estimates. Use 0 or 1 to disable smoothing.", "PX"),
     ("recurrent_artifact_min_revolutions", "RECURRENT_ARTIFACT_MIN_REVOLUTIONS", "int", (("recurrent_artifact_min_revolutions",), ("recurrent_artifact", "min_revolutions")), "Minimum distinct belt revolutions required to mark recurrent artifact pixels. Use 0 to disable building unless a reused map is set.", "N"),
     ("recurrent_artifact_margin_px", "RECURRENT_ARTIFACT_MARGIN_PX", "int", (("recurrent_artifact_margin_px",), ("recurrent_artifact", "margin_px")), "Safety margin around detection boxes when accumulating recurrent artifacts.", "PX"),
     ("recurrent_artifact_max_overlap_fraction", "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION", "float", (("recurrent_artifact_max_overlap_fraction",), ("recurrent_artifact", "max_overlap_fraction")), "Reject detections whose belt-coordinate bbox overlaps recurrent artifacts above this fraction.", "FRACTION"),
     ("recurrent_artifact_mode", "RECURRENT_ARTIFACT_MODE", "path", (("recurrent_artifact_mode",), ("recurrent_artifact", "mode")), "Recurrent artifact filter mode: hard rejects by overlap; soft keeps strong peaks.", "MODE"),
     ("recurrent_artifact_soft_penalty_weight", "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT", "float", (("recurrent_artifact_soft_penalty_weight",), ("recurrent_artifact", "soft_penalty_weight")), "Soft-mode peak-signal penalty per artifact-overlap fraction.", "WEIGHT"),
+    ("recurrent_artifact_soft_signal", "RECURRENT_ARTIFACT_SOFT_SIGNAL", "path", (("recurrent_artifact_soft_signal",), ("recurrent_artifact", "soft_signal")), "Soft recurrent gate signal: peak_signal, peak_local_contrast, or peak_and_local_contrast.", "MODE"),
     ("velocity_search_radius_px", "VELOCITY_SEARCH_RADIUS_PX", "int", (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")), "Max vertical shift searched during automatic belt-velocity estimation.", "PX"),
     ("velocity_estimation_pairs", "VELOCITY_ESTIMATION_PAIRS", "int", (("velocity_estimation_pairs",), ("auto_velocity", "estimation_pairs")), "Number of adjacent frame pairs used for automatic velocity estimation.", "N"),
     ("auto_velocity_min_abs_px_per_frame", "AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", "float", (("auto_velocity_min_abs_px_per_frame",), ("auto_velocity", "min_abs_px_per_frame")), "Minimum accepted absolute auto-estimated belt velocity.", "PX_PER_FRAME"),
@@ -130,6 +139,8 @@ min_bbox_width_px = 0
 min_bbox_height_px = 0
 max_bbox_aspect_ratio = 0.0
 min_bbox_extent = 0.0
+mask_mode = "threshold"
+grow_threshold = 0.0
 max_moment_aspect_ratio = 0.0
 min_compactness = 0.0
 min_border_margin_px = 0
@@ -178,6 +189,16 @@ sample_frames = 0
 mask_threshold = 0.0
 mask_margin_px = 8
 mask_min_area_px = 4
+noise_retain_fraction = 0.0
+min_corrected_noise = 0.0
+
+[residual_correction]
+bias_mode = "none"
+bias_mask_threshold = 0.0
+bias_row_smoothing_window_px = 31
+
+[diagnostics]
+write_candidate_detections = false
 
 [recurrent_artifact]
 min_revolutions = 0
@@ -185,6 +206,7 @@ margin_px = 2
 max_overlap_fraction = 0.3
 mode = "hard"
 soft_penalty_weight = 1.0
+soft_signal = "peak_signal"
 
 [auto_velocity]
 search_radius_px = 90

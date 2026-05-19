@@ -72,6 +72,7 @@ RECURRENT_ARTIFACT_DETECTION_FIELDS = [
     *DETECTION_FIELDS,
     "recurrent_artifact_rejected",
 ]
+CANDIDATE_DETECTION_FIELDS = [*DETECTION_FIELDS, "accepted", "reject_reasons"]
 TRACK_SCORE_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
     "velocity_y_px_per_frame", "velocity_x_px_per_frame",
@@ -191,6 +192,14 @@ def write_detection_outputs(detections_by_frame: list, detection_rows: list[dict
     )
 
 
+def write_candidate_detection_outputs(candidate_rows: list[dict]) -> None:
+    rt.write_csv(
+        rt.OUT / "candidate_detections.csv",
+        candidate_rows,
+        CANDIDATE_DETECTION_FIELDS,
+    )
+
+
 def write_phase_outputs(phase_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_estimates.csv", phase_rows, PHASE_FIELDS)
 
@@ -218,6 +227,97 @@ def detection_rows_from_frames(detections_by_frame: list, paths: list[Path]) -> 
     for frame_index, detections in enumerate(detections_by_frame):
         rows.extend(detection_rows_for_frame(detections, paths[frame_index], frame_index))
     return rows
+
+
+def candidate_rows_for_frame(
+    candidates: list,
+    accepted_detections: list,
+    path: Path,
+    frame_index: int,
+    config: ParticleComponentConfig,
+) -> list[dict]:
+    accepted_labels = {int(detection.label) for detection in accepted_detections}
+    rows: list[dict] = []
+    for candidate in candidates:
+        row = detection_rows_for_frame([candidate], path, frame_index)[0]
+        accepted = int(candidate.label) in accepted_labels
+        row["accepted"] = accepted
+        row["reject_reasons"] = (
+            "" if accepted else ";".join(candidate_reject_reasons(candidate, config))
+        )
+        rows.append(row)
+    return rows
+
+
+def candidate_reject_reasons(detection, config: ParticleComponentConfig) -> list[str]:
+    reasons: list[str] = []
+    height = int(detection.bbox_bottom) - int(detection.bbox_top)
+    width = int(detection.bbox_right) - int(detection.bbox_left)
+    if detection.area_px < config.min_area_px:
+        reasons.append("min_area")
+    if config.max_area_px is not None and detection.area_px > config.max_area_px:
+        reasons.append("max_area")
+    if config.min_bbox_width_px is not None and width < config.min_bbox_width_px:
+        reasons.append("min_bbox_width")
+    if config.min_bbox_height_px is not None and height < config.min_bbox_height_px:
+        reasons.append("min_bbox_height")
+    if (
+        config.max_bbox_aspect_ratio is not None
+        and detection.bbox_aspect_ratio is not None
+        and detection.bbox_aspect_ratio > config.max_bbox_aspect_ratio
+    ):
+        reasons.append("bbox_aspect_ratio")
+    if (
+        config.min_bbox_extent is not None
+        and detection.bbox_extent is not None
+        and detection.bbox_extent < config.min_bbox_extent
+    ):
+        reasons.append("bbox_extent")
+    if (
+        config.max_moment_aspect_ratio is not None
+        and detection.moment_aspect_ratio is not None
+        and detection.moment_aspect_ratio > config.max_moment_aspect_ratio
+    ):
+        reasons.append("moment_aspect_ratio")
+    if (
+        config.min_compactness is not None
+        and detection.compactness is not None
+        and detection.compactness < config.min_compactness
+    ):
+        reasons.append("compactness")
+    if (
+        config.min_border_margin_px is not None
+        and detection.border_margin_px is not None
+        and detection.border_margin_px < config.min_border_margin_px
+    ):
+        reasons.append("border_margin")
+    for reason, value, minimum in (
+        ("mean_signal", detection.mean_signal, config.min_mean_signal),
+        ("peak_signal", detection.peak_signal, config.min_peak_signal),
+        (
+            "mean_local_contrast",
+            detection.mean_local_contrast,
+            config.min_mean_local_contrast,
+        ),
+        (
+            "peak_local_contrast",
+            detection.peak_local_contrast,
+            config.min_peak_local_contrast,
+        ),
+    ):
+        if minimum is not None and (value is None or float(value) < minimum):
+            reasons.append(reason)
+    if config.min_core_area_px is not None and (
+        detection.core_area_px is None
+        or int(detection.core_area_px) < config.min_core_area_px
+    ):
+        reasons.append("core_area")
+    if config.min_core_fraction is not None and (
+        detection.core_fraction is None
+        or float(detection.core_fraction) < config.min_core_fraction
+    ):
+        reasons.append("core_fraction")
+    return reasons or ["component_gate"]
 
 
 def recurrent_artifact_rows_from_scores(
@@ -290,6 +390,8 @@ def subtract_static_background(
     static_background: np.ndarray | None,
     *,
     residual_config: ResidualConfig,
+    noise_retain_fraction: float = 0.0,
+    min_corrected_noise: float = 0.0,
 ) -> ResidualImage:
     """Subtract an image-fixed additive background from a belt residual.
 
@@ -315,6 +417,14 @@ def subtract_static_background(
         mask=valid,
         config=residual_config,
     )
+    if noise_retain_fraction < 0:
+        raise ValueError("noise_retain_fraction must be non-negative")
+    if min_corrected_noise < 0:
+        raise ValueError("min_corrected_noise must be non-negative")
+    if noise_retain_fraction > 0:
+        local_noise = np.maximum(local_noise, residual.local_noise * noise_retain_fraction)
+    if min_corrected_noise > 0:
+        local_noise = np.maximum(local_noise, min_corrected_noise)
     normalized = np.full(
         residual.normalized.shape,
         residual_config.fill_value,
@@ -333,6 +443,116 @@ def subtract_static_background(
         expected_background=expected,
         clean_render=residual.clean_render,
     )
+
+
+RESIDUAL_BIAS_CORRECTION_MODES = {"none", "median", "row_median"}
+
+
+def correct_frame_residual_bias(
+    residual: ResidualImage,
+    *,
+    residual_config: ResidualConfig,
+    mode: str = "none",
+    mask_threshold: float | None = None,
+    row_smoothing_window_px: int = 0,
+) -> ResidualImage:
+    """Remove frame-specific additive residual bias before thresholding.
+
+    Static-background subtraction removes the median image-fixed residual, but
+    real sequences can still have frame-to-frame exposure or illumination drift.
+    This correction estimates a scalar or row-wise additive bias from non-particle
+    residual pixels in the current frame and subtracts it from ``residual.raw``.
+
+    ``mask_threshold`` is applied to the current normalized residual when set, so
+    bright particles are excluded from the bias estimate.  The local-noise map is
+    intentionally retained; only the additive raw residual offset is corrected.
+    """
+
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in RESIDUAL_BIAS_CORRECTION_MODES:
+        choices = ", ".join(sorted(RESIDUAL_BIAS_CORRECTION_MODES))
+        raise ValueError(f"mode must be one of {choices}")
+    if normalized_mode == "none":
+        return residual
+    if row_smoothing_window_px < 0:
+        raise ValueError("row_smoothing_window_px must be non-negative")
+    if mask_threshold is not None and mask_threshold <= 0:
+        mask_threshold = None
+    if mask_threshold is not None and not np.isfinite(mask_threshold):
+        raise ValueError("mask_threshold must be finite when set")
+
+    raw_values = np.asarray(residual.raw, dtype=np.float64)
+    local_noise = np.asarray(residual.local_noise, dtype=np.float64)
+    valid = np.asarray(residual.mask, dtype=bool) & np.isfinite(raw_values)
+    fit_mask = valid.copy()
+    if mask_threshold is not None:
+        normalized = np.asarray(residual.normalized, dtype=np.float64)
+        fit_mask &= np.isfinite(normalized) & (normalized < float(mask_threshold))
+    if not np.any(fit_mask):
+        return residual
+
+    if normalized_mode == "median":
+        bias: float | np.ndarray = float(np.median(raw_values[fit_mask]))
+    else:
+        row_values = np.where(fit_mask, raw_values, np.nan)
+        row_bias = _nanmedian(row_values, axis=1)
+        finite_rows = np.isfinite(row_bias)
+        if not np.any(finite_rows):
+            return residual
+        global_bias = float(np.median(row_bias[finite_rows]))
+        row_bias = np.where(finite_rows, row_bias, global_bias)
+        if row_smoothing_window_px > 1:
+            row_bias = _smooth_1d_nanmean(
+                row_bias,
+                window_px=row_smoothing_window_px,
+            )
+            row_bias = np.where(np.isfinite(row_bias), row_bias, global_bias)
+        bias = row_bias[:, None]
+
+    corrected_raw_values = raw_values - bias
+    corrected_raw = np.full(raw_values.shape, residual_config.fill_value, dtype=np.float64)
+    corrected_raw[valid] = corrected_raw_values[valid]
+
+    normalized = np.full(
+        residual.normalized.shape,
+        residual_config.fill_value,
+        dtype=np.float64,
+    )
+    norm_valid = valid & np.isfinite(local_noise) & (local_noise > 0)
+    normalized[norm_valid] = corrected_raw_values[norm_valid] / local_noise[norm_valid]
+    expected = residual.expected_background + bias
+    return ResidualImage(
+        raw=corrected_raw,
+        local_noise=local_noise,
+        normalized=normalized,
+        mask=residual.mask,
+        expected_background=expected,
+        clean_render=residual.clean_render,
+    )
+
+
+def _smooth_1d_nanmean(values: np.ndarray, *, window_px: int) -> np.ndarray:
+    if window_px <= 1:
+        return np.asarray(values, dtype=np.float64).copy()
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim != 1:
+        raise ValueError("values must be one-dimensional")
+    if arr.size == 0:
+        return arr.copy()
+    window = min(int(window_px), int(arr.size))
+    if window % 2 == 0:
+        window = max(1, window - 1)
+    if window <= 1:
+        return arr.copy()
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.full(arr.shape, np.nan, dtype=np.float64)
+    kernel = np.ones(window, dtype=np.float64)
+    numerator = np.convolve(np.where(finite, arr, 0.0), kernel, mode="same")
+    denominator = np.convolve(finite.astype(np.float64), kernel, mode="same")
+    smoothed = np.full(arr.shape, np.nan, dtype=np.float64)
+    np.divide(numerator, denominator, out=smoothed, where=denominator > 0)
+    return smoothed
 
 
 def _nanmedian(values: np.ndarray, *, axis: int) -> np.ndarray:
@@ -644,6 +864,10 @@ def main() -> None:
         0.0,
     )
     detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
+    detection_mask_mode = os.getenv("DETECTION_MASK_MODE", "threshold").strip().lower()
+    if detection_mask_mode not in {"threshold", "hysteresis"}:
+        raise ValueError("DETECTION_MASK_MODE must be 'threshold' or 'hysteresis'")
+    detection_grow_threshold = rt.env_float("DETECTION_GROW_THRESHOLD", 0.0, minimum=0.0)
     detection_max_moment_aspect_ratio = optional_positive_float("DETECTION_MAX_MOMENT_ASPECT_RATIO", 0.0)
     detection_min_compactness = optional_positive_float("DETECTION_MIN_COMPACTNESS", 0.0)
     detection_min_border_margin_px = optional_positive_int("DETECTION_MIN_BORDER_MARGIN_PX")
@@ -663,6 +887,25 @@ def main() -> None:
     detection_mask_fill_holes = rt.env_bool("DETECTION_MASK_FILL_HOLES", False)
     detection_mask_opening_radius_px = rt.env_int("DETECTION_MASK_OPENING_RADIUS_PX", 0, minimum=0)
     detection_mask_min_area_px = rt.env_int("DETECTION_MASK_MIN_AREA_PX", 0, minimum=0)
+    write_candidate_detections = rt.env_bool("WRITE_CANDIDATE_DETECTIONS", False)
+    static_background_noise_retain_fraction = rt.env_float("STATIC_BACKGROUND_NOISE_RETAIN_FRACTION", 0.0, minimum=0.0)
+    static_background_min_corrected_noise = rt.env_float("STATIC_BACKGROUND_MIN_CORRECTED_NOISE", 0.0, minimum=0.0)
+    residual_bias_correction_mode = os.getenv(
+        "RESIDUAL_BIAS_CORRECTION_MODE",
+        "none",
+    ).strip().lower()
+    if residual_bias_correction_mode not in RESIDUAL_BIAS_CORRECTION_MODES:
+        choices = ", ".join(sorted(RESIDUAL_BIAS_CORRECTION_MODES))
+        raise ValueError(f"RESIDUAL_BIAS_CORRECTION_MODE must be one of {choices}")
+    residual_bias_mask_threshold = optional_positive_float(
+        "RESIDUAL_BIAS_MASK_THRESHOLD",
+        0.0,
+    )
+    residual_bias_row_smoothing_window_px = rt.env_int(
+        "RESIDUAL_BIAS_ROW_SMOOTHING_WINDOW_PX",
+        31,
+        minimum=0,
+    )
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
@@ -701,6 +944,7 @@ def main() -> None:
             1.0,
             minimum=0.0,
         ),
+        soft_signal=os.getenv("RECURRENT_ARTIFACT_SOFT_SIGNAL", "peak_signal").strip().lower(),
     )
     if recurrent_artifact_config.max_overlap_fraction > 1:
         raise ValueError("RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION must be in [0, 1]")
@@ -734,6 +978,8 @@ def main() -> None:
         detection_min_bbox_height_px=detection_min_bbox_height_px,
         detection_max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         detection_min_bbox_extent=detection_min_bbox_extent,
+        detection_mask_mode=detection_mask_mode,
+        detection_grow_threshold=detection_grow_threshold,
         detection_max_moment_aspect_ratio=detection_max_moment_aspect_ratio,
         detection_min_compactness=detection_min_compactness,
         detection_min_border_margin_px=detection_min_border_margin_px,
@@ -749,6 +995,12 @@ def main() -> None:
         detection_mask_fill_holes=detection_mask_fill_holes,
         detection_mask_opening_radius_px=detection_mask_opening_radius_px,
         detection_mask_min_area_px=detection_mask_min_area_px,
+        write_candidate_detections=write_candidate_detections,
+        static_background_noise_retain_fraction=static_background_noise_retain_fraction,
+        static_background_min_corrected_noise=static_background_min_corrected_noise,
+        residual_bias_correction_mode=residual_bias_correction_mode,
+        residual_bias_mask_threshold=residual_bias_mask_threshold,
+        residual_bias_row_smoothing_window_px=residual_bias_row_smoothing_window_px,
         min_track_length=min_track_length,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
@@ -776,6 +1028,7 @@ def main() -> None:
         recurrent_artifact_max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
         recurrent_artifact_mode=recurrent_artifact_config.mode,
         recurrent_artifact_soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
+        recurrent_artifact_soft_signal=recurrent_artifact_config.soft_signal,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
         phase_refinement_iterations=phase_refinement_iterations,
@@ -883,6 +1136,20 @@ def main() -> None:
         fill_holes=detection_mask_fill_holes,
         opening_radius_px=detection_mask_opening_radius_px,
         min_component_area_px=detection_mask_min_area_px,
+    )
+    detection_grow_threshold_for_mask = None
+    if detection_mask_mode == "hysteresis":
+        if detection_grow_threshold <= 0:
+            detection_grow_threshold = max(0.0, detection_threshold * 0.5)
+        if detection_grow_threshold >= detection_threshold:
+            raise ValueError("DETECTION_GROW_THRESHOLD must be below DETECTION_THRESHOLD in hysteresis mode")
+        detection_grow_threshold_for_mask = detection_grow_threshold
+    candidate_component_config = ParticleComponentConfig(
+        min_area_px=1,
+        signal_core_threshold=detection_signal_core_threshold,
+        local_contrast_margin_px=detection_local_contrast_margin_px,
+        connectivity=component_config.connectivity,
+        weighted_centroid=component_config.weighted_centroid,
     )
     residual_config = ResidualConfig()
     reused_phase_estimates = (
@@ -1030,6 +1297,7 @@ def main() -> None:
 
     detections_by_frame = []
     detection_rows: list[dict] = []
+    candidate_rows: list[dict] = []
     phase_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
     detection_start = rt.time.perf_counter()
@@ -1054,6 +1322,15 @@ def main() -> None:
             residual,
             static_background_map,
             residual_config=residual_config,
+            noise_retain_fraction=static_background_noise_retain_fraction,
+            min_corrected_noise=static_background_min_corrected_noise,
+        )
+        residual = correct_frame_residual_bias(
+            residual,
+            residual_config=residual_config,
+            mode=residual_bias_correction_mode,
+            mask_threshold=residual_bias_mask_threshold,
+            row_smoothing_window_px=residual_bias_row_smoothing_window_px,
         )
         residual = apply_static_noise_floor(residual, static_noise_map)
         phase_row = phase_estimate_row(frame_index, path, residual, float(map_height))
@@ -1065,8 +1342,29 @@ def main() -> None:
             residual,
             threshold=detection_threshold,
             cleanup=mask_cleanup_config,
+            grow_threshold=detection_grow_threshold_for_mask,
         )
         detections = extract_particle_detections(mask, residual=residual, frame_index=float(frame_index), config=component_config)
+        candidates = (
+            extract_particle_detections(
+                mask,
+                residual=residual,
+                frame_index=float(frame_index),
+                config=candidate_component_config,
+            )
+            if write_candidate_detections
+            else []
+        )
+        if write_candidate_detections:
+            candidate_rows.extend(
+                candidate_rows_for_frame(
+                    candidates,
+                    detections,
+                    path,
+                    frame_index,
+                    component_config,
+                )
+            )
         detections_by_frame.append(detections)
         detection_rows.extend(detection_rows_for_frame(detections, path, frame_index))
         processed = frame_index + 1
@@ -1077,6 +1375,8 @@ def main() -> None:
         ):
             write_detection_outputs(detections_by_frame, detection_rows)
             write_phase_outputs(phase_rows)
+            if write_candidate_detections:
+                write_candidate_detection_outputs(candidate_rows)
             rt.emit("detect", "wrote partial detection and phase outputs", processed_frames=processed, total_detections=len(detection_rows), phase_estimates=len(phase_rows))
         if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
             dt = rt.time.perf_counter() - detection_start
@@ -1185,6 +1485,8 @@ def main() -> None:
 
     write_detection_outputs(detections_by_frame, detection_rows)
     write_phase_outputs(phase_rows)
+    if write_candidate_detections:
+        write_candidate_detection_outputs(candidate_rows)
     rt.emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows))
 
     max_match = os.getenv("MAX_MATCH_DISTANCE_PX", "").strip()
@@ -1268,6 +1570,8 @@ def main() -> None:
         "detection_min_bbox_height_px": detection_min_bbox_height_px,
         "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
         "detection_min_bbox_extent": detection_min_bbox_extent,
+        "detection_mask_mode": detection_mask_mode,
+        "detection_grow_threshold": detection_grow_threshold,
         "detection_max_moment_aspect_ratio": detection_max_moment_aspect_ratio,
         "detection_min_compactness": detection_min_compactness,
         "detection_min_border_margin_px": detection_min_border_margin_px,
@@ -1283,6 +1587,12 @@ def main() -> None:
         "detection_mask_fill_holes": detection_mask_fill_holes,
         "detection_mask_opening_radius_px": detection_mask_opening_radius_px,
         "detection_mask_min_area_px": detection_mask_min_area_px,
+        "write_candidate_detections": write_candidate_detections,
+        "static_background_noise_retain_fraction": static_background_noise_retain_fraction,
+        "static_background_min_corrected_noise": static_background_min_corrected_noise,
+        "residual_bias_correction_mode": residual_bias_correction_mode,
+        "residual_bias_mask_threshold": residual_bias_mask_threshold,
+        "residual_bias_row_smoothing_window_px": residual_bias_row_smoothing_window_px,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
@@ -1316,6 +1626,7 @@ def main() -> None:
         "recurrent_artifact_max_overlap_fraction": recurrent_artifact_config.max_overlap_fraction,
         "recurrent_artifact_mode": recurrent_artifact_config.mode,
         "recurrent_artifact_soft_penalty_weight": recurrent_artifact_config.soft_penalty_weight,
+        "recurrent_artifact_soft_signal": recurrent_artifact_config.soft_signal,
         "recurrent_artifact_filter_used": recurrent_artifact_enabled,
         "recurrent_artifact_source": recurrent_artifact_source,
         "recurrent_artifact_revolutions": recurrent_artifact_revolutions,
