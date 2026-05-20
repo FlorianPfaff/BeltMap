@@ -1644,7 +1644,7 @@ def main() -> None:
         "n_phase_estimates": len(phase_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
-        "tracking_backend": tracking_config.association_backend,
+        "tracking_backend": tracking_config.assignment_method,
         "n_velocity_estimates": len(velocity_rows),
         "n_filtered_velocity_estimates": len(filtered_velocity_rows),
         "track_filter_min_length": track_filter_config.min_track_length,
