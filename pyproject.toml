@@ -72,9 +72,6 @@ speed = [
     "scipy>=1.10",
     "scikit-image>=0.21",
 ]
-pyrecest = [
-    "pyrecest>=2.2.1",
-]
 
 [tool.poetry]
 packages = [

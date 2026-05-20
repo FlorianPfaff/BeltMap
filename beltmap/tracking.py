@@ -397,7 +397,7 @@ def _load_pyrecest_global_nearest_neighbor() -> Any:
     except ImportError as exc:  # pragma: no cover - exercised without optional extra
         raise ImportError(
             "ParticleTrackingConfig(association_backend='pyrecest_gnn') requires "
-            "PyRecEst. Install it with `python -m pip install 'beltmap[pyrecest]'` "
+            "PyRecEst. Install it with `python -m pip install pyrecest` "
             "or use association_backend='greedy'."
         ) from exc
     return GlobalNearestNeighbor
