@@ -28,6 +28,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("belt_velocity_frame_unit", "BELT_VELOCITY_FRAME_UNIT", "path", (("belt_velocity_frame_unit",), ("belt", "velocity_frame_unit")), "Frame unit for a supplied belt velocity: selected_frame or source_frame.", "UNIT"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
     ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for bright particles.", "Z"),
+    ("detection_mode", "DETECTION_MODE", "path", (("detection_mode",), ("detection", "mode")), "Detection residual polarity: positive, negative, or absolute.", "MODE"),
+    ("detection_low_threshold", "DETECTION_LOW_THRESHOLD", "float", (("detection_low_threshold",), ("detection", "low_threshold")), "Optional lower hysteresis threshold for final detection. Use 0 to disable.", "Z"),
     ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
     ("detection_max_area_px", "DETECTION_MAX_AREA_PX", "int", (("detection_max_area_px",), ("detection", "max_area_px")), "Optional maximum connected-component area for detections. Use 0 to disable.", "PX"),
     ("detection_min_bbox_width_px", "DETECTION_MIN_BBOX_WIDTH_PX", "int", (("detection_min_bbox_width_px",), ("detection", "min_bbox_width_px")), "Optional minimum detection bounding-box width. Use 0 to disable.", "PX"),
@@ -54,6 +56,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
     ("map_reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION", "float", (("map_reconstruction_trim_fraction",), ("map", "reconstruction_trim_fraction")), "Symmetric per-pixel trim fraction for robust belt-map reconstruction. Use 0 for the arithmetic mean.", "FRACTION"),
+    ("map_fractional_splat", "MAP_FRACTIONAL_SPLAT", "bool", (("map_fractional_splat",), ("map", "fractional_splat")), "Use fractional row weights when accumulating belt-map pixels.", None),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
     ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
     ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, absolute, or hysteresis_abs.", "MODE"),
@@ -163,6 +166,7 @@ max_abs_x_velocity_px_per_frame = 0.0
 [map]
 sample_frames = 120
 reconstruction_trim_fraction = 0.1
+fractional_splat = true
 mask_iterations = 1
 particle_mask_mode = "positive"
 particle_mask_threshold = 5.0

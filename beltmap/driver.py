@@ -369,6 +369,33 @@ def should_save_residual_preview(frame_index: int, preview_frames: int, preview_
     return frame_index < preview_frames or (preview_interval > 0 and frame_index % preview_interval == 0)
 
 
+def detect_final_particle_mask(
+    residual: ResidualImage,
+    *,
+    method: str,
+    threshold: float,
+    grow_threshold: float,
+) -> np.ndarray:
+    """Return the final particle mask for the configured detector."""
+
+    if method == "threshold":
+        return detect_particles_from_residual(residual, threshold=threshold)
+    if method == "hysteresis":
+        return detect_particles_from_residual_hysteresis(
+            residual,
+            threshold=threshold,
+            grow_threshold=grow_threshold,
+        )
+    if method == "hysteresis_abs":
+        return detect_particles_from_residual_hysteresis(
+            residual,
+            threshold=threshold,
+            grow_threshold=grow_threshold,
+            absolute=True,
+        )
+    raise ValueError(f"unknown detection method {method!r}")
+
+
 def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray | None) -> ResidualImage:
     """Normalize a residual with an image-fixed noise floor when available."""
 
@@ -798,6 +825,7 @@ def main() -> None:
     map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
+    map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     map_aggregation = os.getenv("MAP_AGGREGATION", "mean").strip().lower()
@@ -911,6 +939,7 @@ def main() -> None:
         map_particle_mask_mode=map_particle_mask_mode,
         map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
         map_particle_mask_dilation_px=map_particle_mask_dilation_px,
+        map_fractional_splat=map_fractional_splat,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
         map_aggregation=map_aggregation,
@@ -1002,6 +1031,7 @@ def main() -> None:
             robust_iterations=map_robust_iterations,
             robust_huber_delta=map_robust_huber_delta,
             robust_min_scale=map_robust_min_scale,
+            fractional_splat=map_fractional_splat,
             phase_feedback_config=PhaseFeedbackConfig(
                 iterations=phase_refinement_iterations,
                 min_score=phase_refinement_min_score,
@@ -1529,6 +1559,7 @@ def main() -> None:
         "map_particle_mask_mode": map_particle_mask_mode,
         "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
         "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
+        "map_fractional_splat": map_fractional_splat,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
         "map_aggregation": map_aggregation,

@@ -3,6 +3,7 @@ import numpy as np
 from beltmap import (
     ResidualImage,
     detect_particles_from_residual,
+    detect_particles_from_residual_hysteresis,
     detection_signal_from_residual,
 )
 
@@ -154,6 +155,31 @@ def test_detect_particles_from_residual_grows_hysteresis_regions_from_strong_see
             [
                 [False, True, True, False],
                 [False, False, False, False],
+                [False, False, False, False],
+            ]
+        ),
+    )
+
+
+def test_detect_particles_from_residual_hysteresis_compatibility_wrapper():
+    residual = np.array(
+        [
+            [0.0, 2.5, 5.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ]
+    )
+
+    particle_mask = detect_particles_from_residual_hysteresis(
+        residual,
+        threshold=4.0,
+        grow_threshold=2.0,
+    )
+
+    np.testing.assert_array_equal(
+        particle_mask,
+        np.array(
+            [
+                [False, True, True, False],
                 [False, False, False, False],
             ]
         ),

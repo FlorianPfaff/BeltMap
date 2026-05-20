@@ -129,6 +129,8 @@ def build_belt_map(
     robust_iterations: int = 1,
     robust_huber_delta: float = 3.0,
     robust_min_scale: float = 1.0,
+    map_trim_fraction: float | None = None,
+    fractional_splat: bool = True,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
@@ -147,6 +149,8 @@ def build_belt_map(
         robust_iterations=robust_iterations,
         robust_huber_delta=robust_huber_delta,
         robust_min_scale=robust_min_scale,
+        map_trim_fraction=map_trim_fraction,
+        fractional_splat=fractional_splat,
         phase_feedback_config=phase_feedback_config,
     )
     if result.phase_refinement_rows:
@@ -177,6 +181,8 @@ def build_belt_map_result(
     robust_iterations: int = 1,
     robust_huber_delta: float = 3.0,
     robust_min_scale: float = 1.0,
+    map_trim_fraction: float | None = None,
+    fractional_splat: bool = True,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
@@ -224,6 +230,7 @@ def build_belt_map_result(
         robust_iterations=robust_iterations if aggregation == "huber" else 0,
         robust_huber_delta=robust_huber_delta,
         robust_min_scale=robust_min_scale,
+        fractional_splat=fractional_splat,
         phase_refinement_iterations=cfg.iterations,
         phase_refinement_smoothing_window_frames=cfg.smoothing_window_frames,
     )
@@ -243,6 +250,7 @@ def build_belt_map_result(
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
         map_trim_fraction=map_trim_fraction,
+        fractional_splat=fractional_splat,
         pass_label="initial",
     )
     phase_by_frame: np.ndarray | None = None
@@ -282,6 +290,7 @@ def build_belt_map_result(
                 mask_margin_px=mask_margin_px,
                 mask_min_area_px=mask_min_area_px,
                 map_trim_fraction=map_trim_fraction,
+                fractional_splat=fractional_splat,
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
             )
@@ -311,6 +320,7 @@ def build_belt_map_result(
             mask_margin_px=mask_margin_px,
             mask_min_area_px=mask_min_area_px,
             map_trim_fraction=map_trim_fraction,
+            fractional_splat=fractional_splat,
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
         )
@@ -340,6 +350,8 @@ def build_belt_map_result(
                 mask_margin_px=mask_margin_px,
                 mask_min_area_px=mask_min_area_px,
                 pass_label=f"huber-{iteration}",
+                map_trim_fraction=map_trim_fraction,
+                fractional_splat=fractional_splat,
                 phase_by_frame=phase_by_frame,
                 robust_reference_belt_map=belt_map,
                 robust_huber_delta=robust_huber_delta,
@@ -381,6 +393,8 @@ def accumulate_belt_map(
     mask_margin_px: int,
     mask_min_area_px: int,
     pass_label: str,
+    map_trim_fraction: float = 0.0,
+    fractional_splat: bool = True,
     phase_by_frame: Sequence[float] | Mapping[int, float] | None = None,
     robust_reference_belt_map: np.ndarray | None = None,
     robust_huber_delta: float = 3.0,

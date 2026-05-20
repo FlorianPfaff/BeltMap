@@ -3,6 +3,7 @@
 from .detection import (
     DETECTION_MODES,
     detect_particles_from_residual,
+    detect_particles_from_residual_hysteresis,
     detection_signal_from_residual,
 )
 from .phase import (
@@ -76,6 +77,7 @@ __all__ = [
     "belt_revolution_indices",
     "build_recurrent_artifact_map",
     "detect_particles_from_residual",
+    "detect_particles_from_residual_hysteresis",
     "detection_signal_from_residual",
     "estimate_particle_velocities_vs_belt",
     "estimate_local_noise",

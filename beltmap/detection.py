@@ -87,6 +87,25 @@ def detect_particles_from_residual(
     return _hysteresis_mask(seeds, candidates)
 
 
+def detect_particles_from_residual_hysteresis(
+    residual: ArrayLike | ResidualImage,
+    *,
+    threshold: float,
+    grow_threshold: float,
+    mask: ArrayLike | None = None,
+    absolute: bool = False,
+) -> NDArray[np.bool_]:
+    """Compatibility wrapper for hysteresis residual detection."""
+
+    return detect_particles_from_residual(
+        residual,
+        threshold=threshold,
+        mask=mask,
+        mode="absolute" if absolute else "positive",
+        low_threshold=grow_threshold,
+    )
+
+
 def _residual_values_and_valid_mask(
     residual: ArrayLike | ResidualImage,
 ) -> tuple[FloatArray, NDArray[np.bool_]]:

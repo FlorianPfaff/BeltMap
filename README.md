@@ -12,6 +12,9 @@ For a file-by-file and column-by-column description of driver outputs, see the
 [output schema reference](docs/outputs.md).
 For all runtime configuration keys, environment variables, CLI flags, defaults,
 and units, see the [configuration reference](docs/configuration.md).
+For a practical sequence of result-improvement experiments for the Brick 10 g/s
+case and similar real conveyor data, see the
+[result-improvement guide](docs/result_improvements.md).
 
 Try the self-contained synthetic sequence example without downloading external
 data:

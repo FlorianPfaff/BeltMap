@@ -18,6 +18,7 @@ _IMPORT_UNCHECKED = object()
 _IMPORT_MISSING = object()
 _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
+_SCIPY_OPTIMIZE: Any = _IMPORT_UNCHECKED
 _TRACKING_ASSIGNMENT_METHODS = {"global", "greedy"}
 
 
@@ -780,6 +781,18 @@ def _load_skimage_measure() -> Any | None:
         else:
             _SKIMAGE_MEASURE = measure
     return None if _SKIMAGE_MEASURE is _IMPORT_MISSING else _SKIMAGE_MEASURE
+
+
+def _load_scipy_optimize() -> Any | None:
+    global _SCIPY_OPTIMIZE
+    if _SCIPY_OPTIMIZE is _IMPORT_UNCHECKED:
+        try:
+            from scipy import optimize
+        except ImportError:
+            _SCIPY_OPTIMIZE = _IMPORT_MISSING
+        else:
+            _SCIPY_OPTIMIZE = optimize
+    return None if _SCIPY_OPTIMIZE is _IMPORT_MISSING else _SCIPY_OPTIMIZE
 
 
 def _component_structure(connectivity: int) -> NDArray[np.bool_]:
