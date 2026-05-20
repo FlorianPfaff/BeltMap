@@ -24,17 +24,30 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("reuse_static_background_path", "REUSE_STATIC_BACKGROUND_PATH", "path", (("reuse_static_background_path",), ("reuse", "static_background_path")), "Optional existing static_background.npy additive residual map to subtract during detection.", "NPY"),
     ("reuse_recurrent_artifact_map_path", "REUSE_RECURRENT_ARTIFACT_MAP_PATH", "path", (("reuse_recurrent_artifact_map_path",), ("reuse", "recurrent_artifact_map_path")), "Optional existing recurrent_artifact_map.npy to reuse for recurrent artifact filtering.", "NPY"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
-    ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity in pixels per frame, or 'auto'.", "PX_PER_FRAME|auto"),
+    ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity, or 'auto'. Numeric values use --belt-velocity-frame-unit when frames are strided.", "PX_PER_FRAME|auto"),
+    ("belt_velocity_frame_unit", "BELT_VELOCITY_FRAME_UNIT", "path", (("belt_velocity_frame_unit",), ("belt", "velocity_frame_unit")), "Frame unit for a supplied belt velocity: selected_frame or source_frame.", "UNIT"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
     ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for bright particles.", "Z"),
+    ("detection_mode", "DETECTION_MODE", "path", (("detection_mode",), ("detection", "mode")), "Detection residual polarity: positive, negative, or absolute.", "MODE"),
+    ("detection_low_threshold", "DETECTION_LOW_THRESHOLD", "float", (("detection_low_threshold",), ("detection", "low_threshold")), "Optional lower hysteresis threshold for final detection. Use 0 to disable.", "Z"),
     ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
     ("detection_max_area_px", "DETECTION_MAX_AREA_PX", "int", (("detection_max_area_px",), ("detection", "max_area_px")), "Optional maximum connected-component area for detections. Use 0 to disable.", "PX"),
     ("detection_min_bbox_width_px", "DETECTION_MIN_BBOX_WIDTH_PX", "int", (("detection_min_bbox_width_px",), ("detection", "min_bbox_width_px")), "Optional minimum detection bounding-box width. Use 0 to disable.", "PX"),
     ("detection_min_bbox_height_px", "DETECTION_MIN_BBOX_HEIGHT_PX", "int", (("detection_min_bbox_height_px",), ("detection", "min_bbox_height_px")), "Optional minimum detection bounding-box height. Use 0 to disable.", "PX"),
     ("detection_max_bbox_aspect_ratio", "DETECTION_MAX_BBOX_ASPECT_RATIO", "float", (("detection_max_bbox_aspect_ratio",), ("detection", "max_bbox_aspect_ratio")), "Optional maximum detection bounding-box aspect ratio. Use 0 to disable.", "RATIO"),
     ("detection_min_bbox_extent", "DETECTION_MIN_BBOX_EXTENT", "float", (("detection_min_bbox_extent",), ("detection", "min_bbox_extent")), "Optional minimum area/bounding-box-area extent. Use 0 to disable.", "FRACTION"),
+    ("residual_noise_radius_px", "RESIDUAL_NOISE_RADIUS_PX", "int", (("residual_noise_radius_px",), ("residual", "noise_radius_px")), "Local residual-noise box radius.", "PX"),
+    ("residual_clip_sigma", "RESIDUAL_CLIP_SIGMA", "float", (("residual_clip_sigma",), ("residual", "clip_sigma")), "Symmetric residual clipping level for local-noise estimation. Use 0 to disable.", "SIGMA"),
+    ("residual_min_noise", "RESIDUAL_MIN_NOISE", "float", (("residual_min_noise",), ("residual", "min_noise")), "Minimum local residual-noise scale.", "GRAY"),
+    ("residual_noise_exclusion_sigma", "RESIDUAL_NOISE_EXCLUSION_SIGMA", "float", (("residual_noise_exclusion_sigma",), ("residual", "noise_exclusion_sigma")), "Positive-residual threshold for excluding particle-like pixels from local-noise estimation. Use 0 to disable.", "SIGMA"),
+    ("residual_noise_exclusion_radius_px", "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", "int", (("residual_noise_exclusion_radius_px",), ("residual", "noise_exclusion_radius_px")), "Dilation radius around particle-like pixels excluded from local-noise windows.", "PX"),
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
+    ("tracking_assignment_method", "TRACKING_ASSIGNMENT_METHOD", "path", (("tracking_assignment_method",), ("tracking", "assignment_method")), "Tracking association method: global or greedy.", "METHOD"),
+    ("tracking_area_cost_weight_px", "TRACKING_AREA_COST_WEIGHT_PX", "float", (("tracking_area_cost_weight_px",), ("tracking", "area_cost_weight_px")), "Additional assignment cost for log area-ratio changes.", "PX"),
+    ("tracking_signal_cost_weight_px", "TRACKING_SIGNAL_COST_WEIGHT_PX", "float", (("tracking_signal_cost_weight_px",), ("tracking", "signal_cost_weight_px")), "Additional assignment cost for log signal-ratio changes.", "PX"),
+    ("tracking_lateral_cost_weight", "TRACKING_LATERAL_COST_WEIGHT", "float", (("tracking_lateral_cost_weight",), ("tracking", "lateral_cost_weight")), "Additional assignment cost per pixel of lateral residual motion.", "WEIGHT"),
+    ("tracking_max_area_ratio", "TRACKING_MAX_AREA_RATIO", "float", (("tracking_max_area_ratio",), ("tracking", "max_area_ratio")), "Optional maximum frame-to-frame detection area ratio. Use 0 to disable.", "RATIO"),
     ("track_filter_min_length", "TRACK_FILTER_MIN_LENGTH", "int", (("track_filter_min_length",), ("track_filter", "min_length")), "Minimum detections per accepted filtered track.", "N"),
     ("track_filter_min_velocity_ratio_y", "TRACK_FILTER_MIN_VELOCITY_RATIO_Y", "float", (("track_filter_min_velocity_ratio_y",), ("track_filter", "min_velocity_ratio_y")), "Minimum accepted particle/belt vertical velocity ratio.", "RATIO"),
     ("track_filter_max_velocity_ratio_y", "TRACK_FILTER_MAX_VELOCITY_RATIO_Y", "float", (("track_filter_max_velocity_ratio_y",), ("track_filter", "max_velocity_ratio_y")), "Maximum accepted particle/belt vertical velocity ratio.", "RATIO"),
@@ -42,6 +55,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
+    ("map_reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION", "float", (("map_reconstruction_trim_fraction",), ("map", "reconstruction_trim_fraction")), "Symmetric per-pixel trim fraction for robust belt-map reconstruction. Use 0 for the arithmetic mean.", "FRACTION"),
+    ("map_fractional_splat", "MAP_FRACTIONAL_SPLAT", "bool", (("map_fractional_splat",), ("map", "fractional_splat")), "Use fractional row weights when accumulating belt-map pixels.", None),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
     ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
     ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, absolute, or hysteresis_abs.", "MODE"),
@@ -49,19 +64,24 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
     ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
     ("map_particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX", "int", (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px")), "Minimum component area for map-building particle masks.", "PX"),
-    ("static_noise_sample_frames", "STATIC_NOISE_SAMPLE_FRAMES", "int", (("static_noise_sample_frames",), ("static_noise", "sample_frames")), "Number of residual frames sampled to learn a static residual-noise map. Use 0 to disable.", "N"),
+    ("map_aggregation", "MAP_AGGREGATION", "path", (("map_aggregation",), ("map", "aggregation")), "Belt-map aggregation method: mean or huber.", "METHOD"),
+    ("map_robust_iterations", "MAP_ROBUST_ITERATIONS", "int", (("map_robust_iterations",), ("map", "robust_iterations")), "Robust Huber refinement iterations for aggregation='huber'.", "N"),
+    ("map_robust_huber_delta", "MAP_ROBUST_HUBER_DELTA", "float", (("map_robust_huber_delta",), ("map", "robust_huber_delta")), "Huber cutoff in robust residual scale units.", "SIGMA"),
+    ("map_robust_min_scale", "MAP_ROBUST_MIN_SCALE", "float", (("map_robust_min_scale",), ("map", "robust_min_scale")), "Minimum residual scale for Huber weighting.", "GRAY"),
+    ("static_noise_sample_frames", "STATIC_NOISE_SAMPLE_FRAMES", "auto_int", (("static_noise_sample_frames",), ("static_noise", "sample_frames")), "Number of residual frames sampled to learn a static residual-noise map. Use 0 to disable or 'auto' to sample automatically.", "N|auto"),
     ("static_noise_min_scale", "STATIC_NOISE_MIN_SCALE", "float", (("static_noise_min_scale",), ("static_noise", "min_scale")), "Minimum per-pixel static residual-noise floor.", "GRAY"),
     ("static_noise_mask_threshold", "STATIC_NOISE_MASK_THRESHOLD", "float", (("static_noise_mask_threshold",), ("static_noise", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static noise. Use 0 to disable.", "Z"),
     ("static_noise_mask_margin_px", "STATIC_NOISE_MASK_MARGIN_PX", "int", (("static_noise_mask_margin_px",), ("static_noise", "mask_margin_px")), "Safety margin around particle boxes while learning static noise.", "PX"),
     ("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for particle masks while learning static noise.", "PX"),
-    ("static_background_sample_frames", "STATIC_BACKGROUND_SAMPLE_FRAMES", "int", (("static_background_sample_frames",), ("static_background", "sample_frames")), "Number of residual frames sampled to learn an additive image-fixed background. Use 0 to disable.", "N"),
+    ("static_background_sample_frames", "STATIC_BACKGROUND_SAMPLE_FRAMES", "auto_int", (("static_background_sample_frames",), ("static_background", "sample_frames")), "Number of residual frames sampled to learn an additive image-fixed background. Use 0 to disable or 'auto' to sample automatically.", "N|auto"),
     ("static_background_mask_threshold", "STATIC_BACKGROUND_MASK_THRESHOLD", "float", (("static_background_mask_threshold",), ("static_background", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static background. Use 0 to disable.", "Z"),
     ("static_background_mask_margin_px", "STATIC_BACKGROUND_MASK_MARGIN_PX", "int", (("static_background_mask_margin_px",), ("static_background", "mask_margin_px")), "Safety margin around particle boxes while learning static background.", "PX"),
     ("static_background_mask_min_area_px", "STATIC_BACKGROUND_MASK_MIN_AREA_PX", "int", (("static_background_mask_min_area_px",), ("static_background", "mask_min_area_px")), "Minimum component area for particle masks while learning static background.", "PX"),
     ("recurrent_artifact_min_revolutions", "RECURRENT_ARTIFACT_MIN_REVOLUTIONS", "int", (("recurrent_artifact_min_revolutions",), ("recurrent_artifact", "min_revolutions")), "Minimum distinct belt revolutions required to mark recurrent artifact pixels. Use 0 to disable building unless a reused map is set.", "N"),
     ("recurrent_artifact_margin_px", "RECURRENT_ARTIFACT_MARGIN_PX", "int", (("recurrent_artifact_margin_px",), ("recurrent_artifact", "margin_px")), "Safety margin around detection boxes when accumulating recurrent artifacts.", "PX"),
     ("recurrent_artifact_max_overlap_fraction", "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION", "float", (("recurrent_artifact_max_overlap_fraction",), ("recurrent_artifact", "max_overlap_fraction")), "Reject detections whose belt-coordinate bbox overlaps recurrent artifacts above this fraction.", "FRACTION"),
-    ("recurrent_artifact_mode", "RECURRENT_ARTIFACT_MODE", "path", (("recurrent_artifact_mode",), ("recurrent_artifact", "mode")), "Recurrent artifact filter mode: hard rejects by overlap; soft keeps strong peaks.", "MODE"),
+    ("recurrent_artifact_min_recurrence_probability", "RECURRENT_ARTIFACT_MIN_RECURRENCE_PROBABILITY", "float", (("recurrent_artifact_min_recurrence_probability",), ("recurrent_artifact", "min_recurrence_probability")), "Minimum exposure-normalized recurrence probability required before pixels contribute to the recurrent-artifact prior.", "PROBABILITY"),
+    ("recurrent_artifact_mode", "RECURRENT_ARTIFACT_MODE", "path", (("recurrent_artifact_mode",), ("recurrent_artifact", "mode")), "Recurrent artifact filter mode: hard rejects by overlap; soft keeps strong peaks; probabilistic uses exposure-normalized recurrence probabilities.", "MODE"),
     ("recurrent_artifact_soft_penalty_weight", "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT", "float", (("recurrent_artifact_soft_penalty_weight",), ("recurrent_artifact", "soft_penalty_weight")), "Soft-mode peak-signal penalty per artifact-overlap fraction.", "WEIGHT"),
     ("velocity_search_radius_px", "VELOCITY_SEARCH_RADIUS_PX", "int", (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")), "Max vertical shift searched during automatic belt-velocity estimation.", "PX"),
     ("velocity_estimation_pairs", "VELOCITY_ESTIMATION_PAIRS", "int", (("velocity_estimation_pairs",), ("auto_velocity", "estimation_pairs")), "Number of adjacent frame pairs used for automatic velocity estimation.", "N"),
@@ -105,10 +125,15 @@ stride = 1
 [belt]
 region = [0, 220, 1330, 1800]
 velocity_px_per_frame = "auto"
+# Required when velocity_px_per_frame is numeric and frames.stride > 1.
+# Use "source_frame" for adjacent original input frames or "selected_frame" for processed frames.
+# velocity_frame_unit = "source_frame"
 # period_px = 14723
 
 [detection]
 threshold = 5.0
+mode = "positive"
+low_threshold = 0.0
 min_area_px = 4
 max_area_px = 0
 min_bbox_width_px = 0
@@ -116,9 +141,21 @@ min_bbox_height_px = 0
 max_bbox_aspect_ratio = 0.0
 min_bbox_extent = 0.0
 
+[residual]
+noise_radius_px = 15
+clip_sigma = 5.0
+min_noise = 1e-6
+noise_exclusion_sigma = 4.0
+noise_exclusion_radius_px = 2
+
 [tracking]
 min_track_length = 2
 # max_match_distance_px = 90.0
+assignment_method = "global"
+area_cost_weight_px = 0.0
+signal_cost_weight_px = 0.0
+lateral_cost_weight = 0.0
+max_area_ratio = 0.0
 
 [track_filter]
 min_length = 5
@@ -128,6 +165,8 @@ max_abs_x_velocity_px_per_frame = 0.0
 
 [map]
 sample_frames = 120
+reconstruction_trim_fraction = 0.1
+fractional_splat = true
 mask_iterations = 1
 particle_mask_mode = "positive"
 particle_mask_threshold = 5.0
@@ -135,6 +174,10 @@ particle_mask_grow_threshold = 2.0
 particle_mask_dilation_px = 0
 particle_mask_margin_px = 8
 particle_mask_min_area_px = 4
+aggregation = "mean"
+robust_iterations = 1
+robust_huber_delta = 3.0
+robust_min_scale = 1.0
 
 [static_noise]
 sample_frames = 0
@@ -153,6 +196,7 @@ mask_min_area_px = 4
 min_revolutions = 0
 margin_px = 2
 max_overlap_fraction = 0.3
+min_recurrence_probability = 0.0
 mode = "hard"
 soft_penalty_weight = 1.0
 
@@ -239,6 +283,10 @@ def normalize_value(name: str, value: Any) -> str | None:
         return str(parse_int(value, name))
     if kind == "float":
         return f"{parse_float(value, name):.15g}"
+    if kind == "auto_int":
+        if isinstance(value, str) and value.strip().lower() == "auto":
+            return "auto"
+        return str(parse_int(value, name))
     if kind == "velocity":
         if isinstance(value, str) and value.lower() == "auto":
             return "auto"

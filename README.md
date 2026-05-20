@@ -12,6 +12,9 @@ For a file-by-file and column-by-column description of driver outputs, see the
 [output schema reference](docs/outputs.md).
 For all runtime configuration keys, environment variables, CLI flags, defaults,
 and units, see the [configuration reference](docs/configuration.md).
+For a practical sequence of result-improvement experiments for the Brick 10 g/s
+case and similar real conveyor data, see the
+[result-improvement guide](docs/result_improvements.md).
 
 Try the self-contained synthetic sequence example without downloading external
 data:
@@ -65,6 +68,13 @@ beltmap-apply \
   --belt-period-px 14723
 ```
 
+When processing every Nth input frame with `--frame-stride`, manually supplied
+belt velocities must declare their frame unit. Use
+`--belt-velocity-frame-unit source_frame` when the velocity was measured between
+adjacent original input frames; the driver multiplies it by the stride before
+phase prediction. Use `selected_frame` when the velocity is already expressed per
+processed/selected frame. Automatic velocity estimation uses selected-frame pairs.
+
 The CLI keeps compatibility with the original environment variables. Runtime
 configuration is resolved in this order, with later sources taking precedence:
 
@@ -92,6 +102,9 @@ output_dir = "outputs"
 [belt]
 region = [0, 220, 1330, 1800]
 velocity_px_per_frame = 59.3
+# If frames.stride > 1 and this velocity is measured between original input
+# frames, also set: velocity_frame_unit = "source_frame"
+# Use "selected_frame" if the value already refers to processed frames.
 period_px = 14723
 
 [detection]
@@ -154,8 +167,13 @@ The Brick 10g/s GitHub Actions workflow runs this validation step automatically
 after a successful `beltmap-apply` job, so downloaded workflow artifacts include
 the report, plots, and overlay samples.
 
-Compare several output directories, for example detection-only threshold sweeps,
-with:
+Compare several output directories, for example detection-only threshold sweeps, with:
+
+The visual contact sheet can only show frames that have residual preview PNGs in
+each compared output directory. Before running the compared jobs, set
+`DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES` or
+`--debug-residual-preview-interval-frames` so the frames passed to `--frames`
+are actually saved.
 
 ```bash
 beltmap-compare \
@@ -169,6 +187,28 @@ beltmap-compare \
 This writes `comparison_report.md`, `summary.csv`, detection-count and
 velocity-ratio plots, and a side-by-side residual preview contact sheet with
 detection boxes.
+
+When a small real-data validation subset has been labeled, pass it to the same
+comparison command to rank variants by detection precision, recall, and F1 on
+the labeled frames rather than by proxy metrics alone:
+
+```bash
+beltmap-compare \
+  --run T4.0=outputs/T4p0 \
+  --run T3.5=outputs/T3p5 \
+  --truth-path labels/brick_validation_boxes.csv \
+  --truth-iou-threshold 0.25 \
+  --frames 0,248,496,744,992 \
+  --report-dir outputs/threshold_comparison
+```
+
+The label file may be a CSV with `frame_index`, `bbox_top`, `bbox_left`,
+`bbox_bottom`, and `bbox_right` columns, or a JSON object/list with equivalent
+`top`, `left`, `bottom`, and `right` fields. Coordinates are crop-local and use
+the same half-open bounding-box convention as `detections.csv`. To include
+labeled empty frames, add CSV rows containing only `frame_index`, or use a JSON
+object with `scored_frames`. Detections outside the scored frame set are ignored
+by the labeled metrics.
 
 Post-process track velocities with conservative physical gates using:
 
@@ -241,6 +281,15 @@ normalized residual:
 
 ```python
 particle_mask = detect_particles_from_residual(residual, threshold=5.0)
+```
+
+For dark particles or mixed-polarity residual artifacts, select the residual
+polarity explicitly. The optional low threshold enables hysteresis growing from
+strong seed pixels into adjacent weaker particle shoulders:
+
+```python
+dark_mask = detect_particles_from_residual(residual, threshold=5.0, mode="negative")
+mixed_mask = detect_particles_from_residual(residual, threshold=5.0, mode="absolute", low_threshold=2.0)
 ```
 
 Connected-component extraction is implemented with a pure NumPy fallback. For

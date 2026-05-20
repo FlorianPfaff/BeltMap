@@ -66,8 +66,14 @@ underscores.
   flags, and either `[top, left, height, width]` or a comma-separated string in
   config files.
 - `belt.velocity_px_per_frame` is either a signed number in pixels per frame or
-  the string `"auto"`. Positive velocity means the belt texture moves downward
-  in image coordinates.
+  the string `"auto"`. Automatic velocity is estimated between selected frames
+  after `frames.stride` has been applied. If a numeric velocity is supplied and
+  `frames.stride > 1`, set `belt.velocity_frame_unit` to `"selected_frame"` when
+  the value is already per processed/selected frame, or `"source_frame"` when it
+  was measured between adjacent original input frames. Source-frame velocities
+  are multiplied by `frames.stride` before map building, phase prediction,
+  tracking priors, and velocity-ratio outputs. Positive velocity means the belt
+  texture moves downward in image coordinates.
 - Boolean environment values accept `1`, `true`, `yes`, `on`, `0`, `false`,
   `no`, and `off`.
 - Empty optional environment variables are ignored by `beltmap-apply`.
@@ -90,7 +96,8 @@ underscores.
 | `frames.max_frames` | `MAX_FRAMES` | `--max-frames` | `0` | frames | Maximum number of selected frames to process after sorting and striding. `0` means process all selected frames. |
 | `frames.stride` | `FRAME_STRIDE` | `--frame-stride` | `1` | frames | Process every Nth frame after natural filename sorting. Must be at least 1. |
 | `belt.region` | `BELT_REGION` | `--belt-region` | full frame | px | Belt crop as `top,left,height,width`. Coordinates are full-frame image coordinates. Omit only when the full frame is belt texture. |
-| `belt.velocity_px_per_frame` | `BELT_VELOCITY_PX_PER_FRAME` | `--belt-velocity-px-per-frame` | `auto` | px/frame | Signed vertical belt texture velocity. Use `auto` to estimate from frame-to-frame vertical correlation shifts. |
+| `belt.velocity_px_per_frame` | `BELT_VELOCITY_PX_PER_FRAME` | `--belt-velocity-px-per-frame` | `auto` | px/frame | Signed vertical belt texture velocity, or `auto`. Numeric values use `belt.velocity_frame_unit` when `frames.stride > 1`; `auto` is estimated on selected-frame pairs. |
+| `belt.velocity_frame_unit` | `BELT_VELOCITY_FRAME_UNIT` | `--belt-velocity-frame-unit` | contextual | unit | Required when `belt.velocity_px_per_frame` is numeric and `frames.stride > 1`. Use `selected_frame` when the supplied velocity is already per processed/selected frame. Use `source_frame` when it is per adjacent original input frame; the driver multiplies it by `frames.stride`. |
 | `belt.period_px` | `BELT_PERIOD_PX` | `--belt-period-px` | unset | px | Belt circumference/period in belt-map pixels. If unset or non-positive, the driver builds a finite map covering the selected sequence phase range. |
 | `detection.threshold` | `DETECTION_THRESHOLD` | `--detection-threshold` | `5.0` | z | Threshold on normalized residuals for final bright-particle detection. |
 | `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. Must be at least 1. |
@@ -99,6 +106,11 @@ underscores.
 | `detection.min_bbox_height_px` | `DETECTION_MIN_BBOX_HEIGHT_PX` | `--detection-min-bbox-height-px` | `0` | px | Optional minimum component bounding-box height. `0` disables this gate. |
 | `detection.max_bbox_aspect_ratio` | `DETECTION_MAX_BBOX_ASPECT_RATIO` | `--detection-max-bbox-aspect-ratio` | `0` | ratio | Optional maximum bounding-box aspect ratio `max(height/width, width/height)`. `0` disables this gate. |
 | `detection.min_bbox_extent` | `DETECTION_MIN_BBOX_EXTENT` | `--detection-min-bbox-extent` | `0` | fraction | Optional minimum component extent `area / (bbox_width * bbox_height)`. `0` disables this gate. |
+| `residual.noise_radius_px` | `RESIDUAL_NOISE_RADIUS_PX` | `--residual-noise-radius-px` | `15` | px | Local box radius used to estimate the residual-noise scale. |
+| `residual.clip_sigma` | `RESIDUAL_CLIP_SIGMA` | `--residual-clip-sigma` | `5.0` | sigma | Symmetric residual clipping level before local variance estimation. `0` disables clipping. |
+| `residual.min_noise` | `RESIDUAL_MIN_NOISE` | `--residual-min-noise` | `1e-6` | gray | Minimum local residual-noise scale. Must be positive. |
+| `residual.noise_exclusion_sigma` | `RESIDUAL_NOISE_EXCLUSION_SIGMA` | `--residual-noise-exclusion-sigma` | `4.0` | sigma | Positive-residual threshold for excluding particle-like pixels from local-noise estimation. `0` disables this exclusion. |
+| `residual.noise_exclusion_radius_px` | `RESIDUAL_NOISE_EXCLUSION_RADIUS_PX` | `--residual-noise-exclusion-radius-px` | `2` | px | Dilation radius around particle-like pixels excluded from local-noise windows. |
 | `tracking.min_track_length` | `MIN_TRACK_LENGTH` | `--min-track-length` | `2` | detections | Minimum number of detections required before a particle track contributes a velocity row. Must be at least 1 at driver parsing and at least 2 for velocity estimation. |
 | `tracking.max_match_distance_px` | `MAX_MATCH_DISTANCE_PX` | `--max-match-distance-px` | `max(5, 1.5 * abs(belt_velocity))` | px | Maximum frame-to-frame nearest-neighbor association distance for tracking. Leave unset to derive it from the belt speed. |
 | `track_filter.min_length` | `TRACK_FILTER_MIN_LENGTH` | `--track-filter-min-length` | `max(5, tracking.min_track_length)` | detections | Minimum detections per accepted filtered velocity row. Raw `velocities.csv` is not modified. |
@@ -200,6 +212,27 @@ When `reuse.phase_estimates_path` is also set, the driver uses those per-frame
 phases directly. Otherwise it recomputes per-frame phases by registering each
 selected frame against the reused map, then proceeds with residual rendering,
 detection, tracking, and velocity estimation.
+
+## Residual normalization
+
+By default, BeltMap now excludes strong positive residuals from the local
+noise-scale window before computing the normalized residual. This prevents bright
+particles from inflating their own local denominator and becoming harder to
+detect:
+
+```toml
+[residual]
+noise_radius_px = 15
+clip_sigma = 5.0
+noise_exclusion_sigma = 4.0
+noise_exclusion_radius_px = 2
+```
+
+Set `residual.noise_exclusion_sigma = 0` to recover the previous behavior. The
+exclusion mask is used only to estimate `local_noise`; the particle pixels remain
+valid output pixels and are still normalized by the surrounding local noise.
+Static noise maps, when enabled, are still applied afterwards as a per-pixel
+floor through `max(local_noise, static_noise)`.
 
 ## Static residual-noise map
 

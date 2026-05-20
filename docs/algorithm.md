@@ -52,8 +52,9 @@ The image-sequence driver reconstructs a clean belt map by accumulating sampled 
 2. choose the map geometry from the supplied belt period or from the phase range of the selected sequence;
 3. sample frames from the image sequence;
 4. map every crop pixel to its predicted belt-coordinate row;
-5. average all observations that land in the same belt-map pixel;
-6. interpolate belt-map pixels that were not directly observed.
+5. linearly splat fractional belt-coordinate rows into the two neighboring belt-map rows;
+6. average all weighted observations that land in the same belt-map pixel;
+7. interpolate belt-map pixels that were not directly observed.
 
 When `MAP_MASK_ITERATIONS > 0`, this accumulation is refined by particle masking. BeltMap first builds a provisional map, renders each sampled frame, detects bright residual components, expands their bounding boxes, and excludes those pixels from the next map accumulation. This treats particle-covered observations as missing data rather than as belt texture.
 
@@ -152,7 +153,7 @@ BeltMap is designed for a fixed camera and a fixed conveyor-belt crop. In its cu
 - the belt region has already been cropped or specified accurately;
 - horizontal alignment and perspective distortion are negligible after cropping;
 - the belt texture has enough vertical structure for phase registration;
-- the default detector is appropriate for bright particles on a darker belt;
+- the configured detector polarity matches the residual signature of particles;
 - non-belt background is excluded via the belt-region validity mask.
 
 The method is not a general optical-flow tracker or a full geometric camera calibration pipeline. Its purpose is to exploit repeated belt texture to form a clean background model, subtract that model, and obtain interpretable particle detections and belt-relative velocities.

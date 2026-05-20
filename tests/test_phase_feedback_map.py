@@ -4,6 +4,7 @@ from PIL import Image
 from beltmap import PhaseRegistrationConfig, render_belt_view
 from beltmap._driver_map import (
     PhaseFeedbackConfig,
+    accumulate_belt_map,
     build_belt_map,
     build_belt_map_result,
     smooth_phase_corrections,
@@ -23,6 +24,36 @@ def test_smooth_phase_corrections_interpolates_and_median_smooths():
     )
 
     assert np.allclose(smoothed, np.arange(7, dtype=float))
+
+
+def test_accumulate_belt_map_splats_fractional_phase_linearly(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    frame = np.asarray([[10], [110]], dtype=np.uint8)
+    path = tmp_path / "frame_000.bmp"
+    Image.fromarray(frame).save(path)
+
+    belt_map, coverage = accumulate_belt_map(
+        paths=[path],
+        samples=[0],
+        region=(0, 0, 2, 1),
+        velocity=0.0,
+        reference_phase=0.25,
+        model_period=4.0,
+        map_height=4,
+        previous_belt_map=None,
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+    )
+
+    assert coverage["contributed_pixels"] == 2
+    assert coverage["observed_pixels"] == 3
+    assert np.allclose(belt_map[:, 0], [10.0, 85.0, 110.0, 60.0])
 
 
 def test_phase_feedback_map_refinement_reduces_speed_jitter_blur(tmp_path, monkeypatch):

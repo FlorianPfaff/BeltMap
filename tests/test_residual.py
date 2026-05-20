@@ -55,6 +55,37 @@ def test_estimate_local_noise_is_robust_to_sparse_large_particles():
     assert float(local_noise[23, 18]) < 8.0
 
 
+def test_estimate_local_noise_excludes_particle_pixels_from_local_scale():
+    rng = np.random.default_rng(12)
+    residual = rng.normal(0.0, 1.0, size=(51, 51))
+    residual[22:29, 22:29] += 50.0
+
+    without_exclusion = estimate_local_noise(
+        residual,
+        config=ResidualConfig(
+            noise_radius_px=4,
+            clip_sigma=5.0,
+            noise_exclusion_sigma=None,
+            min_noise=0.05,
+        ),
+    )
+    with_exclusion = estimate_local_noise(
+        residual,
+        config=ResidualConfig(
+            noise_radius_px=4,
+            clip_sigma=5.0,
+            noise_exclusion_sigma=4.0,
+            noise_exclusion_radius_px=1,
+            min_noise=0.05,
+        ),
+    )
+
+    assert float(with_exclusion[25, 25]) < float(without_exclusion[25, 25]) * 0.7
+    assert float(residual[25, 25] / with_exclusion[25, 25]) > float(
+        residual[25, 25] / without_exclusion[25, 25]
+    )
+
+
 def test_render_clean_belt_residual_returns_standardized_particle_signal():
     period = 64
     width = 16

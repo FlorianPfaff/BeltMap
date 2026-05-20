@@ -13,20 +13,35 @@ from beltmap import (
     render_belt_view,
 )
 from beltmap import _driver_runtime as rt
+from beltmap._driver_map import build_belt_map
+from beltmap._driver_motion import (
+    validate_auto_velocity_estimate,
+    validate_auto_velocity_region,
+)
 from beltmap.driver import (
     apply_static_noise_floor,
     learn_static_residual_noise_map,
     load_phase_estimates,
     load_recurrent_artifact_map,
+    phase_estimate_row,
+    subtract_static_background,
     validate_reused_phase_estimates,
 )
-from scripts.apply_beltmap_to_images import (
-    DATA,
-    build_belt_map,
-    phase_estimate_row,
-    validate_auto_velocity_estimate,
-    validate_auto_velocity_region,
-)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "+inf", "-inf"])
+def test_env_float_rejects_non_finite_values(monkeypatch, value):
+    monkeypatch.setenv("TEST_FLOAT", value)
+
+    with pytest.raises(ValueError, match="TEST_FLOAT must be finite"):
+        rt.env_float("TEST_FLOAT", 1.0)
+
+
+def test_env_float_rejects_non_finite_defaults(monkeypatch):
+    monkeypatch.delenv("TEST_FLOAT", raising=False)
+
+    with pytest.raises(ValueError, match="TEST_FLOAT must be finite"):
+        rt.env_float("TEST_FLOAT", float("nan"))
 
 
 def test_auto_velocity_rejects_full_frame_region_by_default(monkeypatch):
@@ -84,7 +99,7 @@ def test_phase_estimate_row_reports_circular_coordinates():
 
     row = phase_estimate_row(
         3,
-        DATA / "example.bmp",
+        rt.DATA / "example.bmp",
         residual,
         period_px=100.0,
     )
@@ -123,6 +138,58 @@ def test_load_phase_estimates_for_reuse_mode(tmp_path):
     assert estimates[1].correction_px == -0.5
     assert estimates[1].loss is None
     assert estimates[1].score is None
+
+
+def test_load_phase_estimates_validates_reused_image_sequence(tmp_path):
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "frame_index,image,phase_px,phase_fraction,phase_rad,predicted_phase_px,correction_px,loss,score,method",
+                "0,frames/frame0.bmp,1.5,0.15,0.94,1.0,0.5,0.2,0.8,registration",
+                "1,frames/frame1.bmp,9.5,0.95,5.97,10.0,-0.5,,,motion_model",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    estimates = load_phase_estimates(
+        path,
+        expected_image_paths=[
+            tmp_path / "frames" / "frame0.bmp",
+            tmp_path / "frames" / "frame1.bmp",
+        ],
+        data_dir=tmp_path,
+    )
+
+    assert estimates[0].phase_px == 1.5
+    assert estimates[1].phase_px == 9.5
+
+
+def test_load_phase_estimates_rejects_reordered_or_stale_images(tmp_path):
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "frame_index,image,phase_px,phase_fraction,phase_rad,predicted_phase_px,correction_px,loss,score,method",
+                "0,other_sequence/frame0.bmp,1.5,0.15,0.94,1.0,0.5,0.2,0.8,registration",
+                "1,frames/frame1.bmp,9.5,0.95,5.97,10.0,-0.5,,,motion_model",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="image column does not match"):
+        load_phase_estimates(
+            path,
+            expected_image_paths=[
+                tmp_path / "frames" / "frame0.bmp",
+                tmp_path / "frames" / "frame1.bmp",
+            ],
+            data_dir=tmp_path,
+        )
 
 
 def test_validate_reused_phase_estimates_reports_missing_frames():
@@ -179,13 +246,68 @@ def test_static_noise_floor_renormalizes_residual_without_changing_raw_values():
     )
 
     assert adjusted.raw is residual.raw
-    assert adjusted.mask is residual.mask
+    np.testing.assert_array_equal(adjusted.mask, residual.mask)
     np.testing.assert_allclose(adjusted.local_noise, [[4.0, 2.0], [5.0, 2.0]])
     np.testing.assert_allclose(
         adjusted.normalized,
         [[0.5, 4.0], [0.6, np.nan]],
         equal_nan=True,
     )
+
+
+def test_static_noise_floor_marks_pixels_without_valid_normalization_invalid():
+    residual = ResidualImage(
+        raw=np.array([[4.0, 6.0]]),
+        local_noise=np.array([[np.nan, 2.0]]),
+        normalized=np.array([[np.nan, 3.0]]),
+        mask=np.array([[True, True]]),
+        expected_background=np.zeros((1, 2)),
+    )
+
+    adjusted = apply_static_noise_floor(
+        residual,
+        np.array([[np.nan, 1.0]]),
+    )
+
+    np.testing.assert_array_equal(adjusted.mask, [[False, True]])
+    assert np.isnan(adjusted.normalized[0, 0])
+    assert adjusted.normalized[0, 1] == pytest.approx(3.0)
+
+
+def test_static_background_correction_marks_invalid_raw_pixels_invalid():
+    residual = ResidualImage(
+        raw=np.array(
+            [
+                [2.0, np.nan],
+                [3.0, 4.0],
+            ]
+        ),
+        local_noise=np.ones((2, 2)),
+        normalized=np.array(
+            [
+                [2.0, np.nan],
+                [3.0, 4.0],
+            ]
+        ),
+        mask=np.ones((2, 2), dtype=bool),
+        expected_background=np.zeros((2, 2)),
+    )
+
+    adjusted = subtract_static_background(
+        residual,
+        np.zeros((2, 2)),
+        residual_config=ResidualConfig(noise_radius_px=0),
+    )
+
+    np.testing.assert_array_equal(
+        adjusted.mask,
+        [
+            [True, False],
+            [True, True],
+        ],
+    )
+    assert np.isnan(adjusted.raw[0, 1])
+    assert np.isnan(adjusted.normalized[0, 1])
 
 
 def test_learn_static_residual_noise_map_estimates_per_pixel_mad(tmp_path, monkeypatch):

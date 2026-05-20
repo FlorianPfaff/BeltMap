@@ -17,6 +17,8 @@ from .residual import ResidualConfig, ResidualImage, generate_residual_image
 from .tracking import ParticleComponentConfig, extract_particle_detections
 
 MAP_PARTICLE_MASK_MODES = {"positive", "absolute", "hysteresis_abs"}
+MAP_AGGREGATION_METHODS = {"mean", "huber"}
+MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
     "smoothed_correction_px", "refined_phase_px", "loss", "score",
@@ -57,6 +59,8 @@ def belt_phase(frame_index: int, velocity: float, reference_phase: float, period
 
 
 def map_geometry(frame_count: int, crop_height: int, velocity: float, supplied_period: int | None) -> tuple[int, float, float | None]:
+    if supplied_period is not None and supplied_period <= 0:
+        raise ValueError("supplied_period must be positive when set")
     if supplied_period:
         return supplied_period, 0.0, float(supplied_period)
     phases = -velocity * np.arange(frame_count, dtype=np.float64)
@@ -66,6 +70,8 @@ def map_geometry(frame_count: int, crop_height: int, velocity: float, supplied_p
 
 
 def sample_indices(frame_count: int, sample_count: int) -> list[int]:
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
     sample_count = max(1, min(frame_count, sample_count))
     return sorted(set(int(i) for i in np.linspace(0, frame_count - 1, sample_count)))
 
@@ -76,6 +82,23 @@ def validate_map_particle_mask_mode(mode: str) -> str:
         choices = ", ".join(sorted(MAP_PARTICLE_MASK_MODES))
         raise ValueError(f"MAP_PARTICLE_MASK_MODE must be one of {choices}, got {mode!r}")
     return normalized
+
+
+def validate_map_aggregation(method: str) -> str:
+    normalized = method.strip().lower()
+    if normalized not in MAP_AGGREGATION_METHODS:
+        choices = ", ".join(sorted(MAP_AGGREGATION_METHODS))
+        raise ValueError(f"MAP_AGGREGATION must be one of {choices}, got {method!r}")
+    return normalized
+
+
+def validate_map_trim_fraction(trim_fraction: float) -> float:
+    """Validate the symmetric trim fraction used for robust belt-map means."""
+
+    value = float(trim_fraction)
+    if not np.isfinite(value) or not 0.0 <= value < 0.5:
+        raise ValueError(f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be in [0, 0.5), got {trim_fraction!r}")
+    return value
 
 
 def expanded_detection_mask(detections: list, shape: tuple[int, int], *, margin_px: int) -> np.ndarray:
@@ -105,6 +128,12 @@ def build_belt_map(
     mask_dilation_px: int = 0,
     mask_margin_px: int = 8,
     mask_min_area_px: int = 4,
+    aggregation: str = "mean",
+    robust_iterations: int = 1,
+    robust_huber_delta: float = 3.0,
+    robust_min_scale: float = 1.0,
+    map_trim_fraction: float | None = None,
+    fractional_splat: bool = True,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
@@ -119,6 +148,12 @@ def build_belt_map(
         mask_dilation_px=mask_dilation_px,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
+        aggregation=aggregation,
+        robust_iterations=robust_iterations,
+        robust_huber_delta=robust_huber_delta,
+        robust_min_scale=robust_min_scale,
+        map_trim_fraction=map_trim_fraction,
+        fractional_splat=fractional_splat,
         phase_feedback_config=phase_feedback_config,
     )
     if result.phase_refinement_rows:
@@ -145,17 +180,35 @@ def build_belt_map_result(
     mask_dilation_px: int = 0,
     mask_margin_px: int = 8,
     mask_min_area_px: int = 4,
+    aggregation: str = "mean",
+    robust_iterations: int = 1,
+    robust_huber_delta: float = 3.0,
+    robust_min_scale: float = 1.0,
+    map_trim_fraction: float | None = None,
+    fractional_splat: bool = True,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
         raise ValueError("paths must contain at least one image")
     mask_mode = validate_map_particle_mask_mode(mask_mode)
+    aggregation = validate_map_aggregation(aggregation)
     if mask_grow_threshold < 0:
         raise ValueError("mask_grow_threshold must be non-negative")
     if mask_dilation_px < 0:
         raise ValueError("mask_dilation_px must be non-negative")
+    if robust_iterations < 0:
+        raise ValueError("robust_iterations must be non-negative")
+    if robust_huber_delta <= 0:
+        raise ValueError("robust_huber_delta must be positive")
+    if robust_min_scale <= 0:
+        raise ValueError("robust_min_scale must be positive")
     cfg = _validate_phase_feedback_config(
         phase_feedback_config if phase_feedback_config is not None else _env_phase_feedback_config()
+    )
+    map_trim_fraction = validate_map_trim_fraction(
+        env_float(MAP_RECONSTRUCTION_TRIM_FRACTION_ENV, 0.0, minimum=0.0)
+        if map_trim_fraction is None
+        else map_trim_fraction
     )
     _, _, crop_height, crop_width = region
     max_samples = env_int("MAP_SAMPLE_FRAMES", 120, minimum=1)
@@ -176,6 +229,11 @@ def build_belt_map_result(
         mask_dilation_px=mask_dilation_px,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
+        aggregation=aggregation,
+        robust_iterations=robust_iterations if aggregation == "huber" else 0,
+        robust_huber_delta=robust_huber_delta,
+        robust_min_scale=robust_min_scale,
+        fractional_splat=fractional_splat,
         phase_refinement_iterations=cfg.iterations,
         phase_refinement_smoothing_window_frames=cfg.smoothing_window_frames,
     )
@@ -194,6 +252,8 @@ def build_belt_map_result(
         mask_dilation_px=mask_dilation_px,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
+        map_trim_fraction=map_trim_fraction,
+        fractional_splat=fractional_splat,
         pass_label="initial",
     )
     phase_by_frame: np.ndarray | None = None
@@ -232,6 +292,8 @@ def build_belt_map_result(
                 mask_dilation_px=mask_dilation_px,
                 mask_margin_px=mask_margin_px,
                 mask_min_area_px=mask_min_area_px,
+                map_trim_fraction=map_trim_fraction,
+                fractional_splat=fractional_splat,
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
             )
@@ -260,6 +322,8 @@ def build_belt_map_result(
             mask_dilation_px=mask_dilation_px,
             mask_margin_px=mask_margin_px,
             mask_min_area_px=mask_min_area_px,
+            map_trim_fraction=map_trim_fraction,
+            fractional_splat=fractional_splat,
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
         )
@@ -271,6 +335,41 @@ def build_belt_map_result(
             observed_pixels=coverage["observed_pixels"],
             total_pixels=coverage["total_pixels"],
         )
+    if aggregation == "huber" and robust_iterations > 0:
+        for iteration in range(1, robust_iterations + 1):
+            belt_map, coverage = accumulate_belt_map(
+                paths=paths,
+                samples=samples,
+                region=region,
+                velocity=velocity,
+                reference_phase=reference_phase,
+                model_period=model_period,
+                map_height=map_height,
+                previous_belt_map=belt_map,
+                mask_threshold=mask_threshold,
+                mask_mode=mask_mode,
+                mask_grow_threshold=mask_grow_threshold,
+                mask_dilation_px=mask_dilation_px,
+                mask_margin_px=mask_margin_px,
+                mask_min_area_px=mask_min_area_px,
+                pass_label=f"huber-{iteration}",
+                map_trim_fraction=map_trim_fraction,
+                fractional_splat=fractional_splat,
+                phase_by_frame=phase_by_frame,
+                robust_reference_belt_map=belt_map,
+                robust_huber_delta=robust_huber_delta,
+                robust_min_scale=robust_min_scale,
+            )
+            emit(
+                "belt_map",
+                f"completed robust Huber map refinement {iteration}/{robust_iterations}",
+                masked_pixels=coverage["masked_pixels"],
+                contributed_pixels=coverage["contributed_pixels"],
+                observed_pixels=coverage["observed_pixels"],
+                total_pixels=coverage["total_pixels"],
+                robust_huber_delta=robust_huber_delta,
+                robust_min_scale=robust_min_scale,
+            )
     return BeltMapBuildResult(
         belt_map=belt_map,
         reference_phase=reference_phase,
@@ -297,14 +396,32 @@ def accumulate_belt_map(
     mask_margin_px: int,
     mask_min_area_px: int,
     pass_label: str,
+    map_trim_fraction: float = 0.0,
+    fractional_splat: bool = True,
     phase_by_frame: Sequence[float] | Mapping[int, float] | None = None,
+    robust_reference_belt_map: np.ndarray | None = None,
+    robust_huber_delta: float = 3.0,
+    robust_min_scale: float = 1.0,
 ) -> tuple[np.ndarray, dict[str, int]]:
     _, _, crop_height, crop_width = region
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
     residual_config = ResidualConfig()
+    use_huber_weights = robust_reference_belt_map is not None
+    if use_huber_weights and robust_huber_delta <= 0:
+        raise ValueError("robust_huber_delta must be positive")
+    if use_huber_weights and robust_min_scale <= 0:
+        raise ValueError("robust_min_scale must be positive")
+    if not 0.0 <= map_trim_fraction < 0.5:
+        raise ValueError(
+            f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be in [0, 0.5), "
+            f"got {map_trim_fraction!r}"
+        )
+    use_trimmed_mean = map_trim_fraction > 0.0 and not use_huber_weights
     sums = np.zeros((map_height, crop_width), dtype=np.float64)
-    counts = np.zeros((map_height, crop_width), dtype=np.uint16)
+    weights = np.zeros((map_height, crop_width), dtype=np.float64)
+    stacked_values: list[np.ndarray] = []
+    stacked_weights: list[np.ndarray] = []
     masked_pixels = 0
     contributed_pixels = 0
     for sample_number, index in enumerate(samples, start=1):
@@ -317,6 +434,7 @@ def accumulate_belt_map(
             phase_by_frame=phase_by_frame,
         )
         valid = np.ones(frame.shape, dtype=bool)
+        expected = None
         if use_particle_mask:
             expected = render_belt_view(previous_belt_map, phase, crop_height)
             residual = generate_residual_image(frame, expected, config=residual_config)
@@ -331,23 +449,57 @@ def accumulate_belt_map(
             )
             valid &= ~particle_mask
             masked_pixels += int(np.count_nonzero(particle_mask))
-        coordinates = np.rint(np.arange(crop_height) + phase).astype(np.int64)
-        coordinates = coordinates % map_height if model_period else np.clip(coordinates, 0, map_height - 1)
-        for y, row in enumerate(coordinates):
-            valid_cols = valid[y]
-            sums[row, valid_cols] += frame[y, valid_cols]
-            counts[row, valid_cols] += 1
-            contributed_pixels += int(np.count_nonzero(valid_cols))
+        pixel_weights = None
+        if use_huber_weights:
+            if expected is None:
+                expected = render_belt_view(
+                    robust_reference_belt_map,
+                    phase,
+                    crop_height,
+                )
+            raw_residual = frame - expected
+            finite_valid = valid & np.isfinite(raw_residual)
+            pixel_weights = np.zeros(frame.shape, dtype=np.float64)
+            if np.any(finite_valid):
+                center = float(np.median(raw_residual[finite_valid]))
+                scale = robust_residual_scale(
+                    raw_residual,
+                    finite_valid,
+                    min_scale=robust_min_scale,
+                )
+                cutoff = robust_huber_delta * scale
+                centered_abs = np.abs(raw_residual - center)
+                pixel_weights[finite_valid] = 1.0
+                outliers = finite_valid & (centered_abs > cutoff)
+                pixel_weights[outliers] = cutoff / centered_abs[outliers]
+                valid &= pixel_weights > 0
+        frame_sums = sums if not use_trimmed_mean else np.zeros_like(sums)
+        frame_weights = weights if not use_trimmed_mean else np.zeros_like(weights)
+        contributed_pixels += _accumulate_frame_linear(
+            sums=frame_sums,
+            weights=frame_weights,
+            frame=frame,
+            valid=valid,
+            phase=phase,
+            map_height=map_height,
+            model_period=model_period,
+            pixel_weights=pixel_weights,
+        )
+        if use_trimmed_mean:
+            stacked_values.append(frame_sums)
+            stacked_weights.append(frame_weights)
+            sums += frame_sums
+            weights += frame_weights
         if sample_number == 1 or sample_number == len(samples) or sample_number % progress_interval == 0:
             emit(
                 "belt_map",
                 f"accumulated {sample_number}/{len(samples)} sampled frames",
                 pass_label=pass_label,
                 source_frame_index=index,
-                observed_pixels=int(np.count_nonzero(counts)),
+                observed_pixels=int(np.count_nonzero(weights)),
                 masked_pixels=masked_pixels,
             )
-    known_pixels = counts > 0
+    known_pixels = weights > 0
     if not np.any(known_pixels):
         raise RuntimeError("No pixels contributed to the belt map")
     emit(
@@ -355,18 +507,33 @@ def accumulate_belt_map(
         "interpolating unobserved belt-map pixels",
         pass_label=pass_label,
         observed_pixels=int(np.count_nonzero(known_pixels)),
-        total_pixels=int(counts.size),
+        total_pixels=int(weights.size),
         masked_pixels=masked_pixels,
     )
     belt_map = np.empty_like(sums, dtype=np.float32)
     x = np.arange(map_height, dtype=np.float64)
-    global_mean = float(np.sum(sums) / np.sum(counts))
+    total_weight = float(np.sum(weights))
+    if total_weight <= 0:
+        raise RuntimeError("No pixels contributed to the belt map")
+    if use_trimmed_mean:
+        values_by_sample = np.stack(stacked_values, axis=0)
+        weights_by_sample = np.stack(stacked_weights, axis=0)
+        sums, weights = _trim_belt_map_accumulators(
+            values_by_sample,
+            weights_by_sample,
+            trim_fraction=map_trim_fraction,
+        )
+        known_pixels = weights > 0
+        total_weight = float(np.sum(weights))
+        if total_weight <= 0:
+            raise RuntimeError("No pixels contributed to the belt map after trimming")
+    global_mean = float(np.sum(sums) / total_weight)
     for col in range(crop_width):
         known = np.flatnonzero(known_pixels[:, col])
         if known.size == 0:
             belt_map[:, col] = global_mean
             continue
-        values = sums[known, col] / counts[known, col].astype(np.float64)
+        values = sums[known, col] / weights[known, col]
         if model_period and known.size > 1:
             xp = np.r_[known - map_height, known, known + map_height].astype(np.float64)
             belt_map[:, col] = np.interp(x, xp, np.r_[values, values, values]).astype(np.float32)
@@ -378,8 +545,134 @@ def accumulate_belt_map(
         "masked_pixels": masked_pixels,
         "contributed_pixels": contributed_pixels,
         "observed_pixels": int(np.count_nonzero(known_pixels)),
-        "total_pixels": int(counts.size),
+        "total_pixels": int(weights.size),
     }
+
+
+def _trim_belt_map_accumulators(
+    values_by_sample: np.ndarray,
+    weights_by_sample: np.ndarray,
+    *,
+    trim_fraction: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    _sample_count, map_height, map_width = values_by_sample.shape
+    sums = np.zeros((map_height, map_width), dtype=np.float64)
+    weights = np.zeros((map_height, map_width), dtype=np.float64)
+    for row in range(map_height):
+        for col in range(map_width):
+            positive = weights_by_sample[:, row, col] > 0
+            if not np.any(positive):
+                continue
+            values = (
+                values_by_sample[positive, row, col]
+                / weights_by_sample[positive, row, col]
+            )
+            sample_weights = weights_by_sample[positive, row, col]
+            keep = _trim_sample_mask(values, trim_fraction=trim_fraction)
+            if not np.any(keep):
+                continue
+            sums[row, col] = float(np.sum(values[keep] * sample_weights[keep]))
+            weights[row, col] = float(np.sum(sample_weights[keep]))
+    return sums, weights
+
+
+def _trim_sample_mask(values: np.ndarray, *, trim_fraction: float) -> np.ndarray:
+    if trim_fraction <= 0.0 or values.size <= 1:
+        return np.ones(values.shape, dtype=bool)
+    sorted_order = np.argsort(values)
+    trim_count = int(np.floor(trim_fraction * values.size))
+    if trim_count <= 0:
+        return np.ones(values.shape, dtype=bool)
+    keep_sorted = sorted_order[trim_count : values.size - trim_count]
+    keep = np.zeros(values.shape, dtype=bool)
+    keep[keep_sorted] = True
+    return keep
+
+
+def _accumulate_frame_linear(
+    *,
+    sums: np.ndarray,
+    weights: np.ndarray,
+    frame: np.ndarray,
+    valid: np.ndarray,
+    phase: float,
+    map_height: int,
+    model_period: float | None,
+    pixel_weights: np.ndarray | None = None,
+) -> int:
+    """Accumulate one frame with the same linear row model used for rendering."""
+
+    if sums.shape != weights.shape:
+        raise ValueError("sums and weights must have the same shape")
+    if sums.shape[0] != map_height:
+        raise ValueError("map_height must match the accumulator height")
+    if frame.ndim != 2:
+        raise ValueError("frame must be a 2-D array")
+    if valid.shape != frame.shape:
+        raise ValueError("valid must have the same shape as frame")
+    if frame.shape[1] != sums.shape[1]:
+        raise ValueError("frame width must match the accumulator width")
+    if pixel_weights is not None and pixel_weights.shape != frame.shape:
+        raise ValueError("pixel_weights must have the same shape as frame")
+
+    rows = np.arange(frame.shape[0], dtype=np.float64) + float(phase)
+    if model_period:
+        rows = np.mod(rows, map_height)
+    else:
+        rows = np.clip(rows, 0.0, float(map_height - 1))
+    row0 = np.floor(rows).astype(np.int64)
+    if model_period:
+        row1 = (row0 + 1) % map_height
+    else:
+        row1 = np.minimum(row0 + 1, map_height - 1)
+    row1_weight = rows - row0
+    row0_weight = 1.0 - row1_weight
+
+    contributed_pixels = 0
+    for y in range(frame.shape[0]):
+        valid_cols = valid[y]
+        pixel_count = int(np.count_nonzero(valid_cols))
+        if pixel_count == 0:
+            continue
+        values = frame[y, valid_cols]
+        sample_weights = (
+            np.ones(values.shape, dtype=np.float64)
+            if pixel_weights is None
+            else pixel_weights[y, valid_cols].astype(np.float64, copy=False)
+        )
+        positive = sample_weights > 0
+        if not np.any(positive):
+            continue
+        values = values[positive]
+        sample_weights = sample_weights[positive]
+        target_cols = np.flatnonzero(valid_cols)[positive]
+        weight0 = float(row0_weight[y])
+        weight1 = float(row1_weight[y])
+        if weight0 > 0.0:
+            sums[row0[y], target_cols] += weight0 * sample_weights * values
+            weights[row0[y], target_cols] += weight0 * sample_weights
+        if weight1 > 0.0:
+            sums[row1[y], target_cols] += weight1 * sample_weights * values
+            weights[row1[y], target_cols] += weight1 * sample_weights
+        contributed_pixels += int(np.count_nonzero(positive))
+    return contributed_pixels
+
+
+def robust_residual_scale(
+    residual: np.ndarray,
+    valid: np.ndarray,
+    *,
+    min_scale: float,
+) -> float:
+    values = np.asarray(residual, dtype=np.float64)[valid]
+    values = values[np.isfinite(values)]
+    if values.size < 2:
+        return min_scale
+    center = float(np.median(values))
+    mad = float(np.median(np.abs(values - center)))
+    if not math.isfinite(mad) or mad <= 0:
+        return min_scale
+    return max(1.4826 * mad, min_scale)
 
 
 def detect_map_particle_mask(
@@ -395,13 +688,29 @@ def detect_map_particle_mask(
     mode = validate_map_particle_mask_mode(mode)
     if mode == "positive":
         raw_mask = detect_particles_from_residual(residual, threshold=threshold)
-        return _component_bbox_mask(raw_mask, residual=residual, min_area_px=min_area_px, margin_px=margin_px)
+        return _component_mask_with_optional_dilation(
+            raw_mask,
+            residual=residual,
+            min_area_px=min_area_px,
+            margin_px=margin_px,
+            dilation_px=dilation_px,
+        )
     values = np.asarray(residual.normalized, dtype=np.float64)
     valid = np.asarray(residual.mask, dtype=bool) & np.isfinite(values)
     abs_values = np.abs(values)
     if mode == "absolute":
         raw_mask = valid & (abs_values > threshold)
-        return _component_bbox_mask(raw_mask, residual=residual, min_area_px=min_area_px, margin_px=margin_px)
+        return _component_mask_with_optional_dilation(
+            raw_mask,
+            residual=residual,
+            min_area_px=min_area_px,
+            margin_px=margin_px,
+            dilation_px=dilation_px,
+        )
+    if grow_threshold > threshold:
+        raise ValueError(
+            "grow_threshold must be less than or equal to threshold for hysteresis_abs map masks"
+        )
     seed_mask = valid & (abs_values >= threshold)
     grow_mask = valid & (abs_values >= grow_threshold)
     if not np.any(seed_mask) or not np.any(grow_mask):
@@ -516,6 +825,24 @@ def smooth_phase_corrections(*, frame_count: int, correction_by_frame: Sequence[
         stop = min(frame_count, index + half_window + 1)
         smoothed[index] = float(np.median(interpolated[start:stop]))
     return smoothed
+
+
+def _component_mask_with_optional_dilation(
+    raw_mask: np.ndarray,
+    *,
+    residual: ResidualImage,
+    min_area_px: int,
+    margin_px: int,
+    dilation_px: int,
+) -> np.ndarray:
+    if dilation_px > 0:
+        cleaned = _morphological_cleanup(
+            raw_mask,
+            min_area_px=min_area_px,
+            dilation_px=dilation_px,
+        )
+        return _component_bbox_mask(cleaned, residual=residual, min_area_px=1, margin_px=margin_px)
+    return _component_bbox_mask(raw_mask, residual=residual, min_area_px=min_area_px, margin_px=margin_px)
 
 
 def _component_bbox_mask(raw_mask: np.ndarray, *, residual: ResidualImage, min_area_px: int, margin_px: int) -> np.ndarray:

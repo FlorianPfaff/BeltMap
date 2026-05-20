@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from beltmap.cli.apply import main as _beltmap_cli_main
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(_beltmap_cli_main())
+
+
 import csv
 import json
 import math
@@ -19,14 +26,17 @@ from beltmap import (
     ParticleComponentConfig,
     ParticleTrackingConfig,
     PhaseRegistrationConfig,
+    PhaseTrajectorySmoothingConfig,
     ResidualConfig,
     ResidualImage,
     detect_particles_from_residual,
+    estimate_phase,
     estimate_particle_velocities_vs_belt,
     extract_particle_detections,
     generate_residual_image,
     render_clean_belt_residual,
     render_belt_view,
+    smooth_phase_estimates,
     track_particle_detections,
 )
 
@@ -63,6 +73,20 @@ def env_int(name: str, default: int, minimum: int | None = None) -> int:
 def env_float(name: str, default: float, minimum: float | None = None) -> float:
     value = os.getenv(name, "").strip()
     parsed = default if value == "" else float(value)
+    if minimum is not None and parsed < minimum:
+        raise ValueError(f"{name}={parsed} is below minimum {minimum}")
+    return parsed
+
+
+def env_optional_float(
+    name: str,
+    default: float | None = None,
+    minimum: float | None = None,
+) -> float | None:
+    value = os.getenv(name, "").strip()
+    if value == "":
+        return default
+    parsed = float(value)
     if minimum is not None and parsed < minimum:
         raise ValueError(f"{name}={parsed} is below minimum {minimum}")
     return parsed
@@ -264,6 +288,64 @@ def estimate_velocity(paths: list[Path], region: tuple[int, int, int, int]) -> t
     return velocity, shifts
 
 
+SELECTED_FRAME_VELOCITY_UNIT = "selected_frame"
+SOURCE_FRAME_VELOCITY_UNIT = "source_frame"
+VELOCITY_FRAME_UNITS = {
+    SELECTED_FRAME_VELOCITY_UNIT,
+    SOURCE_FRAME_VELOCITY_UNIT,
+}
+
+
+def normalize_velocity_frame_unit(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        SELECTED_FRAME_VELOCITY_UNIT: SELECTED_FRAME_VELOCITY_UNIT,
+        "selected": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "strided_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "output_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        SOURCE_FRAME_VELOCITY_UNIT: SOURCE_FRAME_VELOCITY_UNIT,
+        "source": SOURCE_FRAME_VELOCITY_UNIT,
+        "original": SOURCE_FRAME_VELOCITY_UNIT,
+        "original_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "input_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "raw_frame": SOURCE_FRAME_VELOCITY_UNIT,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        choices = ", ".join(sorted(VELOCITY_FRAME_UNITS))
+        raise ValueError(
+            f"BELT_VELOCITY_FRAME_UNIT must be one of {choices}; got {value!r}"
+        ) from exc
+
+
+def resolve_velocity_frame_unit(frame_stride: int) -> str:
+    if frame_stride < 1:
+        raise ValueError("FRAME_STRIDE must be at least 1")
+    value = os.getenv("BELT_VELOCITY_FRAME_UNIT", "").strip()
+    if value:
+        return normalize_velocity_frame_unit(value)
+    if frame_stride == 1:
+        return SELECTED_FRAME_VELOCITY_UNIT
+    raise ValueError(
+        f"BELT_VELOCITY_PX_PER_FRAME was supplied with FRAME_STRIDE={frame_stride}. "
+        "Set BELT_VELOCITY_FRAME_UNIT=selected_frame if the supplied velocity is "
+        "already in pixels per processed/selected frame, or set "
+        "BELT_VELOCITY_FRAME_UNIT=source_frame if it is in pixels per adjacent "
+        "original input frame. Source-frame velocities are multiplied by FRAME_STRIDE."
+    )
+
+
+def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[float, str, float]:
+    raw_velocity = float(velocity_spec)
+    frame_unit = resolve_velocity_frame_unit(frame_stride)
+    if frame_unit == SOURCE_FRAME_VELOCITY_UNIT:
+        return raw_velocity * frame_stride, frame_unit, raw_velocity
+    return raw_velocity, frame_unit, raw_velocity
+
+
 def optional_positive_int(name: str) -> int | None:
     value = os.getenv(name, "").strip()
     if not value:
@@ -384,7 +466,7 @@ def accumulate_belt_map(
     residual_config = ResidualConfig()
 
     sums = np.zeros((map_height, crop_width), dtype=np.float64)
-    counts = np.zeros((map_height, crop_width), dtype=np.uint16)
+    weights = np.zeros((map_height, crop_width), dtype=np.float64)
     masked_pixels = 0
     contributed_pixels = 0
     for sample_number, index in enumerate(samples, start=1):
@@ -409,24 +491,26 @@ def accumulate_belt_map(
             valid &= ~particle_mask
             masked_pixels += int(np.count_nonzero(particle_mask))
 
-        coordinates = np.rint(np.arange(crop_height) + phase).astype(np.int64)
-        coordinates = coordinates % map_height if model_period else np.clip(coordinates, 0, map_height - 1)
-        for y, row in enumerate(coordinates):
-            valid_cols = valid[y]
-            sums[row, valid_cols] += frame[y, valid_cols]
-            counts[row, valid_cols] += 1
-            contributed_pixels += int(np.count_nonzero(valid_cols))
+        contributed_pixels += _accumulate_frame_linear(
+            sums=sums,
+            weights=weights,
+            frame=frame,
+            valid=valid,
+            phase=phase,
+            map_height=map_height,
+            model_period=model_period,
+        )
         if sample_number == 1 or sample_number == len(samples) or sample_number % progress_interval == 0:
             emit(
                 "belt_map",
                 f"accumulated {sample_number}/{len(samples)} sampled frames",
                 pass_label=pass_label,
                 source_frame_index=index,
-                observed_pixels=int(np.count_nonzero(counts)),
+                observed_pixels=int(np.count_nonzero(weights)),
                 masked_pixels=masked_pixels,
             )
 
-    known_pixels = counts > 0
+    known_pixels = weights > 0
     if not np.any(known_pixels):
         raise RuntimeError("No pixels contributed to the belt map")
     emit(
@@ -434,19 +518,22 @@ def accumulate_belt_map(
         "interpolating unobserved belt-map pixels",
         pass_label=pass_label,
         observed_pixels=int(np.count_nonzero(known_pixels)),
-        total_pixels=int(counts.size),
+        total_pixels=int(weights.size),
         masked_pixels=masked_pixels,
     )
 
     belt_map = np.empty_like(sums, dtype=np.float32)
     x = np.arange(map_height, dtype=np.float64)
-    global_mean = float(np.sum(sums) / np.sum(counts))
+    total_weight = float(np.sum(weights))
+    if total_weight <= 0:
+        raise RuntimeError("No pixels contributed to the belt map")
+    global_mean = float(np.sum(sums) / total_weight)
     for col in range(crop_width):
         known = np.flatnonzero(known_pixels[:, col])
         if known.size == 0:
             belt_map[:, col] = global_mean
             continue
-        values = sums[known, col] / counts[known, col].astype(np.float64)
+        values = sums[known, col] / weights[known, col]
         if model_period and known.size > 1:
             xp = np.r_[known - map_height, known, known + map_height].astype(np.float64)
             fp = np.r_[values, values, values]
@@ -460,8 +547,63 @@ def accumulate_belt_map(
         "masked_pixels": masked_pixels,
         "contributed_pixels": contributed_pixels,
         "observed_pixels": int(np.count_nonzero(known_pixels)),
-        "total_pixels": int(counts.size),
+        "total_pixels": int(weights.size),
     }
+
+
+def _accumulate_frame_linear(
+    *,
+    sums: np.ndarray,
+    weights: np.ndarray,
+    frame: np.ndarray,
+    valid: np.ndarray,
+    phase: float,
+    map_height: int,
+    model_period: float | None,
+) -> int:
+    """Accumulate one frame with the same linear row model used for rendering."""
+
+    if sums.shape != weights.shape:
+        raise ValueError("sums and weights must have the same shape")
+    if sums.shape[0] != map_height:
+        raise ValueError("map_height must match the accumulator height")
+    if frame.ndim != 2:
+        raise ValueError("frame must be a 2-D array")
+    if valid.shape != frame.shape:
+        raise ValueError("valid must have the same shape as frame")
+    if frame.shape[1] != sums.shape[1]:
+        raise ValueError("frame width must match the accumulator width")
+
+    rows = np.arange(frame.shape[0], dtype=np.float64) + float(phase)
+    if model_period:
+        rows = np.mod(rows, map_height)
+    else:
+        rows = np.clip(rows, 0.0, float(map_height - 1))
+    row0 = np.floor(rows).astype(np.int64)
+    if model_period:
+        row1 = (row0 + 1) % map_height
+    else:
+        row1 = np.minimum(row0 + 1, map_height - 1)
+    row1_weight = rows - row0
+    row0_weight = 1.0 - row1_weight
+
+    contributed_pixels = 0
+    for y in range(frame.shape[0]):
+        valid_cols = valid[y]
+        pixel_count = int(np.count_nonzero(valid_cols))
+        if pixel_count == 0:
+            continue
+        values = frame[y, valid_cols]
+        weight0 = float(row0_weight[y])
+        weight1 = float(row1_weight[y])
+        if weight0 > 0.0:
+            sums[row0[y], valid_cols] += weight0 * values
+            weights[row0[y], valid_cols] += weight0
+        if weight1 > 0.0:
+            sums[row1[y], valid_cols] += weight1 * values
+            weights[row1[y], valid_cols] += weight1
+        contributed_pixels += pixel_count
+    return contributed_pixels
 
 
 def expanded_detection_mask(
@@ -539,6 +681,91 @@ def should_save_residual_preview(frame_index: int, preview_frames: int, preview_
     return frame_index < preview_frames or (preview_interval > 0 and frame_index % preview_interval == 0)
 
 
+def maybe_smooth_phase_trajectory(
+    *,
+    paths: list[Path],
+    region: tuple[int, int, int, int],
+    belt_map: np.ndarray,
+    motion_model: BeltMotionModel,
+    registration_config: PhaseRegistrationConfig,
+    smoothing_config: PhaseTrajectorySmoothingConfig,
+    progress_interval: int,
+) -> list | None:
+    if smoothing_config.window_radius_frames <= 0:
+        return None
+
+    emit(
+        "phase",
+        "estimating per-frame registration trajectory",
+        selected_frames=len(paths),
+        window_radius_frames=smoothing_config.window_radius_frames,
+        min_score=smoothing_config.min_score,
+        max_abs_correction_px=smoothing_config.max_abs_correction_px,
+        robust_sigma=smoothing_config.robust_sigma,
+        min_support=smoothing_config.min_support,
+    )
+    start = time.perf_counter()
+    raw_estimates = []
+    for frame_index, path in enumerate(paths):
+        frame = crop(read_gray(path), region)
+        raw_estimates.append(
+            estimate_phase(
+                float(frame_index),
+                motion_model,
+                frame=frame,
+                belt_map=belt_map,
+                config=registration_config,
+            )
+        )
+        processed = frame_index + 1
+        if (
+            processed == 1
+            or processed == len(paths)
+            or processed % progress_interval == 0
+        ):
+            dt = time.perf_counter() - start
+            fps = processed / dt if dt > 0 else float("inf")
+            emit(
+                "phase",
+                f"registered phase {processed}/{len(paths)} frames",
+                processed_frames=processed,
+                remaining_frames=len(paths) - processed,
+                frames_per_second=round(fps, 4),
+                current_image=path,
+            )
+
+    smoothed = smooth_phase_estimates(
+        raw_estimates,
+        period_px=motion_model.period_px,
+        config=smoothing_config,
+    )
+    raw_corrections = np.asarray(
+        [estimate.correction_px for estimate in raw_estimates],
+        dtype=np.float64,
+    )
+    smoothed_corrections = np.asarray(
+        [estimate.correction_px for estimate in smoothed],
+        dtype=np.float64,
+    )
+    finite_delta = np.isfinite(raw_corrections) & np.isfinite(smoothed_corrections)
+    max_delta = None
+    median_delta = None
+    if np.any(finite_delta):
+        abs_delta = np.abs(
+            smoothed_corrections[finite_delta] - raw_corrections[finite_delta]
+        )
+        max_delta = float(np.max(abs_delta))
+        median_delta = float(np.median(abs_delta))
+    emit(
+        "phase",
+        "finished phase trajectory smoothing",
+        phase_estimates=len(smoothed),
+        max_abs_smoothing_delta_px=max_delta,
+        median_abs_smoothing_delta_px=median_delta,
+    )
+    return smoothed
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     emit("startup", "starting BeltMap image driver", data_dir=DATA, output_dir=OUT)
@@ -550,12 +777,28 @@ def main() -> None:
     emit("images", "loaded first frame and parsed crop region", first_image_shape=list(first.shape), belt_region={"top": region[0], "left": region[1], "height": region[2], "width": region[3]})
 
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
+    belt_velocity_source = "auto"
+    belt_velocity_frame_unit = "selected_frame"
+    supplied_belt_velocity_px_per_frame: float | None = None
     if velocity_spec == "auto":
         validate_auto_velocity_region(region, first.shape)
         belt_velocity, pair_shifts = estimate_velocity(paths, region)
     else:
-        belt_velocity, pair_shifts = float(velocity_spec), []
-        emit("velocity", "using supplied belt velocity", belt_velocity_px_per_frame=belt_velocity)
+        (
+            belt_velocity,
+            belt_velocity_frame_unit,
+            supplied_belt_velocity_px_per_frame,
+        ) = resolve_supplied_velocity(velocity_spec, frame_stride)
+        belt_velocity_source = "supplied"
+        pair_shifts = []
+        emit(
+            "velocity",
+            "using supplied belt velocity",
+            supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
+            belt_velocity_frame_unit=belt_velocity_frame_unit,
+            belt_velocity_px_per_selected_frame=belt_velocity,
+            frame_stride=frame_stride,
+        )
 
     period_px = optional_positive_int("BELT_PERIOD_PX")
     detection_threshold = env_float("DETECTION_THRESHOLD", 5.0)
@@ -569,6 +812,9 @@ def main() -> None:
         "config",
         "runtime parameters",
         belt_velocity_px_per_frame=belt_velocity,
+        belt_velocity_source=belt_velocity_source,
+        belt_velocity_frame_unit=belt_velocity_frame_unit,
+        supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
         belt_period_px=period_px,
         detection_threshold=detection_threshold,
         min_area_px=min_area_px,
@@ -595,6 +841,29 @@ def main() -> None:
 
     motion_model = BeltMotionModel(image_velocity_px_per_frame=belt_velocity, period_px=float(map_height), reference_frame=0.0, reference_phase_px=reference_phase)
     registration_config = PhaseRegistrationConfig(search_radius_px=env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0), search_step_px=env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9))
+    phase_smoothing_config = PhaseTrajectorySmoothingConfig(
+        window_radius_frames=env_int(
+            "PHASE_SMOOTHING_WINDOW_RADIUS_FRAMES",
+            0,
+            minimum=0,
+        ),
+        min_score=env_optional_float(
+            "PHASE_SMOOTHING_MIN_SCORE",
+            None,
+            minimum=0.0,
+        ),
+        max_abs_correction_px=env_optional_float(
+            "PHASE_SMOOTHING_MAX_ABS_CORRECTION_PX",
+            registration_config.search_radius_px,
+            minimum=0.0,
+        ),
+        robust_sigma=env_float(
+            "PHASE_SMOOTHING_ROBUST_SIGMA",
+            3.0,
+            minimum=1e-9,
+        ),
+        min_support=env_int("PHASE_SMOOTHING_MIN_SUPPORT", 3, minimum=1),
+    )
     component_config = ParticleComponentConfig(min_area_px=min_area_px)
     residual_config = ResidualConfig()
 
@@ -602,6 +871,15 @@ def main() -> None:
     partial_output_interval = env_int("PARTIAL_OUTPUT_INTERVAL_FRAMES", 250, minimum=0)
     residual_preview_frames = env_int("DEBUG_RESIDUAL_PREVIEW_FRAMES", 3, minimum=0)
     residual_preview_interval = env_int("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", 0, minimum=0)
+    phase_estimates_by_frame = maybe_smooth_phase_trajectory(
+        paths=paths,
+        region=region,
+        belt_map=belt_map,
+        motion_model=motion_model,
+        registration_config=registration_config,
+        smoothing_config=phase_smoothing_config,
+        progress_interval=progress_interval,
+    )
     emit("detect", "starting residual rendering and particle detection", selected_frames=len(paths), progress_interval_frames=progress_interval, partial_output_interval_frames=partial_output_interval, residual_preview_frames=residual_preview_frames, residual_preview_interval_frames=residual_preview_interval)
 
     detections_by_frame = []
@@ -610,7 +888,23 @@ def main() -> None:
     detection_start = time.perf_counter()
     for frame_index, path in enumerate(paths):
         frame = crop(read_gray(path), region)
-        residual = render_clean_belt_residual(image=frame, belt_map=belt_map, frame_index=float(frame_index), motion_model=motion_model, belt_region=None, registration_config=registration_config, residual_config=residual_config)
+        phase_estimate = (
+            None
+            if phase_estimates_by_frame is None
+            else phase_estimates_by_frame[frame_index]
+        )
+        residual = render_clean_belt_residual(
+            image=frame,
+            belt_map=belt_map,
+            frame_index=float(frame_index),
+            motion_model=motion_model,
+            belt_region=None,
+            phase_estimate=phase_estimate,
+            registration_config=(
+                None if phase_estimate is not None else registration_config
+            ),
+            residual_config=residual_config,
+        )
         phase_rows.append(phase_estimate_row(frame_index, path, residual, float(map_height)))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             save_png(residual, OUT / f"residual_frame_{frame_index:06d}.png")
@@ -670,6 +964,9 @@ def main() -> None:
         "frame_stride": frame_stride,
         "first_image_shape": list(first.shape),
         "belt_region": {"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
+        "belt_velocity_source": belt_velocity_source,
+        "belt_velocity_frame_unit": belt_velocity_frame_unit,
+        "supplied_belt_velocity_px_per_frame": supplied_belt_velocity_px_per_frame,
         "belt_velocity_px_per_frame": belt_velocity,
         "belt_period_px_input": period_px,
         "belt_map_height_px": map_height,
@@ -680,6 +977,15 @@ def main() -> None:
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
+        "phase_smoothing_window_radius_frames": (
+            phase_smoothing_config.window_radius_frames
+        ),
+        "phase_smoothing_min_score": phase_smoothing_config.min_score,
+        "phase_smoothing_max_abs_correction_px": (
+            phase_smoothing_config.max_abs_correction_px
+        ),
+        "phase_smoothing_robust_sigma": phase_smoothing_config.robust_sigma,
+        "phase_smoothing_min_support": phase_smoothing_config.min_support,
         "n_phase_estimates": len(phase_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
@@ -696,6 +1002,8 @@ def main() -> None:
         f"- Belt velocity: {belt_velocity:.6g} px/frame\n"
         f"- Belt map height: {map_height}\n"
         f"- Map particle-mask iterations: {map_mask_iterations}\n"
+        "- Phase smoothing window radius: "
+        f"{phase_smoothing_config.window_radius_frames}\n"
         f"- Phase estimates: {len(phase_rows)}\n"
         f"- Detections: {len(detection_rows)}\n"
         f"- Tracks: {len(tracks)}\n"
@@ -708,4 +1016,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Keep this legacy script path aligned with the packaged console entry point.
+    from beltmap.cli.apply import main as cli_main
+
+    raise SystemExit(cli_main())

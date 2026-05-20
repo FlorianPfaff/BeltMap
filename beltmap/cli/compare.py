@@ -46,6 +46,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated residual preview frames for the contact sheet, for example 0,248,496.",
     )
     parser.add_argument(
+        "--truth-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional CSV/JSON file with manually labeled crop-local particle boxes. "
+            "When supplied, the comparison report includes labeled detection precision, recall, and F1."
+        ),
+    )
+    parser.add_argument(
+        "--truth-iou-threshold",
+        type=float,
+        default=0.25,
+        help="IoU threshold used to match detections to labeled boxes. Default: 0.25",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Do not print generated artifact paths as JSON.",
@@ -56,12 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    specs = [parse_run_spec(value) for value in args.run]
-    artifacts = generate_comparison_report(
-        specs,
-        report_dir=args.report_dir,
-        frames=args.frames,
-    )
+    try:
+        specs = [parse_run_spec(value) for value in args.run]
+        artifacts = generate_comparison_report(
+            specs,
+            report_dir=args.report_dir,
+            frames=args.frames,
+            truth_path=args.truth_path,
+            truth_iou_threshold=args.truth_iou_threshold,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
     if not args.quiet:
         print(
             json.dumps(
@@ -70,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
                     "summary_csv": str(artifacts.summary_csv),
                     "plots": {key: str(path) for key, path in artifacts.plots.items()},
                     "images": {key: str(path) for key, path in artifacts.images.items()},
+                    "truth_path": None if args.truth_path is None else str(args.truth_path),
+                    "truth_iou_threshold": args.truth_iou_threshold,
                 },
                 indent=2,
             ),

@@ -59,9 +59,12 @@ def finite_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
-        return int(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def circular_signed_error_px(estimate: float, truth: float, period: float) -> float:
@@ -1002,7 +1005,8 @@ def generate_benchmark_report(
 ) -> BenchmarkArtifacts:
     """Compute and write synthetic benchmark artifacts."""
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not output_dir.is_dir():
+        raise FileNotFoundError(f"BeltMap output directory does not exist: {output_dir}")
     metrics = compute_benchmark_metrics(
         output_dir=output_dir,
         truth_path=truth_path,

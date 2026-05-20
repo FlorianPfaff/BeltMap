@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +23,7 @@ from . import (
     RecurrentArtifactConfig,
     TrackFilterConfig,
     detect_particles_from_residual,
+    detection_signal_from_residual,
     estimate_particle_velocities_vs_belt,
     estimate_local_noise,
     extract_particle_detections,
@@ -31,6 +32,7 @@ from . import (
     track_particle_detections,
 )
 from . import _driver_runtime as rt
+from .detection import detect_particles_from_residual_hysteresis
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
     PhaseFeedbackConfig,
@@ -38,12 +40,19 @@ from ._driver_map import (
     expanded_detection_mask,
     sample_indices,
 )
-from ._driver_motion import estimate_velocity, parse_region, validate_auto_velocity_region
+from ._driver_motion import (
+    estimate_velocity,
+    parse_region,
+    resolve_supplied_velocity,
+    validate_auto_velocity_region,
+)
+from .phase import PhaseDriftConfig, PhaseDriftFilter, refine_phase_by_registration
 from .recurrent_artifacts import (
     RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
     build_recurrent_artifact_map,
     score_recurrent_artifact_detections,
+    score_recurrent_artifact_detections_excluding_current_revolution,
 )
 
 DETECTION_FIELDS = [
@@ -51,11 +60,12 @@ DETECTION_FIELDS = [
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
     "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_probability",
     "recurrent_artifact_required_peak_signal",
 ]
 PHASE_FIELDS = [
     "frame_index", "image", "phase_px", "phase_fraction", "phase_rad",
-    "predicted_phase_px", "correction_px", "loss", "score", "method",
+    "predicted_phase_px", "correction_px", "phase_drift_px", "loss", "score", "method",
 ]
 VELOCITY_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
@@ -69,6 +79,7 @@ TRACK_DETECTION_FIELDS = [
     "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
     "mean_signal", "peak_signal",
     "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_probability",
     "recurrent_artifact_required_peak_signal",
 ]
 RECURRENT_ARTIFACT_DETECTION_FIELDS = [
@@ -84,6 +95,14 @@ TRACK_SCORE_FIELDS = [
 ]
 
 
+@dataclass(frozen=True)
+class ReusedPhaseEstimate:
+    """Loaded phase estimate plus the source image recorded in phase_estimates.csv."""
+
+    estimate: PhaseEstimate
+    image: str | None = None
+
+
 def optional_positive_int(name: str) -> int | None:
     value = os.getenv(name, "").strip()
     if not value:
@@ -97,9 +116,27 @@ def optional_positive_float(name: str, default: float = 0.0) -> float | None:
     return None if value <= 0 else value
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
+
+
 def optional_path(name: str) -> Path | None:
     value = os.getenv(name, "").strip()
     return Path(value) if value else None
+
+
+def static_residual_sample_frames(name: str, *, frame_count: int) -> int:
+    value = os.getenv(name, "").strip().lower()
+    if value == "auto":
+        return max(1, min(frame_count, 120))
+    return rt.env_int(name, 0, minimum=0)
 
 
 def optional_csv_float(row: dict[str, str], key: str) -> float | None:
@@ -114,24 +151,70 @@ def load_reuse_metadata(belt_map_path: Path) -> tuple[dict, Path | None]:
     return json.loads(metadata_path.read_text(encoding="utf-8")), metadata_path
 
 
-def load_phase_estimates(path: Path) -> dict[int, PhaseEstimate]:
+def _relative_image_name(path: Path, *, data_dir: Path) -> str:
+    try:
+        return str(path.relative_to(data_dir))
+    except ValueError:
+        try:
+            return str(path.resolve().relative_to(data_dir.resolve()))
+        except ValueError:
+            return str(path)
+
+
+def _normalize_phase_image_name(image: str) -> str:
+    normalized = image.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def load_phase_estimates(
+    path: Path,
+    *,
+    expected_image_paths: list[Path] | None = None,
+    data_dir: Path | None = None,
+) -> dict[int, PhaseEstimate]:
     estimates: dict[int, PhaseEstimate] = {}
+    image_names: dict[int, str] = {}
+    require_image_names = expected_image_paths is not None
+
     with path.open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
+        reader = csv.DictReader(handle)
+        if require_image_names and (
+            reader.fieldnames is None or "image" not in reader.fieldnames
+        ):
+            raise ValueError("phase estimates used for reuse must include an image column")
+        for row in reader:
             frame_index = int(row["frame_index"])
             if frame_index in estimates:
                 raise ValueError(f"duplicate phase estimate for frame {frame_index}")
+            if require_image_names:
+                image_name = row.get("image", "").strip()
+                if not image_name:
+                    raise ValueError(
+                        f"phase estimate for frame {frame_index} has an empty image column"
+                    )
+                image_names[frame_index] = image_name
             estimates[frame_index] = PhaseEstimate(
                 phase_px=float(row["phase_px"]),
                 frame_index=float(row["frame_index"]),
                 predicted_phase_px=float(row["predicted_phase_px"]),
                 correction_px=float(row["correction_px"]),
+                drift_px=optional_csv_float(row, "phase_drift_px") or 0.0,
                 loss=optional_csv_float(row, "loss"),
                 score=optional_csv_float(row, "score"),
                 method=row.get("method", "loaded_phase_estimate") or "loaded_phase_estimate",
             )
     if not estimates:
         raise ValueError(f"no phase estimates found in {path}")
+    if expected_image_paths is not None:
+        validate_reused_phase_estimates(
+            estimates,
+            frame_count=len(expected_image_paths),
+            image_names=image_names,
+            paths=expected_image_paths,
+            data_dir=data_dir if data_dir is not None else rt.DATA,
+        )
     return estimates
 
 
@@ -143,26 +226,72 @@ def load_recurrent_artifact_map(
     artifact_map = np.load(path)
     if artifact_map.ndim != 2:
         raise ValueError(
-            "REUSE_RECURRENT_ARTIFACT_MAP_PATH must point to a 2-D recurrent_artifact_map.npy"
+            "REUSE_RECURRENT_ARTIFACT_MAP_PATH must point to a 2-D recurrent "
+            "artifact mask or probability .npy"
         )
     if artifact_map.shape != map_shape:
         raise ValueError(
             "reused recurrent artifact map shape does not match belt map and crop width: "
             f"{artifact_map.shape} != {map_shape}"
         )
-    return np.asarray(artifact_map, dtype=bool)
+    if artifact_map.dtype == np.bool_ or np.issubdtype(artifact_map.dtype, np.bool_):
+        return np.asarray(artifact_map, dtype=bool)
+    if np.issubdtype(artifact_map.dtype, np.integer):
+        if np.any((artifact_map < 0) | (artifact_map > 1)):
+            raise ValueError(
+                "reused recurrent artifact integer map values must be 0 or 1"
+            )
+        return np.asarray(artifact_map, dtype=bool)
+    artifact_map = np.asarray(artifact_map, dtype=np.float32)
+    if not np.all(np.isfinite(artifact_map)):
+        raise ValueError("reused recurrent artifact probability map must be finite")
+    if np.any((artifact_map < 0.0) | (artifact_map > 1.0)):
+        raise ValueError(
+            "reused recurrent artifact probability map values must be in [0, 1]"
+        )
+    return artifact_map
 
 
 def validate_reused_phase_estimates(
     estimates: dict[int, PhaseEstimate],
     *,
     frame_count: int,
+    image_names: dict[int, str] | None = None,
+    paths: list[Path] | None = None,
+    data_dir: Path | None = None,
 ) -> None:
     missing = [index for index in range(frame_count) if index not in estimates]
     if missing:
         preview = ", ".join(str(index) for index in missing[:8])
         raise ValueError(
             f"phase estimates are missing {len(missing)} selected frames; first missing: {preview}"
+        )
+    if image_names is None and paths is None:
+        return
+    if image_names is None or paths is None:
+        raise ValueError("image_names and paths must be provided together")
+    if len(paths) != frame_count:
+        raise ValueError(
+            "frame_count must match number of selected image paths when validating "
+            "phase image names"
+        )
+
+    root = data_dir if data_dir is not None else rt.DATA
+    mismatches: list[tuple[int, str, str]] = []
+    for index, path in enumerate(paths):
+        actual = image_names.get(index, "")
+        expected = _relative_image_name(path, data_dir=root)
+        if _normalize_phase_image_name(actual) != _normalize_phase_image_name(expected):
+            mismatches.append((index, actual, expected))
+
+    if mismatches:
+        preview = ", ".join(
+            f"{index}: {actual!r} != {expected!r}"
+            for index, actual, expected in mismatches[:3]
+        )
+        raise ValueError(
+            "phase estimates image column does not match selected image sequence; "
+            f"first mismatches: {preview}"
         )
 
 
@@ -179,6 +308,7 @@ def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> di
         "phase_rad": phase_fraction * 2.0 * np.pi,
         "predicted_phase_px": estimate.predicted_phase_px,
         "correction_px": estimate.correction_px,
+        "phase_drift_px": estimate.drift_px,
         "loss": "" if estimate.loss is None else estimate.loss,
         "score": "" if estimate.score is None else estimate.score,
         "method": estimate.method,
@@ -262,6 +392,33 @@ def should_save_residual_preview(frame_index: int, preview_frames: int, preview_
     return frame_index < preview_frames or (preview_interval > 0 and frame_index % preview_interval == 0)
 
 
+def detect_final_particle_mask(
+    residual: ResidualImage,
+    *,
+    method: str,
+    threshold: float,
+    grow_threshold: float,
+) -> np.ndarray:
+    """Return the final particle mask for the configured detector."""
+
+    if method == "threshold":
+        return detect_particles_from_residual(residual, threshold=threshold)
+    if method == "hysteresis":
+        return detect_particles_from_residual_hysteresis(
+            residual,
+            threshold=threshold,
+            grow_threshold=grow_threshold,
+        )
+    if method == "hysteresis_abs":
+        return detect_particles_from_residual_hysteresis(
+            residual,
+            threshold=threshold,
+            grow_threshold=grow_threshold,
+            absolute=True,
+        )
+    raise ValueError(f"unknown detection method {method!r}")
+
+
 def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray | None) -> ResidualImage:
     """Normalize a residual with an image-fixed noise floor when available."""
 
@@ -282,7 +439,7 @@ def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray |
         raw=residual.raw,
         local_noise=local_noise,
         normalized=normalized,
-        mask=residual.mask,
+        mask=valid,
         expected_background=residual.expected_background,
         clean_render=residual.clean_render,
     )
@@ -332,7 +489,7 @@ def subtract_static_background(
         raw=raw,
         local_noise=local_noise,
         normalized=normalized,
-        mask=residual.mask,
+        mask=norm_valid,
         expected_background=expected,
         clean_render=residual.clean_render,
     )
@@ -606,6 +763,22 @@ def main() -> None:
     """Run the BeltMap image-sequence driver."""
 
     rt.refresh_runtime_paths()
+    reuse_belt_map_input_path = optional_path("REUSE_BELT_MAP_PATH")
+    protected_output_inputs = [
+        path for path in (
+            reuse_belt_map_input_path,
+            optional_path("REUSE_STATIC_NOISE_PATH"),
+            optional_path("REUSE_STATIC_BACKGROUND_PATH"),
+            optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH"),
+            optional_path("REUSE_PHASE_ESTIMATES_PATH"),
+        )
+        if path is not None
+    ]
+    if reuse_belt_map_input_path is not None:
+        protected_output_inputs.append(
+            reuse_belt_map_input_path.with_name("metadata.json")
+        )
+    rt.clear_generated_outputs(protected_paths=protected_output_inputs)
     rt.OUT.mkdir(parents=True, exist_ok=True)
     rt.emit("startup", "starting BeltMap image driver", data_dir=rt.DATA, output_dir=rt.OUT)
     paths, discovered_frame_count, frame_stride = rt.image_paths()
@@ -629,15 +802,33 @@ def main() -> None:
     )
 
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
+    belt_velocity_source = "auto"
+    belt_velocity_frame_unit = "selected_frame"
+    supplied_belt_velocity_px_per_frame: float | None = None
     if velocity_spec == "auto":
         validate_auto_velocity_region(region, first.shape)
         belt_velocity, pair_shifts = estimate_velocity(paths, region)
     else:
-        belt_velocity, pair_shifts = float(velocity_spec), []
-        rt.emit("velocity", "using supplied belt velocity", belt_velocity_px_per_frame=belt_velocity)
+        (
+            belt_velocity,
+            belt_velocity_frame_unit,
+            supplied_belt_velocity_px_per_frame,
+        ) = resolve_supplied_velocity(velocity_spec, frame_stride)
+        belt_velocity_source = "supplied"
+        pair_shifts = []
+        rt.emit(
+            "velocity",
+            "using supplied belt velocity",
+            supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
+            belt_velocity_frame_unit=belt_velocity_frame_unit,
+            belt_velocity_px_per_selected_frame=belt_velocity,
+            frame_stride=frame_stride,
+        )
 
     period_px = optional_positive_int("BELT_PERIOD_PX")
     detection_threshold = rt.env_float("DETECTION_THRESHOLD", 5.0)
+    detection_mode = os.getenv("DETECTION_MODE", "positive").strip().lower()
+    detection_low_threshold = optional_positive_float("DETECTION_LOW_THRESHOLD", 0.0)
     min_area_px = rt.env_int("MIN_AREA_PX", 4, minimum=1)
     detection_max_area_px = optional_positive_int("DETECTION_MAX_AREA_PX")
     detection_min_bbox_width_px = optional_positive_int("DETECTION_MIN_BBOX_WIDTH_PX")
@@ -647,14 +838,43 @@ def main() -> None:
         0.0,
     )
     detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
-    min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
+    residual_noise_radius_px = rt.env_int("RESIDUAL_NOISE_RADIUS_PX", 15, minimum=0)
+    residual_clip_sigma = optional_positive_float("RESIDUAL_CLIP_SIGMA", 5.0)
+    residual_min_noise = rt.env_float("RESIDUAL_MIN_NOISE", 1e-6, minimum=0.0)
+    if residual_min_noise <= 0:
+        raise ValueError("RESIDUAL_MIN_NOISE must be positive")
+    residual_noise_exclusion_sigma = optional_positive_float("RESIDUAL_NOISE_EXCLUSION_SIGMA", 4.0)
+    residual_noise_exclusion_radius_px = rt.env_int(
+        "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", 2, minimum=0
+    )
+    min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=2)
+    tracking_assignment_method = os.getenv("TRACKING_ASSIGNMENT_METHOD", "global").strip().lower()
+    tracking_area_cost_weight_px = rt.env_float(
+        "TRACKING_AREA_COST_WEIGHT_PX", 0.0, minimum=0.0
+    )
+    tracking_signal_cost_weight_px = rt.env_float(
+        "TRACKING_SIGNAL_COST_WEIGHT_PX", 0.0, minimum=0.0
+    )
+    tracking_lateral_cost_weight = rt.env_float(
+        "TRACKING_LATERAL_COST_WEIGHT", 0.0, minimum=0.0
+    )
+    tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
     map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
+    map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    map_aggregation = os.getenv("MAP_AGGREGATION", "mean").strip().lower()
+    map_robust_iterations = rt.env_int("MAP_ROBUST_ITERATIONS", 1, minimum=0)
+    map_robust_huber_delta = rt.env_float(
+        "MAP_ROBUST_HUBER_DELTA", 3.0, minimum=1e-9
+    )
+    map_robust_min_scale = rt.env_float(
+        "MAP_ROBUST_MIN_SCALE", 1.0, minimum=1e-9
+    )
     reuse_belt_map_path = optional_path("REUSE_BELT_MAP_PATH")
     reuse_phase_estimates_path = optional_path("REUSE_PHASE_ESTIMATES_PATH")
     reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")
@@ -662,13 +882,13 @@ def main() -> None:
     reuse_recurrent_artifact_map_path = optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH")
     if reuse_phase_estimates_path is not None and reuse_belt_map_path is None:
         raise ValueError("REUSE_PHASE_ESTIMATES_PATH requires REUSE_BELT_MAP_PATH")
-    static_noise_sample_frames = rt.env_int("STATIC_NOISE_SAMPLE_FRAMES", 0, minimum=0)
+    static_noise_sample_frames = static_residual_sample_frames("STATIC_NOISE_SAMPLE_FRAMES", frame_count=len(paths))
     static_noise_min_scale = rt.env_float("STATIC_NOISE_MIN_SCALE", 0.0, minimum=0.0)
-    static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", 0.0)
+    static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", detection_threshold)
     static_noise_mask_margin_px = rt.env_int("STATIC_NOISE_MASK_MARGIN_PX", 8, minimum=0)
     static_noise_mask_min_area_px = rt.env_int("STATIC_NOISE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
-    static_background_sample_frames = rt.env_int("STATIC_BACKGROUND_SAMPLE_FRAMES", 0, minimum=0)
-    static_background_mask_threshold = optional_positive_float("STATIC_BACKGROUND_MASK_THRESHOLD", 0.0)
+    static_background_sample_frames = static_residual_sample_frames("STATIC_BACKGROUND_SAMPLE_FRAMES", frame_count=len(paths))
+    static_background_mask_threshold = optional_positive_float("STATIC_BACKGROUND_MASK_THRESHOLD", detection_threshold)
     static_background_mask_margin_px = rt.env_int("STATIC_BACKGROUND_MASK_MARGIN_PX", 8, minimum=0)
     static_background_mask_min_area_px = rt.env_int("STATIC_BACKGROUND_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     recurrent_artifact_config = RecurrentArtifactConfig(
@@ -677,6 +897,11 @@ def main() -> None:
         max_overlap_fraction=rt.env_float(
             "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION",
             0.3,
+            minimum=0.0,
+        ),
+        min_recurrence_probability=rt.env_float(
+            "RECURRENT_ARTIFACT_MIN_RECURRENCE_PROBABILITY",
+            0.0,
             minimum=0.0,
         ),
         mode=os.getenv("RECURRENT_ARTIFACT_MODE", "hard").strip().lower(),
@@ -688,12 +913,28 @@ def main() -> None:
     )
     if recurrent_artifact_config.max_overlap_fraction > 1:
         raise ValueError("RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION must be in [0, 1]")
+    if recurrent_artifact_config.min_recurrence_probability > 1:
+        raise ValueError(
+            "RECURRENT_ARTIFACT_MIN_RECURRENCE_PROBABILITY must be in [0, 1]"
+        )
     if recurrent_artifact_config.mode not in RECURRENT_ARTIFACT_MODES:
         choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
         raise ValueError(f"RECURRENT_ARTIFACT_MODE must be one of {choices}")
     registration_config = PhaseRegistrationConfig(
         search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
+        subpixel_refinement=env_bool("REGISTRATION_SUBPIXEL_REFINEMENT", True),
+        robust_normalization=env_bool("REGISTRATION_ROBUST_NORMALIZATION", True),
+    )
+    phase_drift_config = PhaseDriftConfig(
+        enabled=env_bool("PHASE_DRIFT_ENABLED", True),
+        smoothing_alpha=rt.env_float("PHASE_DRIFT_SMOOTHING_ALPHA", 0.15, minimum=0.0),
+        min_score=rt.env_float("PHASE_DRIFT_MIN_SCORE", 0.05, minimum=0.0),
+        max_abs_residual_correction_px=optional_positive_float(
+            "PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX",
+            0.0,
+        ),
+        max_abs_drift_px=optional_positive_float("PHASE_DRIFT_MAX_ABS_PX", 0.0),
     )
     phase_refinement_iterations = rt.env_int("PHASE_REFINEMENT_ITERATIONS", 0, minimum=0)
     phase_refinement_min_score = rt.env_float("PHASE_REFINEMENT_MIN_SCORE", 0.0, minimum=0.0)
@@ -710,6 +951,9 @@ def main() -> None:
         "config",
         "runtime parameters",
         belt_velocity_px_per_frame=belt_velocity,
+        belt_velocity_source=belt_velocity_source,
+        belt_velocity_frame_unit=belt_velocity_frame_unit,
+        supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
         belt_period_px=period_px,
         detection_threshold=detection_threshold,
         min_area_px=min_area_px,
@@ -718,14 +962,29 @@ def main() -> None:
         detection_min_bbox_height_px=detection_min_bbox_height_px,
         detection_max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         detection_min_bbox_extent=detection_min_bbox_extent,
+        residual_noise_radius_px=residual_noise_radius_px,
+        residual_clip_sigma=residual_clip_sigma,
+        residual_min_noise=residual_min_noise,
+        residual_noise_exclusion_sigma=residual_noise_exclusion_sigma,
+        residual_noise_exclusion_radius_px=residual_noise_exclusion_radius_px,
         min_track_length=min_track_length,
+        tracking_assignment_method=tracking_assignment_method,
+        tracking_area_cost_weight_px=tracking_area_cost_weight_px,
+        tracking_signal_cost_weight_px=tracking_signal_cost_weight_px,
+        tracking_lateral_cost_weight=tracking_lateral_cost_weight,
+        tracking_max_area_ratio=tracking_max_area_ratio,
         map_mask_iterations=map_mask_iterations,
         map_particle_mask_threshold=map_particle_mask_threshold,
         map_particle_mask_mode=map_particle_mask_mode,
         map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
         map_particle_mask_dilation_px=map_particle_mask_dilation_px,
+        map_fractional_splat=map_fractional_splat,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
+        map_aggregation=map_aggregation,
+        map_robust_iterations=map_robust_iterations,
+        map_robust_huber_delta=map_robust_huber_delta,
+        map_robust_min_scale=map_robust_min_scale,
         reuse_belt_map_path=reuse_belt_map_path,
         reuse_phase_estimates_path=reuse_phase_estimates_path,
         reuse_static_noise_path=reuse_static_noise_path,
@@ -743,10 +1002,20 @@ def main() -> None:
         recurrent_artifact_min_revolutions=recurrent_artifact_config.min_revolutions,
         recurrent_artifact_margin_px=recurrent_artifact_config.margin_px,
         recurrent_artifact_max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+        recurrent_artifact_min_recurrence_probability=recurrent_artifact_config.min_recurrence_probability,
         recurrent_artifact_mode=recurrent_artifact_config.mode,
         recurrent_artifact_soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
+        registration_subpixel_refinement=registration_config.subpixel_refinement,
+        registration_robust_normalization=registration_config.robust_normalization,
+        phase_drift_enabled=phase_drift_config.enabled,
+        phase_drift_smoothing_alpha=phase_drift_config.smoothing_alpha,
+        phase_drift_min_score=phase_drift_config.min_score,
+        phase_drift_max_abs_residual_correction_px=(
+            phase_drift_config.max_abs_residual_correction_px
+        ),
+        phase_drift_max_abs_px=phase_drift_config.max_abs_drift_px,
         phase_refinement_iterations=phase_refinement_iterations,
         phase_refinement_min_score=phase_refinement_min_score,
         phase_refinement_max_abs_correction_px=phase_refinement_max_abs_correction_px,
@@ -797,6 +1066,11 @@ def main() -> None:
             mask_dilation_px=map_particle_mask_dilation_px,
             mask_margin_px=map_particle_mask_margin_px,
             mask_min_area_px=map_particle_mask_min_area_px,
+            aggregation=map_aggregation,
+            robust_iterations=map_robust_iterations,
+            robust_huber_delta=map_robust_huber_delta,
+            robust_min_scale=map_robust_min_scale,
+            fractional_splat=map_fractional_splat,
             phase_feedback_config=PhaseFeedbackConfig(
                 iterations=phase_refinement_iterations,
                 min_score=phase_refinement_min_score,
@@ -836,14 +1110,23 @@ def main() -> None:
         max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         min_bbox_extent=detection_min_bbox_extent,
     )
-    residual_config = ResidualConfig()
+    residual_config = ResidualConfig(
+        noise_radius_px=residual_noise_radius_px,
+        clip_sigma=residual_clip_sigma,
+        noise_exclusion_sigma=residual_noise_exclusion_sigma,
+        noise_exclusion_radius_px=residual_noise_exclusion_radius_px,
+        min_noise=residual_min_noise,
+    )
     reused_phase_estimates = (
-        load_phase_estimates(reuse_phase_estimates_path)
+        load_phase_estimates(
+            reuse_phase_estimates_path,
+            expected_image_paths=paths,
+            data_dir=rt.DATA,
+        )
         if reuse_phase_estimates_path is not None
         else None
     )
     if reused_phase_estimates is not None:
-        validate_reused_phase_estimates(reused_phase_estimates, frame_count=len(paths))
         rt.emit(
             "detect",
             "loaded reused phase estimates",
@@ -984,6 +1267,10 @@ def main() -> None:
     detection_rows: list[dict] = []
     phase_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
+    phase_drift_filter = PhaseDriftFilter(
+        phase_drift_config,
+        period_px=float(map_height),
+    )
     detection_start = rt.time.perf_counter()
     for frame_index, path in enumerate(paths):
         frame = rt.crop(rt.read_gray(path), region)
@@ -992,6 +1279,18 @@ def main() -> None:
             if reused_phase_estimates is not None
             else None
         )
+        if phase_estimate is None and phase_drift_config.enabled:
+            nominal_phase = motion_model.phase_at(float(frame_index))
+            predicted_phase = phase_drift_filter.predict(nominal_phase)
+            phase_estimate = refine_phase_by_registration(
+                frame=frame,
+                belt_map=belt_map,
+                predicted_phase_px=predicted_phase,
+                frame_index=float(frame_index),
+                period_px=motion_model.period_px,
+                config=registration_config,
+            )
+            phase_estimate = phase_drift_filter.observe(phase_estimate)
         residual = render_clean_belt_residual(
             image=frame,
             belt_map=belt_map,
@@ -1013,8 +1312,22 @@ def main() -> None:
         phase_px_by_frame.append(float(phase_row["phase_px"]))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
-        mask = detect_particles_from_residual(residual, threshold=detection_threshold)
-        detections = extract_particle_detections(mask, residual=residual, frame_index=float(frame_index), config=component_config)
+        detection_signal = detection_signal_from_residual(
+            residual,
+            mode=detection_mode,
+        )
+        mask = detect_particles_from_residual(
+            residual,
+            threshold=detection_threshold,
+            mode=detection_mode,
+            low_threshold=detection_low_threshold,
+        )
+        detections = extract_particle_detections(
+            mask,
+            residual=detection_signal,
+            frame_index=float(frame_index),
+            config=component_config,
+        )
         detections_by_frame.append(detections)
         detection_rows.extend(detection_rows_for_frame(detections, path, frame_index))
         processed = frame_index + 1
@@ -1057,6 +1370,13 @@ def main() -> None:
                 artifact_pixels=recurrent_artifact_pixels,
                 recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
             )
+            recurrent_artifact_scores = score_recurrent_artifact_detections(
+                detections_by_frame,
+                phase_px_by_frame,
+                recurrent_artifact_mask,
+                config=recurrent_artifact_config,
+                detection_threshold=detection_threshold,
+            )
         else:
             recurrent_artifact_source = "built"
             rt.emit(
@@ -1065,15 +1385,20 @@ def main() -> None:
                 min_revolutions=recurrent_artifact_config.min_revolutions,
                 margin_px=recurrent_artifact_config.margin_px,
                 max_overlap_fraction=recurrent_artifact_config.max_overlap_fraction,
+                min_recurrence_probability=(
+                    recurrent_artifact_config.min_recurrence_probability
+                ),
                 mode=recurrent_artifact_config.mode,
                 soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
             )
+            revolution_by_frame = belt_revolution_indices(len(paths), motion_model)
             recurrent_result = build_recurrent_artifact_map(
                 detections_by_frame,
                 phase_px_by_frame,
-                belt_revolution_indices(len(paths), motion_model),
+                revolution_by_frame,
                 map_shape=map_shape,
                 config=recurrent_artifact_config,
+                frame_shape=(region[2], region[3]),
             )
             recurrent_artifact_mask = recurrent_result.mask
             recurrent_artifact_pixels = recurrent_result.artifact_pixels
@@ -1081,18 +1406,33 @@ def main() -> None:
             recurrent_artifact_candidate_detections = recurrent_result.candidate_detections
             np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_result.mask)
             np.save(rt.OUT / "recurrent_artifact_counts.npy", recurrent_result.counts)
+            np.save(
+                rt.OUT / "recurrent_artifact_exposure_counts.npy",
+                recurrent_result.exposure_counts,
+            )
+            np.save(
+                rt.OUT / "recurrent_artifact_probability.npy",
+                recurrent_result.probability,
+            )
             rt.save_png(
                 recurrent_result.mask.astype(np.float32),
                 rt.OUT / "recurrent_artifact_map.png",
             )
             rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
-        recurrent_artifact_scores = score_recurrent_artifact_detections(
-            detections_by_frame,
-            phase_px_by_frame,
-            recurrent_artifact_mask,
-            config=recurrent_artifact_config,
-            detection_threshold=detection_threshold,
-        )
+            rt.save_png(
+                recurrent_result.probability,
+                rt.OUT / "recurrent_artifact_probability.png",
+            )
+            recurrent_artifact_scores = (
+                score_recurrent_artifact_detections_excluding_current_revolution(
+                    detections_by_frame,
+                    phase_px_by_frame,
+                    revolution_by_frame,
+                    recurrent_result,
+                    config=recurrent_artifact_config,
+                    detection_threshold=detection_threshold,
+                )
+            )
         recurrent_artifact_rows = recurrent_artifact_rows_from_scores(
             recurrent_artifact_scores,
             paths,
@@ -1129,6 +1469,16 @@ def main() -> None:
                 if recurrent_artifact_source == "built"
                 else None
             ),
+            recurrent_artifact_exposure_counts_npy=(
+                rt.OUT / "recurrent_artifact_exposure_counts.npy"
+                if recurrent_artifact_source == "built"
+                else None
+            ),
+            recurrent_artifact_probability_npy=(
+                rt.OUT / "recurrent_artifact_probability.npy"
+                if recurrent_artifact_source == "built"
+                else None
+            ),
         )
 
     write_detection_outputs(detections_by_frame, detection_rows)
@@ -1139,8 +1489,25 @@ def main() -> None:
     tracking_config = ParticleTrackingConfig(
         max_match_distance_px=float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity)),
         velocity_prior_y_px_per_frame=0.8 * belt_velocity,
+        assignment_method=tracking_assignment_method,
+        area_cost_weight_px=tracking_area_cost_weight_px,
+        signal_cost_weight_px=tracking_signal_cost_weight_px,
+        lateral_cost_weight=tracking_lateral_cost_weight,
+        max_area_ratio=tracking_max_area_ratio,
     )
-    rt.emit("track", "starting particle tracking", frames=len(detections_by_frame), max_match_distance_px=tracking_config.max_match_distance_px, velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame)
+    rt.emit(
+        "track",
+        "starting particle tracking",
+        frames=len(detections_by_frame),
+        max_match_distance_px=tracking_config.max_match_distance_px,
+        velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame,
+        velocity_prior_x_px_per_frame=tracking_config.velocity_prior_x_px_per_frame,
+        assignment_method=tracking_config.assignment_method,
+        area_cost_weight_px=tracking_config.area_cost_weight_px,
+        signal_cost_weight_px=tracking_config.signal_cost_weight_px,
+        lateral_cost_weight=tracking_config.lateral_cost_weight,
+        max_area_ratio=tracking_config.max_area_ratio,
+    )
     tracks = track_particle_detections(detections_by_frame, config=tracking_config, frame_indices=[float(i) for i in range(len(paths))])
     rt.emit("track", "finished particle tracking", tracks=len(tracks))
     track_rows = track_detection_rows(tracks, paths)
@@ -1205,24 +1572,39 @@ def main() -> None:
         "frame_stride": frame_stride,
         "first_image_shape": list(first.shape),
         "belt_region": {"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
+        "belt_velocity_source": belt_velocity_source,
+        "belt_velocity_frame_unit": belt_velocity_frame_unit,
+        "supplied_belt_velocity_px_per_frame": supplied_belt_velocity_px_per_frame,
         "belt_velocity_px_per_frame": belt_velocity,
         "belt_period_px_input": period_px,
         "belt_map_height_px": map_height,
         "reference_phase_px": reference_phase,
         "detection_threshold": detection_threshold,
+        "detection_mode": detection_mode,
+        "detection_low_threshold": detection_low_threshold,
         "min_area_px": min_area_px,
         "detection_max_area_px": detection_max_area_px,
         "detection_min_bbox_width_px": detection_min_bbox_width_px,
         "detection_min_bbox_height_px": detection_min_bbox_height_px,
         "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
         "detection_min_bbox_extent": detection_min_bbox_extent,
+        "tracking_assignment_method": tracking_config.assignment_method,
+        "tracking_area_cost_weight_px": tracking_config.area_cost_weight_px,
+        "tracking_signal_cost_weight_px": tracking_config.signal_cost_weight_px,
+        "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
+        "tracking_max_area_ratio": tracking_config.max_area_ratio,
         "map_mask_iterations": map_mask_iterations,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
         "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
         "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
+        "map_fractional_splat": map_fractional_splat,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
+        "map_aggregation": map_aggregation,
+        "map_robust_iterations": map_robust_iterations,
+        "map_robust_huber_delta": map_robust_huber_delta,
+        "map_robust_min_scale": map_robust_min_scale,
         "phase_refinement_iterations": phase_refinement_iterations,
         "phase_refinement_min_score": phase_refinement_min_score,
         "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,
@@ -1231,6 +1613,7 @@ def main() -> None:
         "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
         "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
         "reuse_static_noise_path": "" if reuse_static_noise_path is None else str(reuse_static_noise_path),
+        "reuse_static_background_path": "" if reuse_static_background_path is None else str(reuse_static_background_path),
         "reuse_recurrent_artifact_map_path": "" if reuse_recurrent_artifact_map_path is None else str(reuse_recurrent_artifact_map_path),
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
@@ -1238,9 +1621,15 @@ def main() -> None:
         "static_noise_mask_margin_px": static_noise_mask_margin_px,
         "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
         "static_noise_map_used": static_noise_map is not None,
+        "static_background_sample_frames": static_background_sample_frames,
+        "static_background_mask_threshold": static_background_mask_threshold,
+        "static_background_mask_margin_px": static_background_mask_margin_px,
+        "static_background_mask_min_area_px": static_background_mask_min_area_px,
+        "static_background_map_used": static_background_map is not None,
         "recurrent_artifact_min_revolutions": recurrent_artifact_config.min_revolutions,
         "recurrent_artifact_margin_px": recurrent_artifact_config.margin_px,
         "recurrent_artifact_max_overlap_fraction": recurrent_artifact_config.max_overlap_fraction,
+        "recurrent_artifact_min_recurrence_probability": recurrent_artifact_config.min_recurrence_probability,
         "recurrent_artifact_mode": recurrent_artifact_config.mode,
         "recurrent_artifact_soft_penalty_weight": recurrent_artifact_config.soft_penalty_weight,
         "recurrent_artifact_filter_used": recurrent_artifact_enabled,
@@ -1255,6 +1644,7 @@ def main() -> None:
         "n_phase_estimates": len(phase_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
+        "tracking_backend": tracking_config.assignment_method,
         "n_velocity_estimates": len(velocity_rows),
         "n_filtered_velocity_estimates": len(filtered_velocity_rows),
         "track_filter_min_length": track_filter_config.min_track_length,

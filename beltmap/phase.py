@@ -11,8 +11,8 @@ decreases over time for a downward-moving belt.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable
+from dataclasses import dataclass, replace
+from typing import Iterable, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -63,16 +63,29 @@ class BeltMotionModel:
 
 @dataclass(frozen=True)
 class PhaseRegistrationConfig:
-    """Settings for local phase refinement by registration."""
+    """Settings for local phase refinement by registration.
+
+    ``subpixel_refinement`` fits a local parabola to the best grid-search
+    phase offset and its two neighbors. This keeps the robust bounded search,
+    but avoids quantizing the phase correction to ``search_step_px``.
+
+    ``robust_normalization`` scales high-pass registration images by a MAD
+    estimate instead of their standard deviation. This makes phase registration
+    less sensitive to unmasked particles and short-lived illumination spikes.
+    """
 
     search_radius_px: float = 8.0
     search_step_px: float = 0.5
     trim_fraction: float = 0.08
     highpass_radius_px: int = 15
+    subpixel_refinement: bool = False
+    robust_normalization: bool = False
 
     def candidate_offsets(self) -> FloatArray:
         """Return the tested phase offsets, including zero when possible."""
 
+        if self.search_radius_px < 0:
+            raise ValueError("search_radius_px must be non-negative")
         if self.search_step_px <= 0:
             raise ValueError("search_step_px must be positive")
         count = int(np.floor(2 * self.search_radius_px / self.search_step_px)) + 1
@@ -82,6 +95,37 @@ class PhaseRegistrationConfig:
         if not np.any(np.isclose(offsets, 0.0)):
             offsets = np.sort(np.append(offsets, 0.0))
         return offsets
+
+
+@dataclass(frozen=True)
+class PhaseTrajectorySmoothingConfig:
+    """Settings for smoothing registration corrections over a frame sequence.
+
+    The smoother operates on registration corrections relative to the motion
+    model, not on absolute wrapped phases. This keeps the trajectory continuous
+    across belt-map period boundaries and preserves the constant-speed motion
+    model as the baseline.
+    """
+
+    window_radius_frames: int = 0
+    min_score: float | None = None
+    max_abs_correction_px: float | None = None
+    robust_sigma: float = 3.0
+    min_support: int = 3
+
+    def validate(self) -> None:
+        """Validate smoothing parameters."""
+
+        if self.window_radius_frames < 0:
+            raise ValueError("window_radius_frames must be non-negative")
+        if self.min_support < 1:
+            raise ValueError("min_support must be positive")
+        if self.robust_sigma <= 0:
+            raise ValueError("robust_sigma must be positive")
+        if self.min_score is not None and self.min_score < 0:
+            raise ValueError("min_score must be non-negative when set")
+        if self.max_abs_correction_px is not None and self.max_abs_correction_px < 0:
+            raise ValueError("max_abs_correction_px must be non-negative when set")
 
 
 @dataclass(frozen=True)
@@ -95,6 +139,98 @@ class PhaseEstimate:
     loss: float | None = None
     score: float | None = None
     method: str = "motion_model"
+    drift_px: float = 0.0
+
+
+@dataclass(frozen=True)
+class PhaseDriftConfig:
+    """Settings for online, slowly varying phase-drift compensation.
+
+    The drift term is an additive correction to the nominal constant-speed
+    phase prediction. Each accepted registration residual updates the drift
+    with exponential smoothing, so persistent velocity/phase bias is absorbed
+    by future predictions instead of being rediscovered independently in every
+    frame.
+    """
+
+    enabled: bool = False
+    smoothing_alpha: float = 0.15
+    min_score: float = 0.05
+    max_abs_residual_correction_px: float | None = None
+    max_abs_drift_px: float | None = None
+
+
+class PhaseDriftFilter:
+    """Stateful online filter for residual phase drift."""
+
+    def __init__(
+        self,
+        config: PhaseDriftConfig | None = None,
+        *,
+        initial_drift_px: float = 0.0,
+        period_px: float | None = None,
+    ) -> None:
+        self.config = config or PhaseDriftConfig()
+        if not 0.0 <= self.config.smoothing_alpha <= 1.0:
+            raise ValueError("PhaseDriftConfig.smoothing_alpha must be in [0, 1]")
+        if (
+            self.config.max_abs_residual_correction_px is not None
+            and self.config.max_abs_residual_correction_px < 0
+        ):
+            raise ValueError("max_abs_residual_correction_px must be non-negative")
+        if self.config.max_abs_drift_px is not None and self.config.max_abs_drift_px < 0:
+            raise ValueError("max_abs_drift_px must be non-negative")
+        self.period_px = period_px
+        self.drift_px = float(initial_drift_px)
+        self.accepted_updates = 0
+        self.rejected_updates = 0
+
+    def predict(self, nominal_phase_px: float) -> float:
+        """Return ``nominal_phase_px`` corrected by the current drift estimate."""
+
+        return wrap_phase(float(nominal_phase_px) + self.drift_px, self.period_px)
+
+    def observe(self, estimate: PhaseEstimate) -> PhaseEstimate:
+        """Record one registration result and update the drift for later frames.
+
+        The returned estimate records the drift that was applied to the
+        prediction for this frame. The internal state is then updated from the
+        residual registration correction and will affect the next prediction.
+        """
+
+        applied_drift = self.drift_px
+        method = estimate.method
+        if self.config.enabled and method != "motion_model":
+            method = f"{method}+drift"
+
+        updated_estimate = replace(estimate, drift_px=applied_drift, method=method)
+        if not self.config.enabled:
+            return updated_estimate
+
+        if not self._accepts(estimate):
+            self.rejected_updates += 1
+            return updated_estimate
+
+        proposed = self.drift_px + float(estimate.correction_px)
+        max_abs_drift = self.config.max_abs_drift_px
+        if max_abs_drift is not None:
+            proposed = float(np.clip(proposed, -max_abs_drift, max_abs_drift))
+        alpha = self.config.smoothing_alpha
+        self.drift_px = (1.0 - alpha) * self.drift_px + alpha * proposed
+        self.accepted_updates += 1
+        return updated_estimate
+
+    def _accepts(self, estimate: PhaseEstimate) -> bool:
+        score = 0.0 if estimate.score is None else float(estimate.score)
+        if score < self.config.min_score:
+            return False
+        max_abs_correction = self.config.max_abs_residual_correction_px
+        if (
+            max_abs_correction is not None
+            and abs(float(estimate.correction_px)) > max_abs_correction
+        ):
+            return False
+        return True
 
 
 def wrap_phase(phase_px: float, period_px: float | None) -> float:
@@ -196,13 +332,21 @@ def refine_phase_by_registration(
         )
 
     valid_mask = _prepare_mask(mask, observed.shape)
-    observed_prepared = _prepare_for_registration(observed, cfg.highpass_radius_px)
+    observed_prepared = _prepare_for_registration(
+        observed,
+        cfg.highpass_radius_px,
+        robust_normalization=cfg.robust_normalization,
+    )
 
     losses: list[tuple[float, float]] = []
     for offset in cfg.candidate_offsets():
         phase = wrap_phase(predicted_phase_px + float(offset), period_px)
         expected = render_belt_view(belt, phase, observed.shape[0])
-        expected_prepared = _prepare_for_registration(expected, cfg.highpass_radius_px)
+        expected_prepared = _prepare_for_registration(
+            expected,
+            cfg.highpass_radius_px,
+            robust_normalization=cfg.robust_normalization,
+        )
         loss = _trimmed_mean_square(
             observed_prepared - expected_prepared,
             trim_fraction=cfg.trim_fraction,
@@ -210,7 +354,10 @@ def refine_phase_by_registration(
         )
         losses.append((loss, float(offset)))
 
-    best_loss, best_offset = min(losses, key=lambda item: item[0])
+    best_index = min(range(len(losses)), key=lambda index: losses[index][0])
+    best_loss, best_offset = losses[best_index]
+    if cfg.subpixel_refinement:
+        best_loss, best_offset = _refine_quadratic_offset(losses, best_index)
     phase = wrap_phase(predicted_phase_px + best_offset, period_px)
     score = _loss_to_score(best_loss, (loss for loss, _offset in losses))
     return PhaseEstimate(
@@ -222,6 +369,243 @@ def refine_phase_by_registration(
         score=score,
         method="registration",
     )
+
+
+def smooth_phase_estimates(
+    estimates: Sequence[PhaseEstimate],
+    *,
+    period_px: float | None = None,
+    config: PhaseTrajectorySmoothingConfig | None = None,
+) -> list[PhaseEstimate]:
+    """Smooth a sequence of phase-registration estimates.
+
+    Per-frame registration can occasionally lock onto particles, scratches,
+    crop-edge structure, or other ambiguous local minima. This function treats
+    the registration corrections as noisy observations of a smooth residual
+    phase trajectory, rejects implausible/low-quality observations, and returns
+    estimates whose phases follow a robust local-linear trajectory.
+    """
+
+    cfg = config or PhaseTrajectorySmoothingConfig()
+    cfg.validate()
+    if not estimates:
+        return []
+    if cfg.window_radius_frames == 0:
+        return list(estimates)
+
+    frame_indices = np.asarray(
+        [estimate.frame_index for estimate in estimates],
+        dtype=np.float64,
+    )
+    corrections = np.asarray(
+        [
+            _phase_correction_from_estimate(estimate, period_px)
+            for estimate in estimates
+        ],
+        dtype=np.float64,
+    )
+    scores = np.asarray(
+        [
+            np.nan if estimate.score is None else estimate.score
+            for estimate in estimates
+        ],
+        dtype=np.float64,
+    )
+
+    valid = np.isfinite(frame_indices) & np.isfinite(corrections)
+    if cfg.min_score is not None:
+        valid &= np.isfinite(scores) & (scores >= cfg.min_score)
+    if cfg.max_abs_correction_px is not None:
+        valid &= np.abs(corrections) <= cfg.max_abs_correction_px
+    if not np.any(valid):
+        return list(estimates)
+
+    weights = np.ones(len(estimates), dtype=np.float64)
+    scored = np.isfinite(scores)
+    weights[scored] = np.maximum(scores[scored], 1e-6)
+    weights[~valid] = 0.0
+
+    smoothed_corrections = _smooth_corrections(
+        frame_indices,
+        corrections,
+        weights,
+        valid,
+        cfg,
+    )
+
+    smoothed: list[PhaseEstimate] = []
+    for estimate, correction in zip(estimates, smoothed_corrections, strict=True):
+        if not np.isfinite(correction):
+            correction = _phase_correction_from_estimate(estimate, period_px)
+        phase = wrap_phase(estimate.predicted_phase_px + float(correction), period_px)
+        smoothed.append(
+            PhaseEstimate(
+                phase_px=phase,
+                frame_index=estimate.frame_index,
+                predicted_phase_px=estimate.predicted_phase_px,
+                correction_px=float(correction),
+                loss=estimate.loss,
+                score=estimate.score,
+                method=_smoothed_method_name(estimate.method),
+            )
+        )
+    return smoothed
+
+
+def _phase_correction_from_estimate(
+    estimate: PhaseEstimate,
+    period_px: float | None,
+) -> float:
+    if period_px is None:
+        return float(estimate.correction_px)
+    return _cyclic_difference(
+        estimate.phase_px,
+        estimate.predicted_phase_px,
+        period_px,
+    )
+
+
+def _cyclic_difference(phase_px: float, reference_px: float, period_px: float) -> float:
+    if period_px <= 0:
+        raise ValueError("period_px must be positive")
+    difference = phase_px - reference_px
+    return float((difference + 0.5 * period_px) % period_px - 0.5 * period_px)
+
+
+def _smooth_corrections(
+    frame_indices: FloatArray,
+    corrections: FloatArray,
+    weights: FloatArray,
+    valid: NDArray[np.bool_],
+    config: PhaseTrajectorySmoothingConfig,
+) -> FloatArray:
+    result = np.full(corrections.shape, np.nan, dtype=np.float64)
+    valid_indices = np.flatnonzero(valid)
+    for output_index, center_frame in enumerate(frame_indices):
+        in_window = valid & (
+            np.abs(frame_indices - center_frame) <= config.window_radius_frames
+        )
+        selected = np.flatnonzero(in_window)
+        if selected.size < min(config.min_support, valid_indices.size):
+            order = np.argsort(np.abs(frame_indices[valid_indices] - center_frame))
+            selected = valid_indices[
+                order[: min(config.min_support, valid_indices.size)]
+            ]
+        if selected.size == 0:
+            continue
+
+        local_kernel = np.maximum(
+            1e-6,
+            1.0
+            - np.abs(frame_indices[selected] - center_frame)
+            / (config.window_radius_frames + 1.0),
+        )
+        local_weights = weights[selected] * local_kernel
+        result[output_index] = _robust_local_linear_prediction(
+            frame_indices[selected],
+            corrections[selected],
+            local_weights,
+            center_frame,
+            robust_sigma=config.robust_sigma,
+            min_support=min(config.min_support, selected.size),
+        )
+    return result
+
+
+def _robust_local_linear_prediction(
+    x: FloatArray,
+    y: FloatArray,
+    weights: FloatArray,
+    center_x: float,
+    *,
+    robust_sigma: float,
+    min_support: int,
+) -> float:
+    x, y, weights = _finite_weighted_samples(x, y, weights)
+    if x.size == 0:
+        return float("nan")
+
+    keep = _median_outlier_mask(y, robust_sigma=robust_sigma)
+    if int(np.count_nonzero(keep)) >= min_support and not np.all(keep):
+        x = x[keep]
+        y = y[keep]
+        weights = weights[keep]
+
+    prediction, fitted = _weighted_linear_fit(x, y, weights, center_x)
+    if x.size < max(3, min_support):
+        return prediction
+
+    residuals = y - fitted
+    keep = _median_outlier_mask(residuals, robust_sigma=robust_sigma)
+    if int(np.count_nonzero(keep)) < min_support or np.all(keep):
+        return prediction
+    refined_prediction, _fitted = _weighted_linear_fit(
+        x[keep],
+        y[keep],
+        weights[keep],
+        center_x,
+    )
+    return refined_prediction
+
+
+def _finite_weighted_samples(
+    x: FloatArray,
+    y: FloatArray,
+    weights: FloatArray,
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(weights) & (weights > 0)
+    return x[finite], y[finite], weights[finite]
+
+
+def _median_outlier_mask(
+    values: FloatArray,
+    *,
+    robust_sigma: float,
+) -> NDArray[np.bool_]:
+    if values.size == 0:
+        return np.zeros(0, dtype=bool)
+    center = float(np.median(values))
+    scale = 1.4826 * float(np.median(np.abs(values - center)))
+    if not np.isfinite(scale) or scale <= 1e-12:
+        return np.ones(values.shape, dtype=bool)
+    return np.abs(values - center) <= robust_sigma * scale
+
+
+def _weighted_linear_fit(
+    x: FloatArray,
+    y: FloatArray,
+    weights: FloatArray,
+    center_x: float,
+) -> tuple[float, FloatArray]:
+    x, y, weights = _finite_weighted_samples(x, y, weights)
+    if x.size == 0:
+        return float("nan"), np.full(0, np.nan, dtype=np.float64)
+
+    dx = x - center_x
+    weight_sum = float(np.sum(weights))
+    if weight_sum <= 0:
+        mean_y = float(np.mean(y))
+        return mean_y, np.full_like(y, mean_y, dtype=np.float64)
+
+    sum_x = float(np.sum(weights * dx))
+    sum_y = float(np.sum(weights * y))
+    sum_xx = float(np.sum(weights * dx * dx))
+    sum_xy = float(np.sum(weights * dx * y))
+    denominator = weight_sum * sum_xx - sum_x * sum_x
+    if abs(denominator) <= 1e-12:
+        mean_y = sum_y / weight_sum
+        return float(mean_y), np.full_like(y, mean_y, dtype=np.float64)
+
+    intercept = (sum_y * sum_xx - sum_x * sum_xy) / denominator
+    slope = (weight_sum * sum_xy - sum_x * sum_y) / denominator
+    fitted = intercept + slope * dx
+    return float(intercept), fitted
+
+
+def _smoothed_method_name(method: str) -> str:
+    if method.endswith("_smoothed"):
+        return method
+    return f"{method}_smoothed"
 
 
 def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
@@ -240,15 +624,63 @@ def _prepare_mask(mask: ArrayLike | None, shape: tuple[int, int]) -> NDArray[np.
     return arr
 
 
-def _prepare_for_registration(image: FloatArray, highpass_radius_px: int) -> FloatArray:
+def _prepare_for_registration(
+    image: FloatArray,
+    highpass_radius_px: int,
+    *,
+    robust_normalization: bool = False,
+) -> FloatArray:
     if highpass_radius_px <= 0:
         prepared = image.copy()
     else:
         prepared = image - _box_blur(image, radius=highpass_radius_px)
-    std = float(np.std(prepared))
-    if std > 0:
-        prepared = prepared / std
+    scale = _robust_scale(prepared) if robust_normalization else float(np.std(prepared))
+    if scale > 0:
+        prepared = prepared / scale
     return prepared
+
+
+def _robust_scale(values: FloatArray) -> float:
+    median = float(np.median(values))
+    mad = float(np.median(np.abs(values - median)))
+    if mad > 0:
+        return 1.4826 * mad
+    return float(np.std(values))
+
+
+def _refine_quadratic_offset(
+    losses: list[tuple[float, float]],
+    best_index: int,
+) -> tuple[float, float]:
+    if best_index <= 0 or best_index >= len(losses) - 1:
+        return losses[best_index]
+
+    window = losses[best_index - 1 : best_index + 2]
+    offsets = np.array([offset for _loss, offset in window], dtype=np.float64)
+    values = np.array([loss for loss, _offset in window], dtype=np.float64)
+    if not np.all(np.isfinite(offsets)) or not np.all(np.isfinite(values)):
+        return losses[best_index]
+    if np.unique(offsets).size != offsets.size:
+        return losses[best_index]
+
+    quadratic, linear, constant = np.polyfit(offsets, values, deg=2)
+    if not np.isfinite(quadratic) or quadratic <= 0:
+        return losses[best_index]
+    refined_offset = float(-linear / (2.0 * quadratic))
+    lower = float(np.min(offsets))
+    upper = float(np.max(offsets))
+    if not np.isfinite(refined_offset) or refined_offset < lower or refined_offset > upper:
+        return losses[best_index]
+
+    refined_loss = float(
+        quadratic * refined_offset * refined_offset
+        + linear * refined_offset
+        + constant
+    )
+    best_loss, best_offset = losses[best_index]
+    if not np.isfinite(refined_loss):
+        return best_loss, best_offset
+    return min(best_loss, refined_loss), refined_offset
 
 
 def _box_blur(image: FloatArray, radius: int) -> FloatArray:

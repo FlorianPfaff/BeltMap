@@ -9,6 +9,7 @@ from typing import Any, Iterable
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .benchmark import detection_metrics, source_frame_index
 from .visual_qc import (
     DetectionRecord,
     find_preview_paths,
@@ -31,6 +32,19 @@ SUMMARY_FIELDS = [
     "detections_per_frame_median",
     "detections_per_frame_max",
     "detection_area_median_px",
+    "labeled_detection_available",
+    "labeled_scored_frames",
+    "labeled_detection_iou_threshold",
+    "labeled_truth_boxes",
+    "labeled_predicted_boxes",
+    "labeled_true_positives",
+    "labeled_false_positives",
+    "labeled_false_negatives",
+    "labeled_precision",
+    "labeled_recall",
+    "labeled_f1",
+    "labeled_mean_matched_iou",
+    "labeled_mean_centroid_error_px",
     "small_component_share_area_le_8",
     "velocity_ratio_median",
     "velocity_ratio_q25",
@@ -53,6 +67,51 @@ PLOT_COLORS = [
     (148, 103, 189),
     (23, 190, 207),
 ]
+
+REQUIRED_CSV_COLUMNS = {
+    "detections.csv": {
+        "frame_index",
+        "y",
+        "x",
+        "area_px",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    },
+    "detections_per_frame.csv": {"frame_index", "n_detections"},
+    "velocities.csv": {"n_detections", "velocity_ratio_y"},
+    "filtered_velocities.csv": {"n_detections", "velocity_ratio_y"},
+    "filtered_tracks.csv": {
+        "track_id",
+        "frame_index",
+        "y",
+        "x",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    },
+}
+
+TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
+TRUTH_FRAME_KEYS = ("frame", "image_index")
+TRUTH_FRAME_SET_KEYS = ("scored_frames", "frames", "labeled_frames")
+TRUTH_BOX_FIELD_SETS = (
+    ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right"),
+    ("top", "left", "bottom", "right"),
+    ("y_min", "x_min", "y_max", "x_max"),
+    ("y1", "x1", "y2", "x2"),
+)
+TRUTH_EVENT_ID_KEYS = ("event_id", "particle_id", "track_id", "id")
+
+LABELED_METRIC_FIELDS = (
+    "precision",
+    "recall",
+    "f1",
+    "mean_matched_iou",
+    "mean_centroid_error_px",
+)
 
 
 @dataclass(frozen=True)
@@ -97,13 +156,33 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_csv_rows(path: Path) -> list[dict[str, str]]:
+def validate_csv_columns(
+    path: Path,
+    fieldnames: list[str] | None,
+    required_columns: set[str] | None,
+) -> None:
+    if required_columns is None:
+        return
+    available = set(fieldnames or [])
+    missing = sorted(required_columns - available)
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"{path} is missing required column(s): {missing_text}")
+
+
+def read_csv_rows(
+    path: Path,
+    *,
+    required_columns: set[str] | None = None,
+) -> list[dict[str, str]]:
     """Read CSV rows, returning an empty list when the file is absent."""
 
     if not path.is_file():
         return []
     with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        validate_csv_columns(path, reader.fieldnames, required_columns)
+        return list(reader)
 
 
 def finite_float(value: Any) -> float | None:
@@ -120,6 +199,20 @@ def finite_float(value: Any) -> float | None:
     return parsed if np.isfinite(parsed) else None
 
 
+def finite_int(value: Any) -> int | None:
+    """Parse an integer value through finite-float handling."""
+
+    parsed = finite_float(value)
+    return None if parsed is None else int(parsed)
+
+
+def nonempty_value(row: dict[str, Any], key: str) -> Any | None:
+    """Return a non-empty row value when present."""
+
+    value = row.get(key)
+    return None if value is None or str(value).strip() == "" else value
+
+
 def finite_values(rows: Iterable[dict[str, Any]], field: str) -> list[float]:
     """Collect finite values from a CSV-like row sequence."""
 
@@ -129,6 +222,26 @@ def finite_values(rows: Iterable[dict[str, Any]], field: str) -> list[float]:
         if value is not None:
             values.append(value)
     return values
+
+
+def paired_values(
+    rows: Iterable[dict[str, Any]],
+    *,
+    x_field: str,
+    y_field: str,
+) -> tuple[list[float], list[float]]:
+    """Collect aligned x/y values, falling back to row index for missing x."""
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for index, row in enumerate(rows):
+        y_value = finite_float(row.get(y_field))
+        if y_value is None:
+            continue
+        x_value = finite_float(row.get(x_field))
+        xs.append(float(index) if x_value is None else x_value)
+        ys.append(y_value)
+    return xs, ys
 
 
 def describe(values: Iterable[float]) -> dict[str, float | int | None]:
@@ -188,20 +301,189 @@ def parse_run_spec(value: str) -> RunSpec:
     return RunSpec(label=label, output_dir=path)
 
 
+def row_frame_index(row: dict[str, Any]) -> int | None:
+    """Infer a frame index from a label or detection row."""
+
+    frame_index = source_frame_index(row)
+    if frame_index is not None:
+        return frame_index
+    for key in TRUTH_FRAME_KEYS:
+        frame_index = finite_int(nonempty_value(row, key))
+        if frame_index is not None:
+            return frame_index
+    return None
+
+
+def parse_frame_set(value: Any) -> set[int]:
+    """Parse a JSON scalar/list of scored frame indices."""
+
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        values: Iterable[Any] = [part.strip() for part in value.split(",")]
+    elif isinstance(value, Iterable) and not isinstance(value, (bytes, dict)):
+        values = value
+    else:
+        values = [value]
+    frames: set[int] = set()
+    for item in values:
+        frame_index = finite_int(item)
+        if frame_index is not None:
+            frames.add(frame_index)
+    return frames
+
+
+def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
+    """Extract label rows and optional scored-frame indices from JSON data."""
+
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)], set()
+    if not isinstance(data, dict):
+        raise ValueError("truth JSON must be an object or a list of objects")
+
+    scored_frames: set[int] = set()
+    for key in TRUTH_FRAME_SET_KEYS:
+        scored_frames.update(parse_frame_set(data.get(key)))
+
+    for key in TRUTH_CONTAINER_KEYS:
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)], scored_frames
+    return [data], scored_frames
+
+
+def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert one real-data label row to the benchmark truth-box schema."""
+
+    frame_index = row_frame_index(row)
+    if frame_index is None:
+        return None
+
+    for field_set in TRUTH_BOX_FIELD_SETS:
+        values = [finite_float(nonempty_value(row, field)) for field in field_set]
+        if any(value is None for value in values):
+            continue
+        top, left, bottom, right = values
+        assert top is not None and left is not None
+        assert bottom is not None and right is not None
+        if bottom <= top or right <= left:
+            return None
+        particle: dict[str, Any] = {
+            "frame_index": frame_index,
+            "top": float(top),
+            "left": float(left),
+            "bottom": float(bottom),
+            "right": float(right),
+        }
+        for key in TRUTH_EVENT_ID_KEYS:
+            value = nonempty_value(row, key)
+            if value is not None:
+                particle[key] = value
+                break
+        return particle
+    return None
+
+
+def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
+    """Load manually labeled detection boxes from CSV or JSON.
+
+    The returned object uses the same ``particles`` list consumed by the
+    synthetic benchmark's detection matcher, but labels are deliberately scoped
+    to ``scored_frames`` so sparse real-data annotations do not turn every
+    unlabeled frame into a false positive.
+    """
+
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        rows: list[dict[str, Any]] = list(read_csv_rows(path))
+        scored_frames: set[int] = set()
+    elif suffix == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rows, scored_frames = label_rows_from_json(data)
+    else:
+        raise ValueError("truth labels must be a CSV or JSON file")
+
+    particles: list[dict[str, Any]] = []
+    skipped_rows = 0
+    for row in rows:
+        frame_index = row_frame_index(row)
+        if frame_index is not None:
+            scored_frames.add(frame_index)
+        particle = truth_particle_from_label_row(row)
+        if particle is None:
+            skipped_rows += 1
+            continue
+        particles.append(particle)
+
+    if rows and not particles and not scored_frames:
+        raise ValueError(
+            "truth labels did not contain any usable frame indices or bounding boxes"
+        )
+
+    return {
+        "particles": particles,
+        "scored_frames": sorted(scored_frames),
+        "source": str(path),
+        "label_rows": len(rows),
+        "skipped_label_rows": skipped_rows,
+    }
+
+
+def truth_frame_indices(truth: dict[str, Any]) -> set[int]:
+    """Return the set of frames covered by a sparse labeled target."""
+
+    frames = parse_frame_set(truth.get("scored_frames"))
+    for particle in truth.get("particles", []):
+        if isinstance(particle, dict):
+            frame_index = row_frame_index(particle)
+            if frame_index is not None:
+                frames.add(frame_index)
+    return frames
+
+
+def restrict_detection_rows_to_frames(
+    rows: list[dict[str, str]],
+    frame_indices: set[int],
+) -> list[dict[str, str]]:
+    """Keep detections only on frames that were manually scored."""
+
+    if not frame_indices:
+        return []
+    return [row for row in rows if row_frame_index(row) in frame_indices]
+
+
 def load_run_data(spec: RunSpec) -> RunData:
     """Load standard outputs from one BeltMap run directory."""
 
-    detections = read_csv_rows(spec.output_dir / "detections.csv")
+    detections = read_csv_rows(
+        spec.output_dir / "detections.csv",
+        required_columns=REQUIRED_CSV_COLUMNS["detections.csv"],
+    )
     records = parse_detection_records(detections)
-    filtered_tracks = read_csv_rows(spec.output_dir / "filtered_tracks.csv")
+    filtered_tracks = read_csv_rows(
+        spec.output_dir / "filtered_tracks.csv",
+        required_columns=REQUIRED_CSV_COLUMNS["filtered_tracks.csv"],
+    )
     filtered_records = parse_detection_records(filtered_tracks)
     return RunData(
         spec=spec,
         metadata=read_json(spec.output_dir / "metadata.json"),
         detections=detections,
-        detections_per_frame=read_csv_rows(spec.output_dir / "detections_per_frame.csv"),
-        velocities=read_csv_rows(spec.output_dir / "velocities.csv"),
-        filtered_velocities=read_csv_rows(spec.output_dir / "filtered_velocities.csv"),
+        detections_per_frame=read_csv_rows(
+            spec.output_dir / "detections_per_frame.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["detections_per_frame.csv"],
+        ),
+        velocities=read_csv_rows(
+            spec.output_dir / "velocities.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["velocities.csv"],
+        ),
+        filtered_velocities=read_csv_rows(
+            spec.output_dir / "filtered_velocities.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["filtered_velocities.csv"],
+        ),
         filtered_tracks=filtered_tracks,
         preview_paths=find_preview_paths(spec.output_dir),
         detections_by_frame=group_detections_by_frame(records),
@@ -222,7 +504,32 @@ def metadata_or_count(data: RunData, key: str, rows: list[Any]) -> int | None:
     return int(value) if value is not None else len(rows)
 
 
-def summarize_run(data: RunData) -> dict[str, Any]:
+def empty_labeled_metrics() -> dict[str, Any]:
+    """Return blank labeled-target metrics for proxy-only comparisons."""
+
+    return {
+        "labeled_detection_available": False,
+        "labeled_scored_frames": None,
+        "labeled_detection_iou_threshold": None,
+        "labeled_truth_boxes": None,
+        "labeled_predicted_boxes": None,
+        "labeled_true_positives": None,
+        "labeled_false_positives": None,
+        "labeled_false_negatives": None,
+        "labeled_precision": None,
+        "labeled_recall": None,
+        "labeled_f1": None,
+        "labeled_mean_matched_iou": None,
+        "labeled_mean_centroid_error_px": None,
+    }
+
+
+def summarize_run(
+    data: RunData,
+    *,
+    labeled_truth: dict[str, Any] | None = None,
+    truth_iou_threshold: float = 0.25,
+) -> dict[str, Any]:
     """Compute one row of comparison metrics for a run."""
 
     detection_counts = finite_values(data.detections_per_frame, "n_detections")
@@ -250,7 +557,7 @@ def summarize_run(data: RunData) -> dict[str, Any]:
         if isinstance(threshold_option, dict):
             detection_threshold = finite_float(threshold_option.get("value"))
 
-    return {
+    row = {
         "label": data.spec.label,
         "output_dir": str(data.spec.output_dir),
         "complete": (data.spec.output_dir / "metadata.json").is_file(),
@@ -283,6 +590,29 @@ def summarize_run(data: RunData) -> dict[str, Any]:
         "long_velocity_tracks_ge_10": long_ge_10,
         "elapsed_s": data.metadata.get("elapsed_s"),
     }
+    row.update(empty_labeled_metrics())
+    if labeled_truth is not None:
+        scored_frames = truth_frame_indices(labeled_truth)
+        scored_detections = restrict_detection_rows_to_frames(data.detections, scored_frames)
+        metrics = detection_metrics(
+            scored_detections,
+            labeled_truth,
+            iou_threshold=truth_iou_threshold,
+        )
+        row.update(
+            {
+                "labeled_detection_available": metrics.get("available"),
+                "labeled_scored_frames": len(scored_frames),
+                "labeled_detection_iou_threshold": metrics.get("iou_threshold"),
+                "labeled_truth_boxes": metrics.get("truth_boxes"),
+                "labeled_predicted_boxes": metrics.get("predicted_boxes"),
+                "labeled_true_positives": metrics.get("true_positives"),
+                "labeled_false_positives": metrics.get("false_positives"),
+                "labeled_false_negatives": metrics.get("false_negatives"),
+                **{f"labeled_{field}": metrics.get(field) for field in LABELED_METRIC_FIELDS},
+            }
+        )
+    return row
 
 
 def write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -536,10 +866,14 @@ def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path],
     }
     series = []
     for run in runs:
-        xs = finite_values(run.detections_per_frame, "frame_index")
+        xs, ys = paired_values(
+            run.detections_per_frame,
+            x_field="frame_index",
+            y_field="n_detections",
+        )
         if not xs:
-            xs = [float(index) for index in range(len(run.detections_per_frame))]
-        ys = finite_values(run.detections_per_frame, "n_detections")
+            ys = finite_values(run.detections_per_frame, "n_detections")
+            xs = [float(index) for index in range(len(ys))]
         series.append((run.spec.label, xs, ys))
     draw_multiline_plot(
         plots["detections_per_frame"],
@@ -568,6 +902,8 @@ def build_markdown_report(
     rows: list[dict[str, Any]],
     plots: dict[str, Path],
     images: dict[str, Path],
+    truth_path: Path | None = None,
+    truth_iou_threshold: float = 0.25,
 ) -> str:
     """Build the comparison Markdown report."""
 
@@ -593,19 +929,62 @@ def build_markdown_report(
         "# BeltMap run comparison",
         "",
         "This report compares detection-only or full BeltMap output directories.",
-        "Use it as a decision aid, not as a ground-truth benchmark.",
+    ]
+    if truth_path is None:
+        lines.append("Use it as a decision aid, not as a ground-truth benchmark.")
+    else:
+        lines.append(
+            "Labeled detection metrics are the primary target on the manually scored frames; proxy metrics remain secondary."
+        )
+    lines.extend(
+        [
         "",
         "## Summary",
         "",
         "| " + " | ".join(label for _field, label in table_fields) + " |",
         "| " + " | ".join("---" for _ in table_fields) + " |",
-    ]
+        ]
+    )
     for row in rows:
         lines.append(
             "| "
             + " | ".join(format_value(row.get(field)) for field, _label in table_fields)
             + " |"
         )
+    if truth_path is not None:
+        labeled_fields = [
+            ("label", "run"),
+            ("labeled_detection_available", "available"),
+            ("labeled_scored_frames", "scored frames"),
+            ("labeled_truth_boxes", "truth boxes"),
+            ("labeled_predicted_boxes", "pred boxes"),
+            ("labeled_true_positives", "TP"),
+            ("labeled_false_positives", "FP"),
+            ("labeled_false_negatives", "FN"),
+            ("labeled_precision", "precision"),
+            ("labeled_recall", "recall"),
+            ("labeled_f1", "F1"),
+            ("labeled_mean_matched_iou", "mean IoU"),
+            ("labeled_mean_centroid_error_px", "centroid px"),
+        ]
+        lines.extend(
+            [
+                "",
+                "## Labeled real-data target",
+                "",
+                f"Truth labels: `{truth_path}`; detection matching IoU threshold: {format_value(truth_iou_threshold)}.",
+                "Detections outside the scored frame set are ignored so sparse labels do not penalize unlabeled frames.",
+                "",
+                "| " + " | ".join(label for _field, label in labeled_fields) + " |",
+                "| " + " | ".join("---" for _ in labeled_fields) + " |",
+            ]
+        )
+        for row in rows:
+            lines.append(
+                "| "
+                + " | ".join(format_value(row.get(field)) for field, _label in labeled_fields)
+                + " |"
+            )
     lines.extend(
         [
             "",
@@ -627,10 +1006,17 @@ def build_markdown_report(
             "",
             "## Decision checklist",
             "",
-            "- Prefer the run with fewer belt-scratch false positives in the contact sheet.",
-            "- Prefer compact filled particles over hollow or fractured particle components.",
-            "- Prefer a plausible velocity-ratio distribution, usually mostly between 0 and 1 for slower particles moving with the belt.",
-            "- Prefer enough long tracks; a threshold that creates only tiny tracks is usually too permissive.",
+        ]
+    )
+    if truth_path is not None:
+        lines.append(
+            "- Prefer the highest labeled F1; use precision/recall to decide whether the remaining error is false positives or misses."
+        )
+    lines.extend(
+        [
+            "- Use the contact sheet to inspect which false positives are belt scratches or map ghosts.",
+            "- Prefer compact filled particles over hollow or fractured particle components when labeled metrics are tied.",
+            "- Use velocity-ratio plausibility and long-track counts as secondary checks, not as substitutes for labels.",
             "- Treat total detection count alone as weak evidence because lower thresholds can simply fragment scratches.",
             "",
         ]
@@ -643,14 +1029,22 @@ def generate_comparison_report(
     *,
     report_dir: Path,
     frames: list[int] | None = None,
+    truth_path: Path | None = None,
+    truth_iou_threshold: float = 0.25,
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
     if len(specs) < 2:
         raise ValueError("at least two runs are required for comparison")
     report_dir.mkdir(parents=True, exist_ok=True)
+    labeled_truth = (
+        None if truth_path is None else load_labeled_detection_truth(truth_path)
+    )
     runs = [load_run_data(spec) for spec in specs]
-    rows = [summarize_run(run) for run in runs]
+    rows = [
+        summarize_run(run, labeled_truth=labeled_truth, truth_iou_threshold=truth_iou_threshold)
+        for run in runs
+    ]
     summary_csv = report_dir / "summary.csv"
     write_summary_csv(summary_csv, rows)
     plots, images = write_plots(report_dir, runs)
@@ -667,7 +1061,14 @@ def generate_comparison_report(
     )
     report = report_dir / "comparison_report.md"
     report.write_text(
-        build_markdown_report(report, rows=rows, plots=plots, images=images),
+        build_markdown_report(
+            report,
+            rows=rows,
+            plots=plots,
+            images=images,
+            truth_path=truth_path,
+            truth_iou_threshold=truth_iou_threshold,
+        ),
         encoding="utf-8",
     )
     return ComparisonArtifacts(report=report, summary_csv=summary_csv, plots=plots, images=images)

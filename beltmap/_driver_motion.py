@@ -9,13 +9,101 @@ import numpy as np
 
 from ._driver_runtime import crop, emit, env_bool, env_float, env_int, read_gray
 
+SELECTED_FRAME_VELOCITY_UNIT = "selected_frame"
+SOURCE_FRAME_VELOCITY_UNIT = "source_frame"
+VELOCITY_FRAME_UNITS = {
+    SELECTED_FRAME_VELOCITY_UNIT,
+    SOURCE_FRAME_VELOCITY_UNIT,
+}
+
+
+def normalize_velocity_frame_unit(value: str) -> str:
+    """Return the canonical frame unit for a manually supplied belt velocity."""
+
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        SELECTED_FRAME_VELOCITY_UNIT: SELECTED_FRAME_VELOCITY_UNIT,
+        "selected": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "strided_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "output_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        SOURCE_FRAME_VELOCITY_UNIT: SOURCE_FRAME_VELOCITY_UNIT,
+        "source": SOURCE_FRAME_VELOCITY_UNIT,
+        "original": SOURCE_FRAME_VELOCITY_UNIT,
+        "original_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "input_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "raw_frame": SOURCE_FRAME_VELOCITY_UNIT,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        choices = ", ".join(sorted(VELOCITY_FRAME_UNITS))
+        raise ValueError(
+            f"BELT_VELOCITY_FRAME_UNIT must be one of {choices}; got {value!r}"
+        ) from exc
+
+
+def resolve_velocity_frame_unit(frame_stride: int) -> str:
+    """Resolve the frame unit for a manually supplied velocity.
+
+    Numeric BELT_VELOCITY_PX_PER_FRAME values are ambiguous when FRAME_STRIDE > 1:
+    they may refer either to adjacent original input frames or to adjacent selected
+    frames after striding. Refuse the ambiguous case instead of silently applying
+    the wrong phase increment.
+    """
+
+    if frame_stride < 1:
+        raise ValueError("FRAME_STRIDE must be at least 1")
+    value = os.getenv("BELT_VELOCITY_FRAME_UNIT", "").strip()
+    if value:
+        return normalize_velocity_frame_unit(value)
+    if frame_stride == 1:
+        return SELECTED_FRAME_VELOCITY_UNIT
+    raise ValueError(
+        f"BELT_VELOCITY_PX_PER_FRAME was supplied with FRAME_STRIDE={frame_stride}. "
+        "Set BELT_VELOCITY_FRAME_UNIT=selected_frame if the supplied velocity is "
+        "already in pixels per processed/selected frame, or set "
+        "BELT_VELOCITY_FRAME_UNIT=source_frame if it is in pixels per adjacent "
+        "original input frame. Source-frame velocities are multiplied by FRAME_STRIDE."
+    )
+
+
+def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[float, str, float]:
+    """Return effective selected-frame velocity, frame unit, and raw supplied value."""
+
+    raw_velocity = float(velocity_spec)
+    if not math.isfinite(raw_velocity):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME must be finite or the literal value 'auto'"
+        )
+    frame_unit = resolve_velocity_frame_unit(frame_stride)
+    if frame_unit == SOURCE_FRAME_VELOCITY_UNIT:
+        effective_velocity = raw_velocity * frame_stride
+    else:
+        effective_velocity = raw_velocity
+    if not math.isfinite(effective_velocity):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME must produce a finite selected-frame velocity"
+        )
+    return effective_velocity, frame_unit, raw_velocity
+
 
 def parse_region(first_frame: np.ndarray) -> tuple[int, int, int, int]:
     value = os.getenv("BELT_REGION", "").strip()
     height, width = first_frame.shape
     if not value:
         return 0, 0, height, width
-    top, left, crop_height, crop_width = [int(x.strip()) for x in value.split(",")]
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError(
+            f"BELT_REGION must contain exactly four comma-separated integers "
+            f"top,left,height,width; got {value!r}"
+        )
+    try:
+        top, left, crop_height, crop_width = [int(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError(f"BELT_REGION values must be integers; got {value!r}") from exc
     if (
         top < 0 or left < 0 or crop_height <= 0 or crop_width <= 0
         or top + crop_height > height or left + crop_width > width
@@ -70,6 +158,18 @@ def validate_auto_velocity_estimate(
 
 
 def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int) -> float:
+    if previous.shape != current.shape:
+        raise ValueError(
+            "previous and current frames must have the same shape for velocity estimation"
+        )
+    if previous.ndim == 0:
+        raise ValueError("previous and current frames must be non-scalar arrays")
+    if max_shift >= previous.shape[0]:
+        raise ValueError(
+            "max_shift must be smaller than the image height for velocity estimation; "
+            f"got max_shift={max_shift}, height={previous.shape[0]}"
+        )
+
     def score(shift: int) -> float:
         if shift > 0:
             a, b = previous[:-shift], current[shift:]
@@ -84,6 +184,11 @@ def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int)
 
     shifts = np.arange(-max_shift, max_shift + 1)
     scores = np.array([score(int(s)) for s in shifts])
+    if not np.isfinite(scores).any():
+        raise ValueError(
+            "Automatic velocity estimation is uninformative: all candidate "
+            "correlation scores are invalid"
+        )
     best_index = int(np.argmax(scores))
     best_shift = float(shifts[best_index])
     if 0 < best_index < len(scores) - 1:
@@ -98,6 +203,12 @@ def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int)
 
 def estimate_velocity(paths: list, region: tuple[int, int, int, int]) -> tuple[float, list[float]]:
     max_shift = env_int("VELOCITY_SEARCH_RADIUS_PX", 50, minimum=1)
+    _, _, crop_height, _crop_width = region
+    if max_shift >= crop_height:
+        raise ValueError(
+            "VELOCITY_SEARCH_RADIUS_PX must be smaller than the BELT_REGION height; "
+            f"got VELOCITY_SEARCH_RADIUS_PX={max_shift}, BELT_REGION height={crop_height}"
+        )
     pair_count = min(len(paths) - 1, env_int("VELOCITY_ESTIMATION_PAIRS", 100, minimum=1))
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     if pair_count < 1:

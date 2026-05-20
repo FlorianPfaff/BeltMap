@@ -20,6 +20,8 @@ class ResidualConfig:
 
     noise_radius_px: int = 15
     clip_sigma: float | None = 5.0
+    noise_exclusion_sigma: float | None = 4.0
+    noise_exclusion_radius_px: int = 2
     min_noise: float = 1e-6
     fill_value: float = np.nan
 
@@ -144,6 +146,10 @@ def estimate_local_noise(
         raise ValueError("min_noise must be positive")
     if cfg.clip_sigma is not None and cfg.clip_sigma <= 0:
         raise ValueError("clip_sigma must be positive when set")
+    if cfg.noise_exclusion_sigma is not None and cfg.noise_exclusion_sigma <= 0:
+        raise ValueError("noise_exclusion_sigma must be positive when set")
+    if cfg.noise_exclusion_radius_px < 0:
+        raise ValueError("noise_exclusion_radius_px must be non-negative")
 
     values = _as_float_image(residual, name="residual")
     valid = np.isfinite(values)
@@ -158,6 +164,18 @@ def estimate_local_noise(
     sample = values[valid]
     center = float(np.median(sample))
     global_sigma = _robust_sigma(sample, center=center, min_noise=cfg.min_noise)
+    noise_valid = valid.copy()
+    particle_noise_mask = _particle_noise_exclusion_mask(
+        values,
+        valid=valid,
+        center=center,
+        global_sigma=global_sigma,
+        config=cfg,
+    )
+    if particle_noise_mask.any():
+        noise_valid &= ~particle_noise_mask
+        if not noise_valid.any():
+            noise_valid = valid.copy()
     centered = np.zeros(values.shape, dtype=np.float64)
     centered[valid] = values[valid] - center
     if cfg.clip_sigma is not None:
@@ -166,9 +184,10 @@ def estimate_local_noise(
 
     local_var = _masked_box_mean(
         np.square(centered),
-        valid,
+        noise_valid,
         radius=cfg.noise_radius_px,
     )
+    local_var = np.where(np.isfinite(local_var), local_var, global_sigma * global_sigma)
     local_noise = np.sqrt(np.maximum(local_var, cfg.min_noise * cfg.min_noise))
     local_noise[~valid] = cfg.fill_value
     return local_noise
@@ -187,6 +206,36 @@ def _robust_sigma(values: FloatArray, *, center: float, min_noise: float) -> flo
     if not np.isfinite(sigma) or sigma < min_noise:
         sigma = min_noise
     return sigma
+
+
+def _particle_noise_exclusion_mask(
+    values: FloatArray,
+    *,
+    valid: NDArray[np.bool_],
+    center: float,
+    global_sigma: float,
+    config: ResidualConfig,
+) -> NDArray[np.bool_]:
+    """Return positive residual pixels that should not define local noise."""
+
+    if config.noise_exclusion_sigma is None:
+        return np.zeros(values.shape, dtype=bool)
+    threshold = center + config.noise_exclusion_sigma * global_sigma
+    particle_like = valid & (values > threshold)
+    if not particle_like.any():
+        return particle_like
+    if config.noise_exclusion_radius_px > 0:
+        particle_like = (
+            _dilate_mask(particle_like, radius=config.noise_exclusion_radius_px)
+            & valid
+        )
+    return particle_like
+
+
+def _dilate_mask(mask: NDArray[np.bool_], *, radius: int) -> NDArray[np.bool_]:
+    if radius == 0:
+        return mask.copy()
+    return _box_sum(mask.astype(np.float64), radius=radius) > 0
 
 
 def _expand_mask_to_image(

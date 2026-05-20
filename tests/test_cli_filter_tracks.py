@@ -2,6 +2,8 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from beltmap.cli import filter_tracks as cli_filter_tracks
 
 
@@ -107,6 +109,37 @@ def test_filter_tracks_writes_scores_and_filtered_velocities(tmp_path, capsys):
     assert [row["track_id"] for row in filtered_rows] == ["0"]
     assert [row["track_id"] for row in filtered_track_rows] == ["0"]
     assert [row["accepted"] for row in score_rows] == ["True", "False"]
+
+
+def test_filter_tracks_cli_treats_zero_lateral_gate_as_disabled(tmp_path, capsys):
+    make_velocities(tmp_path)
+
+    exit_code = cli_filter_tracks.main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "--min-track-length",
+            "5",
+            "--max-velocity-ratio-y",
+            "1.1",
+            "--max-abs-x-velocity-px-per-frame",
+            "0",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["accepted_velocity_estimates"] == 1
+    assert payload["track_filter"]["max_abs_x_velocity_px_per_frame"] is None
+
+
+def test_filter_tracks_cli_reports_missing_velocities_without_traceback(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_filter_tracks.main(["--output-dir", str(tmp_path), "--quiet"])
+
+    assert exc_info.value.code == 2
 
 
 def test_filter_tracks_reconstructs_missing_track_membership(tmp_path):

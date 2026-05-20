@@ -20,6 +20,21 @@ PLOT_FILENAMES = {
     "track_length_histogram": "track_length_histogram.png",
 }
 
+REQUIRED_CSV_COLUMNS = {
+    "phase_estimates.csv": {"frame_index", "correction_px", "score"},
+    "detections.csv": {
+        "frame_index",
+        "y",
+        "x",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    },
+    "detections_per_frame.csv": {"frame_index", "n_detections"},
+    "velocities.csv": {"n_detections", "velocity_ratio_y"},
+}
+
 
 @dataclass(frozen=True)
 class PlotGeometry:
@@ -81,11 +96,31 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_csv_rows(path: Path) -> list[dict[str, str]]:
+def validate_csv_columns(
+    path: Path,
+    fieldnames: list[str] | None,
+    required_columns: set[str] | None,
+) -> None:
+    if required_columns is None:
+        return
+    available = set(fieldnames or [])
+    missing = sorted(required_columns - available)
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"{path} is missing required column(s): {missing_text}")
+
+
+def read_csv_rows(
+    path: Path,
+    *,
+    required_columns: set[str] | None = None,
+) -> list[dict[str, str]]:
     if not path.is_file():
         return []
     with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        validate_csv_columns(path, reader.fieldnames, required_columns)
+        return list(reader)
 
 
 def read_progress_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -184,10 +219,22 @@ def load_run_data(output_dir: Path) -> dict[str, Any]:
         "metadata": read_json(output_dir / "metadata.json"),
         "config": read_json(output_dir / "config_resolved.json"),
         "progress": read_progress_jsonl(output_dir / "progress.jsonl"),
-        "phase_rows": read_csv_rows(output_dir / "phase_estimates.csv"),
-        "detections": read_csv_rows(output_dir / "detections.csv"),
-        "detections_per_frame": read_csv_rows(output_dir / "detections_per_frame.csv"),
-        "velocities": read_csv_rows(output_dir / "velocities.csv"),
+        "phase_rows": read_csv_rows(
+            output_dir / "phase_estimates.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["phase_estimates.csv"],
+        ),
+        "detections": read_csv_rows(
+            output_dir / "detections.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["detections.csv"],
+        ),
+        "detections_per_frame": read_csv_rows(
+            output_dir / "detections_per_frame.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["detections_per_frame.csv"],
+        ),
+        "velocities": read_csv_rows(
+            output_dir / "velocities.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["velocities.csv"],
+        ),
     }
 
 
@@ -398,7 +445,17 @@ def missing_standard_files(output_dir: Path) -> list[str]:
 
 
 def final_belt_map_progress(progress_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    belt_rows = [row for row in progress_rows if row.get("stage") == "belt_map"]
+    coverage_fields = {
+        "observed_pixels",
+        "total_pixels",
+        "masked_pixels",
+        "contributed_pixels",
+    }
+    belt_rows = [
+        row
+        for row in progress_rows
+        if row.get("stage") == "belt_map" and coverage_fields.intersection(row)
+    ]
     return belt_rows[-1] if belt_rows else {}
 
 
@@ -614,7 +671,8 @@ def generate_validation_report(
     report_path: Path | None = None,
     make_plots: bool = True,
 ) -> ValidationArtifacts:
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not output_dir.is_dir():
+        raise FileNotFoundError(f"BeltMap output directory does not exist: {output_dir}")
     report = report_path or (output_dir / "validation_report.md")
     summary_path = report.with_name("validation_summary.json")
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -630,11 +688,14 @@ def generate_validation_report(
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    artifacts = generate_validation_report(
-        args.output_dir,
-        report_path=args.report_path,
-        make_plots=not args.no_plots,
-    )
+    try:
+        artifacts = generate_validation_report(
+            args.output_dir,
+            report_path=args.report_path,
+            make_plots=not args.no_plots,
+        )
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
     if not args.quiet:
         print(
             json.dumps(

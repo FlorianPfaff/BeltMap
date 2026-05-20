@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from beltmap._driver_map import detect_map_particle_mask, validate_map_particle_mask_mode
+from beltmap._driver_map import (
+    detect_map_particle_mask,
+    map_geometry,
+    validate_map_particle_mask_mode,
+)
 from beltmap.residual import ResidualImage
 
 
@@ -76,6 +80,36 @@ def test_hysteresis_abs_map_mask_can_dilate_grown_components():
     assert dilated[7, 9]
 
 
+@pytest.mark.parametrize(("mode", "signal"), [("positive", 5.0), ("absolute", -5.0)])
+def test_non_hysteresis_map_masks_can_dilate_components(mode, signal):
+    z = np.zeros((15, 15), dtype=np.float64)
+    z[7, 7] = signal
+    residual = make_residual(z)
+
+    undilated = detect_map_particle_mask(
+        residual,
+        mode=mode,
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=0,
+        margin_px=0,
+        min_area_px=1,
+    )
+    dilated = detect_map_particle_mask(
+        residual,
+        mode=mode,
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=2,
+        margin_px=0,
+        min_area_px=1,
+    )
+
+    assert undilated.sum() == 1
+    assert dilated.sum() > undilated.sum()
+    assert dilated[7, 9]
+
+
 def test_hysteresis_abs_map_mask_fills_small_internal_holes_with_optional_morphology():
     pytest.importorskip("scipy.ndimage")
     z = np.zeros((9, 9), dtype=np.float64)
@@ -127,3 +161,28 @@ def test_absolute_map_mask_catches_dark_components_that_positive_mode_misses():
 def test_invalid_map_particle_mask_mode_raises_useful_error():
     with pytest.raises(ValueError, match="MAP_PARTICLE_MASK_MODE"):
         validate_map_particle_mask_mode("unknown")
+
+
+def test_hysteresis_abs_rejects_grow_threshold_above_seed_threshold():
+    residual = make_residual(np.zeros((8, 8), dtype=np.float64))
+
+    with pytest.raises(ValueError, match="grow_threshold"):
+        detect_map_particle_mask(
+            residual,
+            mode="hysteresis_abs",
+            threshold=4.0,
+            grow_threshold=5.0,
+            dilation_px=0,
+            margin_px=0,
+            min_area_px=1,
+        )
+
+
+def test_map_geometry_rejects_non_positive_supplied_period():
+    with pytest.raises(ValueError, match="supplied_period"):
+        map_geometry(
+            frame_count=10,
+            crop_height=4,
+            velocity=1.0,
+            supplied_period=-5,
+        )

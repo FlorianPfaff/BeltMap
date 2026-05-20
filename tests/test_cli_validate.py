@@ -69,7 +69,16 @@ def make_minimal_outputs(output_dir: Path) -> None:
     write_csv(
         output_dir / "detections.csv",
         [
-            {"frame_index": 0, "label": 1, "y": 4.0, "x": 5.0},
+            {
+                "frame_index": 0,
+                "label": 1,
+                "y": 4.0,
+                "x": 5.0,
+                "bbox_top": 3,
+                "bbox_left": 4,
+                "bbox_bottom": 6,
+                "bbox_right": 7,
+            },
         ],
     )
     write_csv(
@@ -129,3 +138,20 @@ def test_validate_main_supports_no_plots(tmp_path, capsys):
     assert (tmp_path / "validation_summary.json").is_file()
     assert not (tmp_path / "phase_corrections.png").exists()
     assert not (tmp_path / "phase_correction_timeseries.png").exists()
+
+
+def test_validation_rejects_existing_csv_with_missing_required_columns(tmp_path):
+    make_minimal_outputs(tmp_path)
+    write_csv(
+        tmp_path / "detections_per_frame.csv",
+        [
+            {"frame_index": 0, "count": 1},
+        ],
+    )
+
+    try:
+        cli_validate.generate_validation_report(tmp_path, make_plots=False)
+    except ValueError as exc:
+        assert "n_detections" in str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected schema validation to reject malformed CSV")
