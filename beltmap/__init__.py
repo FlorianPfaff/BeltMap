@@ -1,6 +1,10 @@
 """Conveyor-belt map reconstruction and phase-estimation tools."""
 
-from .detection import detect_particles_from_residual
+from .detection import (
+    DETECTION_MODES,
+    detect_particles_from_residual,
+    detection_signal_from_residual,
+)
 from .phase import (
     BeltMotionModel,
     PhaseEstimate,
@@ -53,6 +57,7 @@ __all__ = [
     "BeltMotionModel",
     "BeltRegion",
     "CleanBeltRender",
+    "DETECTION_MODES",
     "PhaseEstimate",
     "PhaseRegistrationConfig",
     "PhaseTrajectorySmoothingConfig",
@@ -71,6 +76,7 @@ __all__ = [
     "belt_revolution_indices",
     "build_recurrent_artifact_map",
     "detect_particles_from_residual",
+    "detection_signal_from_residual",
     "estimate_particle_velocities_vs_belt",
     "estimate_local_noise",
     "estimate_phase",

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap import (
     BeltMotionModel,
@@ -37,6 +38,18 @@ def test_belt_revolution_indices_follow_motion_model_distance():
     )
 
     np.testing.assert_array_equal(indices, [0, 0, 0, 0, 1, 1, 1, 2])
+
+
+@pytest.mark.parametrize("period_px", [None, 0.0, -1.0, np.nan, np.inf])
+def test_belt_revolution_indices_rejects_invalid_period(period_px):
+    with pytest.raises(ValueError, match="period"):
+        belt_revolution_indices(
+            3,
+            BeltMotionModel(
+                image_velocity_px_per_frame=3.0,
+                period_px=period_px,
+            ),
+        )
 
 
 def test_recurrent_artifact_map_counts_distinct_revolutions_only():

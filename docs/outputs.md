@@ -164,6 +164,10 @@ with optional particle masking. During detection the final raw residual is:
 raw = image - belt_background - static_background
 ```
 
+When detection-only reuse mode is enabled with `REUSE_STATIC_BACKGROUND_PATH` or
+`reuse.static_background_path`, this file is a copy of the loaded additive
+static-background map in the new output directory.
+
 ## `belt_map.png`
 
 Purpose: quick-look visualization of `belt_map.npy`.
@@ -336,11 +340,11 @@ Columns:
 
 Notes:
 
-- The detector is tuned for bright particles on a darker belt and thresholds the
-  normalized residual image.
-- `mean_signal` and `peak_signal` use the residual normalization of the current
-  run. They are useful for ranking detections, but they are not calibrated
-  physical intensities.
+- `detection.mode` controls whether the detector uses positive, negative, or
+  absolute normalized residuals as its particle signal.
+- `mean_signal` and `peak_signal` use the oriented detection signal of the
+  current run. They are useful for ranking detections and for soft recurrent
+  artifact filtering, but they are not calibrated physical intensities.
 - Convert bounding boxes to full-frame coordinates by adding `top` to vertical
   fields and `left` to horizontal fields from the configured belt region.
 
@@ -422,6 +426,8 @@ Important fields:
 | `belt_map_height_px` | px | Height of the reconstructed belt map. |
 | `reference_phase_px` | px | Phase assigned to the reference frame by the map builder. |
 | `detection_threshold` | z | Threshold applied to the normalized residual image. |
+| `detection_mode` | mode | Final detector polarity: `positive`, `negative`, or `absolute`. |
+| `detection_low_threshold` | z | Optional lower hysteresis threshold for final detection, or `null` when disabled. |
 | `min_area_px` | px | Minimum connected-component area for detection output. |
 | `detection_max_area_px` | px | Optional maximum connected-component area, or `null` when disabled. |
 | `detection_min_bbox_width_px` | px | Optional minimum component bounding-box width, or `null` when disabled. |
@@ -432,6 +438,8 @@ Important fields:
 | `map_particle_mask_threshold` | z | Threshold used for particle masking during map reconstruction. |
 | `map_particle_mask_margin_px` | px | Bounding-box margin used when excluding particle pixels from the map. |
 | `map_particle_mask_min_area_px` | px | Minimum component area used for map-building particle masks. |
+| `static_background_map_used` | bool | Whether a learned or reused additive static residual-background map was subtracted during detection. |
+| `reuse_static_background_path` | path | Source static-background map path, or an empty string when no map was reused. |
 | `static_noise_map_used` | bool | Whether a learned or reused static residual-noise map was applied during detection. |
 | `reuse_static_noise_path` | path | Source static-noise map path, or an empty string when no map was reused. |
 | `reuse_recurrent_artifact_map_path` | path | Source recurrent artifact map path, or an empty string when no map was reused. |
@@ -440,6 +448,10 @@ Important fields:
 | `static_noise_mask_threshold` | z | Particle-mask threshold used while learning static noise, or `null` when disabled. |
 | `static_noise_mask_margin_px` | px | Particle-box margin used while learning static noise. |
 | `static_noise_mask_min_area_px` | px | Particle-mask minimum area used while learning static noise. |
+| `static_background_sample_frames` | frames | Number of frames requested for static residual-background learning. |
+| `static_background_mask_threshold` | z | Particle-mask threshold used while learning static background, or `null` when disabled. |
+| `static_background_mask_margin_px` | px | Particle-box margin used while learning static background. |
+| `static_background_mask_min_area_px` | px | Particle-mask minimum area used while learning static background. |
 | `recurrent_artifact_filter_used` | bool | Whether recurrent artifact suppression was enabled. |
 | `recurrent_artifact_min_revolutions` | revolutions | Distinct-revolution threshold used to build the artifact map. |
 | `recurrent_artifact_margin_px` | px | Detection-box margin used while accumulating recurrent artifact counts. |

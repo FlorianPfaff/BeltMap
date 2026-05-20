@@ -29,6 +29,21 @@ from beltmap.driver import (
 )
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "+inf", "-inf"])
+def test_env_float_rejects_non_finite_values(monkeypatch, value):
+    monkeypatch.setenv("TEST_FLOAT", value)
+
+    with pytest.raises(ValueError, match="TEST_FLOAT must be finite"):
+        rt.env_float("TEST_FLOAT", 1.0)
+
+
+def test_env_float_rejects_non_finite_defaults(monkeypatch):
+    monkeypatch.delenv("TEST_FLOAT", raising=False)
+
+    with pytest.raises(ValueError, match="TEST_FLOAT must be finite"):
+        rt.env_float("TEST_FLOAT", float("nan"))
+
+
 def test_auto_velocity_rejects_full_frame_region_by_default(monkeypatch):
     monkeypatch.delenv("ALLOW_FULL_FRAME_AUTO_VELOCITY", raising=False)
 

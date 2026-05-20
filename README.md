@@ -275,6 +275,15 @@ normalized residual:
 particle_mask = detect_particles_from_residual(residual, threshold=5.0)
 ```
 
+For dark particles or mixed-polarity residual artifacts, select the residual
+polarity explicitly. The optional low threshold enables hysteresis growing from
+strong seed pixels into adjacent weaker particle shoulders:
+
+```python
+dark_mask = detect_particles_from_residual(residual, threshold=5.0, mode="negative")
+mixed_mask = detect_particles_from_residual(residual, threshold=5.0, mode="absolute", low_threshold=2.0)
+```
+
 Connected-component extraction is implemented with a pure NumPy fallback. For
 large residual masks, install the optional acceleration dependencies:
 

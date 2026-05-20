@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import re
 import time
@@ -40,6 +41,8 @@ def env_int(name: str, default: int, minimum: int | None = None) -> int:
 def env_float(name: str, default: float, minimum: float | None = None) -> float:
     value = os.getenv(name, "").strip()
     parsed = default if value == "" else float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite, got {parsed!r}")
     if minimum is not None and parsed < minimum:
         raise ValueError(f"{name}={parsed} is below minimum {minimum}")
     return parsed

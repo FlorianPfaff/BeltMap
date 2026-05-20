@@ -53,6 +53,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
+    ("map_reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION", "float", (("map_reconstruction_trim_fraction",), ("map", "reconstruction_trim_fraction")), "Symmetric per-pixel trim fraction for robust belt-map reconstruction. Use 0 for the arithmetic mean.", "FRACTION"),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
     ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
     ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, absolute, or hysteresis_abs.", "MODE"),
@@ -128,6 +129,8 @@ velocity_px_per_frame = "auto"
 
 [detection]
 threshold = 5.0
+mode = "positive"
+low_threshold = 0.0
 min_area_px = 4
 max_area_px = 0
 min_bbox_width_px = 0
@@ -159,6 +162,7 @@ max_abs_x_velocity_px_per_frame = 0.0
 
 [map]
 sample_frames = 120
+reconstruction_trim_fraction = 0.1
 mask_iterations = 1
 particle_mask_mode = "positive"
 particle_mask_threshold = 5.0
@@ -275,6 +279,10 @@ def normalize_value(name: str, value: Any) -> str | None:
         return str(parse_int(value, name))
     if kind == "float":
         return f"{parse_float(value, name):.15g}"
+    if kind == "auto_int":
+        if isinstance(value, str) and value.strip().lower() == "auto":
+            return "auto"
+        return str(parse_int(value, name))
     if kind == "velocity":
         if isinstance(value, str) and value.lower() == "auto":
             return "auto"

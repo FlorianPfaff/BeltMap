@@ -60,14 +60,15 @@ def belt_revolution_indices(
 
     if frame_count < 0:
         raise ValueError("frame_count must be non-negative")
-    if motion_model.period_px <= 0:
-        raise ValueError("motion_model period must be positive")
+    period_px = motion_model.period_px
+    if period_px is None or not np.isfinite(period_px) or period_px <= 0:
+        raise ValueError("motion_model period must be finite and positive")
     frames = np.arange(frame_count, dtype=np.float64)
     displacement = np.abs(
         motion_model.image_velocity_px_per_frame
         * (frames - float(motion_model.reference_frame))
     )
-    return np.floor(displacement / float(motion_model.period_px)).astype(np.int64)
+    return np.floor(displacement / float(period_px)).astype(np.int64)
 
 
 def build_recurrent_artifact_map(

@@ -67,6 +67,8 @@ def map_geometry(frame_count: int, crop_height: int, velocity: float, supplied_p
 
 
 def sample_indices(frame_count: int, sample_count: int) -> list[int]:
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
     sample_count = max(1, min(frame_count, sample_count))
     return sorted(set(int(i) for i in np.linspace(0, frame_count - 1, sample_count)))
 
@@ -85,6 +87,15 @@ def validate_map_aggregation(method: str) -> str:
         choices = ", ".join(sorted(MAP_AGGREGATION_METHODS))
         raise ValueError(f"MAP_AGGREGATION must be one of {choices}, got {method!r}")
     return normalized
+
+
+def validate_map_trim_fraction(trim_fraction: float) -> float:
+    """Validate the symmetric trim fraction used for robust belt-map means."""
+
+    value = float(trim_fraction)
+    if not np.isfinite(value) or not 0.0 <= value < 0.5:
+        raise ValueError(f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be in [0, 0.5), got {trim_fraction!r}")
+    return value
 
 
 def expanded_detection_mask(detections: list, shape: tuple[int, int], *, margin_px: int) -> np.ndarray:
@@ -185,6 +196,11 @@ def build_belt_map_result(
     cfg = _validate_phase_feedback_config(
         phase_feedback_config if phase_feedback_config is not None else _env_phase_feedback_config()
     )
+    map_trim_fraction = validate_map_trim_fraction(
+        env_float(MAP_RECONSTRUCTION_TRIM_FRACTION_ENV, 0.0, minimum=0.0)
+        if map_trim_fraction is None
+        else map_trim_fraction
+    )
     _, _, crop_height, crop_width = region
     max_samples = env_int("MAP_SAMPLE_FRAMES", 120, minimum=1)
     map_height, reference_phase, model_period = map_geometry(len(paths), crop_height, velocity, supplied_period)
@@ -226,6 +242,7 @@ def build_belt_map_result(
         mask_dilation_px=mask_dilation_px,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
+        map_trim_fraction=map_trim_fraction,
         pass_label="initial",
     )
     phase_by_frame: np.ndarray | None = None
@@ -264,6 +281,7 @@ def build_belt_map_result(
                 mask_dilation_px=mask_dilation_px,
                 mask_margin_px=mask_margin_px,
                 mask_min_area_px=mask_min_area_px,
+                map_trim_fraction=map_trim_fraction,
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
             )
@@ -292,6 +310,7 @@ def build_belt_map_result(
             mask_dilation_px=mask_dilation_px,
             mask_margin_px=mask_margin_px,
             mask_min_area_px=mask_min_area_px,
+            map_trim_fraction=map_trim_fraction,
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
         )

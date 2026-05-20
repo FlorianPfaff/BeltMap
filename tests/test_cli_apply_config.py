@@ -49,6 +49,27 @@ def test_nested_toml_config_maps_to_driver_environment(tmp_path):
     assert report["options"]["belt_region"]["source"].startswith("config:")
 
 
+def test_static_residual_config_accepts_auto_sample_frames(tmp_path):
+    config = tmp_path / "beltmap.toml"
+    config.write_text(
+        """
+        [static_noise]
+        sample_frames = "auto"
+
+        [static_background]
+        sample_frames = "auto"
+        """,
+        encoding="utf-8",
+    )
+
+    env, report = resolve_driver_env(parse_args(["--config", str(config)]), environ={})
+
+    assert env["STATIC_NOISE_SAMPLE_FRAMES"] == "auto"
+    assert env["STATIC_BACKGROUND_SAMPLE_FRAMES"] == "auto"
+    assert report["options"]["static_noise_sample_frames"]["value"] == "auto"
+    assert report["options"]["static_background_sample_frames"]["value"] == "auto"
+
+
 def test_cli_overrides_environment_and_environment_overrides_config(tmp_path):
     config = tmp_path / "beltmap.toml"
     config.write_text(
@@ -100,5 +121,6 @@ def test_config_template_writer(tmp_path):
     assert "[paths]" in text
     assert "velocity_px_per_frame" in text
     assert "max_bbox_aspect_ratio" in text
+    assert "reconstruction_trim_fraction" in text
     assert "particle_mask_margin_px" in text
     assert "noise_exclusion_sigma" in text

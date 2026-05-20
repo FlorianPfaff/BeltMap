@@ -287,6 +287,121 @@ def track_particle_detections(
     ]
 
 
+def _associate_greedy(
+    current: Sequence[ParticleDetection],
+    active_track_ids: Sequence[int],
+    tracks: Sequence[Sequence[ParticleDetection]],
+    *,
+    frame_index: float,
+    config: ParticleTrackingConfig,
+) -> list[tuple[int, int]]:
+    """Return greedy nearest-neighbor assignments as ``(track_id, detection_index)``."""
+
+    candidates: list[tuple[float, int, int]] = []
+    for track_id in active_track_ids:
+        last = tracks[track_id][-1]
+        dt = frame_index - last.frame_index
+        if dt <= 0 or dt > config.max_frame_gap:
+            continue
+        predicted_y = last.y + config.velocity_prior_y_px_per_frame * dt
+        predicted_x = last.x + config.velocity_prior_x_px_per_frame * dt
+        for detection_index, detection in enumerate(current):
+            distance = hypot(detection.y - predicted_y, detection.x - predicted_x)
+            if distance <= config.max_match_distance_px:
+                candidates.append((distance, track_id, detection_index))
+
+    assignments: list[tuple[int, int]] = []
+    assigned_tracks: set[int] = set()
+    assigned_detections: set[int] = set()
+    for _distance, track_id, detection_index in sorted(candidates):
+        if track_id in assigned_tracks or detection_index in assigned_detections:
+            continue
+        assignments.append((track_id, detection_index))
+        assigned_tracks.add(track_id)
+        assigned_detections.add(detection_index)
+    return assignments
+
+
+def _associate_pyrecest_gnn(
+    current: Sequence[ParticleDetection],
+    active_track_ids: Sequence[int],
+    tracks: Sequence[Sequence[ParticleDetection]],
+    *,
+    frame_index: float,
+    config: ParticleTrackingConfig,
+) -> list[tuple[int, int]]:
+    """Return global nearest-neighbor assignments using PyRecEst.
+
+    BeltMap owns track birth/death bookkeeping, while PyRecEst solves the
+    active-track-to-detection assignment globally via its multitarget tracker.
+    The state exposed to PyRecEst is the predicted image position ``[y, x]``;
+    new detections that remain unassigned are initialized as BeltMap tracks by
+    the caller.
+    """
+
+    candidate_track_ids: list[int] = []
+    initial_priors: list[tuple[FloatArray, FloatArray]] = []
+    for track_id in active_track_ids:
+        last = tracks[track_id][-1]
+        dt = frame_index - last.frame_index
+        if dt <= 0 or dt > config.max_frame_gap:
+            continue
+        predicted_y = last.y + config.velocity_prior_y_px_per_frame * dt
+        predicted_x = last.x + config.velocity_prior_x_px_per_frame * dt
+        candidate_track_ids.append(track_id)
+        initial_priors.append(
+            (
+                np.asarray([predicted_y, predicted_x], dtype=np.float64),
+                np.eye(2, dtype=np.float64),
+            )
+        )
+
+    if not candidate_track_ids:
+        return []
+
+    GlobalNearestNeighbor = _load_pyrecest_global_nearest_neighbor()
+    tracker = GlobalNearestNeighbor(
+        initial_prior=initial_priors,
+        association_param={
+            "distance_metric_pos": "Euclidean",
+            "gating_distance_threshold": config.max_match_distance_px,
+            "max_new_tracks": max(len(current), len(candidate_track_ids), 1),
+        },
+        log_prior_estimates=False,
+        log_posterior_estimates=False,
+    )
+    measurements = np.asarray(
+        [[detection.y for detection in current], [detection.x for detection in current]],
+        dtype=np.float64,
+    )
+    association = np.asarray(
+        tracker.find_association(
+            measurements,
+            np.eye(2, dtype=np.float64),
+            np.eye(2, dtype=np.float64),
+            warn_on_no_meas_for_track=False,
+        ),
+        dtype=int,
+    )
+    return [
+        (candidate_track_ids[track_index], int(detection_index))
+        for track_index, detection_index in enumerate(association)
+        if 0 <= detection_index < len(current)
+    ]
+
+
+def _load_pyrecest_global_nearest_neighbor() -> Any:
+    try:
+        from pyrecest.filters import GlobalNearestNeighbor
+    except ImportError as exc:  # pragma: no cover - exercised without optional extra
+        raise ImportError(
+            "ParticleTrackingConfig(association_backend='pyrecest_gnn') requires "
+            "PyRecEst. Install it with `python -m pip install 'beltmap[pyrecest]'` "
+            "or use association_backend='greedy'."
+        ) from exc
+    return GlobalNearestNeighbor
+
+
 def estimate_particle_velocities_vs_belt(
     tracks: Sequence[ParticleTrack],
     *,

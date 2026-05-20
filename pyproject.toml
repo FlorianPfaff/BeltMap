@@ -48,6 +48,7 @@ beltmap-apply = "beltmap.cli.apply:main"
 beltmap-validate = "beltmap.cli.validate_visual:main"
 beltmap-benchmark = "beltmap.cli.benchmark:main"
 beltmap-compare = "beltmap.cli.compare:main"
+beltmap-evaluate = "beltmap.cli.evaluate:main"
 beltmap-filter-tracks = "beltmap.cli.filter_tracks:main"
 
 [project.optional-dependencies]
@@ -57,6 +58,9 @@ test = [
 speed = [
     "scipy>=1.10",
     "scikit-image>=0.21",
+]
+pyrecest = [
+    "pyrecest>=2.2.1",
 ]
 
 [tool.poetry]
