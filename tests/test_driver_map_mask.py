@@ -76,6 +76,36 @@ def test_hysteresis_abs_map_mask_can_dilate_grown_components():
     assert dilated[7, 9]
 
 
+@pytest.mark.parametrize(("mode", "signal"), [("positive", 5.0), ("absolute", -5.0)])
+def test_non_hysteresis_map_masks_can_dilate_components(mode, signal):
+    z = np.zeros((15, 15), dtype=np.float64)
+    z[7, 7] = signal
+    residual = make_residual(z)
+
+    undilated = detect_map_particle_mask(
+        residual,
+        mode=mode,
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=0,
+        margin_px=0,
+        min_area_px=1,
+    )
+    dilated = detect_map_particle_mask(
+        residual,
+        mode=mode,
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=2,
+        margin_px=0,
+        min_area_px=1,
+    )
+
+    assert undilated.sum() == 1
+    assert dilated.sum() > undilated.sum()
+    assert dilated[7, 9]
+
+
 def test_hysteresis_abs_map_mask_fills_small_internal_holes_with_optional_morphology():
     pytest.importorskip("scipy.ndimage")
     z = np.zeros((9, 9), dtype=np.float64)

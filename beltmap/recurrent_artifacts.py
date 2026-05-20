@@ -105,6 +105,7 @@ def build_recurrent_artifact_map(
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
+            frame_height=frame_height,
         )
         revolution_exposure = _build_revolution_exposure_mask(
             phase_px_by_frame,
@@ -389,6 +390,7 @@ def _build_revolution_detection_mask(
     revolution: int,
     map_shape: tuple[int, int],
     margin_px: int,
+    frame_height: int | None,
 ) -> tuple[NDArray[np.bool_], int]:
     map_height, map_width = _validate_map_shape(map_shape)
     revolution_mask = np.zeros((map_height, map_width), dtype=bool)
@@ -403,6 +405,7 @@ def _build_revolution_detection_mask(
                 detection,
                 phase_px=phase_px,
                 margin_px=margin_px,
+                image_height=frame_height,
             )
             candidate_detections += 1
     return revolution_mask, candidate_detections
@@ -414,6 +417,7 @@ def _mark_detection_bbox(
     *,
     phase_px: float,
     margin_px: int,
+    image_height: int | None,
 ) -> None:
     map_height, map_width = _validate_map_shape(mask.shape)
     left = max(0, int(detection.bbox_left) - margin_px)
@@ -427,6 +431,7 @@ def _mark_detection_bbox(
         ),
         phase_px=phase_px,
         map_height=map_height,
+        image_height=image_height,
     )
     if rows.size:
         mask[rows, left:right] = True
@@ -477,8 +482,15 @@ def _belt_rows_for_image_rows(
     *,
     phase_px: float,
     map_height: int,
+    image_height: int | None = None,
 ) -> NDArray[np.integer]:
     rows = np.fromiter(image_rows, dtype=np.float64)
+    if rows.size == 0:
+        return np.array([], dtype=np.int64)
+    if image_height is None:
+        rows = rows[rows >= 0]
+    else:
+        rows = rows[(rows >= 0) & (rows < image_height)]
     if rows.size == 0:
         return np.array([], dtype=np.int64)
     belt_rows = np.rint(rows + phase_px).astype(np.int64) % map_height

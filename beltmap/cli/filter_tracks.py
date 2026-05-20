@@ -106,6 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def optional_nonnegative_float(value: float | None, *, name: str) -> float | None:
+    """Normalize CLI options where zero disables an optional positive gate."""
+
+    if value is None:
+        return None
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return None if value == 0 else value
+
+
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
     if not path.is_file():
         raise FileNotFoundError(f"missing velocity file: {path}")
@@ -297,13 +307,21 @@ def filter_tracks(
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    config = TrackFilterConfig(
-        min_track_length=args.min_track_length,
-        min_velocity_ratio_y=args.min_velocity_ratio_y,
-        max_velocity_ratio_y=args.max_velocity_ratio_y,
-        max_abs_x_velocity_px_per_frame=args.max_abs_x_velocity_px_per_frame,
-    )
-    payload = filter_tracks(args.output_dir, config=config)
+    try:
+        max_abs_x_velocity = optional_nonnegative_float(
+            args.max_abs_x_velocity_px_per_frame,
+            name="--max-abs-x-velocity-px-per-frame",
+        )
+        config = TrackFilterConfig(
+            min_track_length=args.min_track_length,
+            min_velocity_ratio_y=args.min_velocity_ratio_y,
+            max_velocity_ratio_y=args.max_velocity_ratio_y,
+            max_abs_x_velocity_px_per_frame=max_abs_x_velocity,
+        )
+        payload = filter_tracks(args.output_dir, config=config)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
+
     if not args.quiet:
         print(json.dumps(payload, indent=2), flush=True)
     return 0

@@ -276,6 +276,27 @@ def test_filter_accepts_config_without_build_min_revolutions_for_reused_map():
     assert filtered == [[]]
 
 
+def test_recurrent_artifact_margin_is_clipped_to_observed_frame_rows():
+    top_edge = detection(0, 0, 1, 1, 3)
+    bottom_edge = detection(1, 3, 1, 4, 3)
+
+    result = build_recurrent_artifact_map(
+        [[top_edge], [bottom_edge]],
+        phase_px_by_frame=[0.0, 0.0],
+        revolution_by_frame=[0, 0],
+        map_shape=(10, 6),
+        frame_shape=(4, 6),
+        config=RecurrentArtifactConfig(
+            min_revolutions=1,
+            margin_px=2,
+            max_overlap_fraction=0.5,
+        ),
+    )
+
+    assert not result.mask[4:, :].any()
+    assert result.mask[:4, :].any()
+
+
 def test_probabilistic_recurrent_filter_uses_probability_prior():
     artifact_prior = np.zeros((12, 12), dtype=np.float32)
     artifact_prior[1:3, 2:4] = 0.4

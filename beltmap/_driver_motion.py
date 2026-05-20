@@ -139,6 +139,18 @@ def validate_auto_velocity_estimate(
 
 
 def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int) -> float:
+    if previous.shape != current.shape:
+        raise ValueError(
+            "previous and current frames must have the same shape for velocity estimation"
+        )
+    if previous.ndim == 0:
+        raise ValueError("previous and current frames must be non-scalar arrays")
+    if max_shift >= previous.shape[0]:
+        raise ValueError(
+            "max_shift must be smaller than the image height for velocity estimation; "
+            f"got max_shift={max_shift}, height={previous.shape[0]}"
+        )
+
     def score(shift: int) -> float:
         if shift > 0:
             a, b = previous[:-shift], current[shift:]
@@ -167,6 +179,12 @@ def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int)
 
 def estimate_velocity(paths: list, region: tuple[int, int, int, int]) -> tuple[float, list[float]]:
     max_shift = env_int("VELOCITY_SEARCH_RADIUS_PX", 50, minimum=1)
+    _, _, crop_height, _crop_width = region
+    if max_shift >= crop_height:
+        raise ValueError(
+            "VELOCITY_SEARCH_RADIUS_PX must be smaller than the BELT_REGION height; "
+            f"got VELOCITY_SEARCH_RADIUS_PX={max_shift}, BELT_REGION height={crop_height}"
+        )
     pair_count = min(len(paths) - 1, env_int("VELOCITY_ESTIMATION_PAIRS", 100, minimum=1))
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     if pair_count < 1:

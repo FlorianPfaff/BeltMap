@@ -618,23 +618,25 @@ def detect_map_particle_mask(
     mode = validate_map_particle_mask_mode(mode)
     if mode == "positive":
         raw_mask = detect_particles_from_residual(residual, threshold=threshold)
-        particle_mask = _morphological_cleanup(
+        return _component_mask_with_optional_dilation(
             raw_mask,
+            residual=residual,
             min_area_px=min_area_px,
+            margin_px=margin_px,
             dilation_px=dilation_px,
         )
-        return _component_bbox_mask(particle_mask, residual=residual, min_area_px=1, margin_px=margin_px)
     values = np.asarray(residual.normalized, dtype=np.float64)
     valid = np.asarray(residual.mask, dtype=bool) & np.isfinite(values)
     abs_values = np.abs(values)
     if mode == "absolute":
         raw_mask = valid & (abs_values > threshold)
-        particle_mask = _morphological_cleanup(
+        return _component_mask_with_optional_dilation(
             raw_mask,
+            residual=residual,
             min_area_px=min_area_px,
+            margin_px=margin_px,
             dilation_px=dilation_px,
         )
-        return _component_bbox_mask(particle_mask, residual=residual, min_area_px=1, margin_px=margin_px)
     seed_mask = valid & (abs_values >= threshold)
     grow_mask = valid & (abs_values >= grow_threshold)
     if not np.any(seed_mask) or not np.any(grow_mask):
@@ -749,6 +751,24 @@ def smooth_phase_corrections(*, frame_count: int, correction_by_frame: Sequence[
         stop = min(frame_count, index + half_window + 1)
         smoothed[index] = float(np.median(interpolated[start:stop]))
     return smoothed
+
+
+def _component_mask_with_optional_dilation(
+    raw_mask: np.ndarray,
+    *,
+    residual: ResidualImage,
+    min_area_px: int,
+    margin_px: int,
+    dilation_px: int,
+) -> np.ndarray:
+    if dilation_px > 0:
+        cleaned = _morphological_cleanup(
+            raw_mask,
+            min_area_px=min_area_px,
+            dilation_px=dilation_px,
+        )
+        return _component_bbox_mask(cleaned, residual=residual, min_area_px=1, margin_px=margin_px)
+    return _component_bbox_mask(raw_mask, residual=residual, min_area_px=min_area_px, margin_px=margin_px)
 
 
 def _component_bbox_mask(raw_mask: np.ndarray, *, residual: ResidualImage, min_area_px: int, margin_px: int) -> np.ndarray:
