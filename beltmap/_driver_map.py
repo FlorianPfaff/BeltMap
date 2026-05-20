@@ -585,13 +585,23 @@ def detect_map_particle_mask(
     mode = validate_map_particle_mask_mode(mode)
     if mode == "positive":
         raw_mask = detect_particles_from_residual(residual, threshold=threshold)
-        return _component_bbox_mask(raw_mask, residual=residual, min_area_px=min_area_px, margin_px=margin_px)
+        particle_mask = _morphological_cleanup(
+            raw_mask,
+            min_area_px=min_area_px,
+            dilation_px=dilation_px,
+        )
+        return _component_bbox_mask(particle_mask, residual=residual, min_area_px=1, margin_px=margin_px)
     values = np.asarray(residual.normalized, dtype=np.float64)
     valid = np.asarray(residual.mask, dtype=bool) & np.isfinite(values)
     abs_values = np.abs(values)
     if mode == "absolute":
         raw_mask = valid & (abs_values > threshold)
-        return _component_bbox_mask(raw_mask, residual=residual, min_area_px=min_area_px, margin_px=margin_px)
+        particle_mask = _morphological_cleanup(
+            raw_mask,
+            min_area_px=min_area_px,
+            dilation_px=dilation_px,
+        )
+        return _component_bbox_mask(particle_mask, residual=residual, min_area_px=1, margin_px=margin_px)
     seed_mask = valid & (abs_values >= threshold)
     grow_mask = valid & (abs_values >= grow_threshold)
     if not np.any(seed_mask) or not np.any(grow_mask):

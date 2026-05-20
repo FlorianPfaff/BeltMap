@@ -281,6 +281,64 @@ def estimate_velocity(paths: list[Path], region: tuple[int, int, int, int]) -> t
     return velocity, shifts
 
 
+SELECTED_FRAME_VELOCITY_UNIT = "selected_frame"
+SOURCE_FRAME_VELOCITY_UNIT = "source_frame"
+VELOCITY_FRAME_UNITS = {
+    SELECTED_FRAME_VELOCITY_UNIT,
+    SOURCE_FRAME_VELOCITY_UNIT,
+}
+
+
+def normalize_velocity_frame_unit(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        SELECTED_FRAME_VELOCITY_UNIT: SELECTED_FRAME_VELOCITY_UNIT,
+        "selected": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "strided_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "output_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        SOURCE_FRAME_VELOCITY_UNIT: SOURCE_FRAME_VELOCITY_UNIT,
+        "source": SOURCE_FRAME_VELOCITY_UNIT,
+        "original": SOURCE_FRAME_VELOCITY_UNIT,
+        "original_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "input_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "raw_frame": SOURCE_FRAME_VELOCITY_UNIT,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        choices = ", ".join(sorted(VELOCITY_FRAME_UNITS))
+        raise ValueError(
+            f"BELT_VELOCITY_FRAME_UNIT must be one of {choices}; got {value!r}"
+        ) from exc
+
+
+def resolve_velocity_frame_unit(frame_stride: int) -> str:
+    if frame_stride < 1:
+        raise ValueError("FRAME_STRIDE must be at least 1")
+    value = os.getenv("BELT_VELOCITY_FRAME_UNIT", "").strip()
+    if value:
+        return normalize_velocity_frame_unit(value)
+    if frame_stride == 1:
+        return SELECTED_FRAME_VELOCITY_UNIT
+    raise ValueError(
+        f"BELT_VELOCITY_PX_PER_FRAME was supplied with FRAME_STRIDE={frame_stride}. "
+        "Set BELT_VELOCITY_FRAME_UNIT=selected_frame if the supplied velocity is "
+        "already in pixels per processed/selected frame, or set "
+        "BELT_VELOCITY_FRAME_UNIT=source_frame if it is in pixels per adjacent "
+        "original input frame. Source-frame velocities are multiplied by FRAME_STRIDE."
+    )
+
+
+def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[float, str, float]:
+    raw_velocity = float(velocity_spec)
+    frame_unit = resolve_velocity_frame_unit(frame_stride)
+    if frame_unit == SOURCE_FRAME_VELOCITY_UNIT:
+        return raw_velocity * frame_stride, frame_unit, raw_velocity
+    return raw_velocity, frame_unit, raw_velocity
+
+
 def optional_positive_int(name: str) -> int | None:
     value = os.getenv(name, "").strip()
     if not value:
@@ -712,12 +770,28 @@ def main() -> None:
     emit("images", "loaded first frame and parsed crop region", first_image_shape=list(first.shape), belt_region={"top": region[0], "left": region[1], "height": region[2], "width": region[3]})
 
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
+    belt_velocity_source = "auto"
+    belt_velocity_frame_unit = "selected_frame"
+    supplied_belt_velocity_px_per_frame: float | None = None
     if velocity_spec == "auto":
         validate_auto_velocity_region(region, first.shape)
         belt_velocity, pair_shifts = estimate_velocity(paths, region)
     else:
-        belt_velocity, pair_shifts = float(velocity_spec), []
-        emit("velocity", "using supplied belt velocity", belt_velocity_px_per_frame=belt_velocity)
+        (
+            belt_velocity,
+            belt_velocity_frame_unit,
+            supplied_belt_velocity_px_per_frame,
+        ) = resolve_supplied_velocity(velocity_spec, frame_stride)
+        belt_velocity_source = "supplied"
+        pair_shifts = []
+        emit(
+            "velocity",
+            "using supplied belt velocity",
+            supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
+            belt_velocity_frame_unit=belt_velocity_frame_unit,
+            belt_velocity_px_per_selected_frame=belt_velocity,
+            frame_stride=frame_stride,
+        )
 
     period_px = optional_positive_int("BELT_PERIOD_PX")
     detection_threshold = env_float("DETECTION_THRESHOLD", 5.0)
@@ -731,6 +805,9 @@ def main() -> None:
         "config",
         "runtime parameters",
         belt_velocity_px_per_frame=belt_velocity,
+        belt_velocity_source=belt_velocity_source,
+        belt_velocity_frame_unit=belt_velocity_frame_unit,
+        supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
         belt_period_px=period_px,
         detection_threshold=detection_threshold,
         min_area_px=min_area_px,
@@ -880,6 +957,9 @@ def main() -> None:
         "frame_stride": frame_stride,
         "first_image_shape": list(first.shape),
         "belt_region": {"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
+        "belt_velocity_source": belt_velocity_source,
+        "belt_velocity_frame_unit": belt_velocity_frame_unit,
+        "supplied_belt_velocity_px_per_frame": supplied_belt_velocity_px_per_frame,
         "belt_velocity_px_per_frame": belt_velocity,
         "belt_period_px_input": period_px,
         "belt_map_height_px": map_height,

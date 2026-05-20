@@ -9,6 +9,75 @@ import numpy as np
 
 from ._driver_runtime import crop, emit, env_bool, env_float, env_int, read_gray
 
+SELECTED_FRAME_VELOCITY_UNIT = "selected_frame"
+SOURCE_FRAME_VELOCITY_UNIT = "source_frame"
+VELOCITY_FRAME_UNITS = {
+    SELECTED_FRAME_VELOCITY_UNIT,
+    SOURCE_FRAME_VELOCITY_UNIT,
+}
+
+
+def normalize_velocity_frame_unit(value: str) -> str:
+    """Return the canonical frame unit for a manually supplied belt velocity."""
+
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        SELECTED_FRAME_VELOCITY_UNIT: SELECTED_FRAME_VELOCITY_UNIT,
+        "selected": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed": SELECTED_FRAME_VELOCITY_UNIT,
+        "processed_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "strided_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        "output_frame": SELECTED_FRAME_VELOCITY_UNIT,
+        SOURCE_FRAME_VELOCITY_UNIT: SOURCE_FRAME_VELOCITY_UNIT,
+        "source": SOURCE_FRAME_VELOCITY_UNIT,
+        "original": SOURCE_FRAME_VELOCITY_UNIT,
+        "original_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "input_frame": SOURCE_FRAME_VELOCITY_UNIT,
+        "raw_frame": SOURCE_FRAME_VELOCITY_UNIT,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        choices = ", ".join(sorted(VELOCITY_FRAME_UNITS))
+        raise ValueError(
+            f"BELT_VELOCITY_FRAME_UNIT must be one of {choices}; got {value!r}"
+        ) from exc
+
+
+def resolve_velocity_frame_unit(frame_stride: int) -> str:
+    """Resolve the frame unit for a manually supplied velocity.
+
+    Numeric BELT_VELOCITY_PX_PER_FRAME values are ambiguous when FRAME_STRIDE > 1:
+    they may refer either to adjacent original input frames or to adjacent selected
+    frames after striding. Refuse the ambiguous case instead of silently applying
+    the wrong phase increment.
+    """
+
+    if frame_stride < 1:
+        raise ValueError("FRAME_STRIDE must be at least 1")
+    value = os.getenv("BELT_VELOCITY_FRAME_UNIT", "").strip()
+    if value:
+        return normalize_velocity_frame_unit(value)
+    if frame_stride == 1:
+        return SELECTED_FRAME_VELOCITY_UNIT
+    raise ValueError(
+        f"BELT_VELOCITY_PX_PER_FRAME was supplied with FRAME_STRIDE={frame_stride}. "
+        "Set BELT_VELOCITY_FRAME_UNIT=selected_frame if the supplied velocity is "
+        "already in pixels per processed/selected frame, or set "
+        "BELT_VELOCITY_FRAME_UNIT=source_frame if it is in pixels per adjacent "
+        "original input frame. Source-frame velocities are multiplied by FRAME_STRIDE."
+    )
+
+
+def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[float, str, float]:
+    """Return effective selected-frame velocity, frame unit, and raw supplied value."""
+
+    raw_velocity = float(velocity_spec)
+    frame_unit = resolve_velocity_frame_unit(frame_stride)
+    if frame_unit == SOURCE_FRAME_VELOCITY_UNIT:
+        return raw_velocity * frame_stride, frame_unit, raw_velocity
+    return raw_velocity, frame_unit, raw_velocity
+
 
 def parse_region(first_frame: np.ndarray) -> tuple[int, int, int, int]:
     value = os.getenv("BELT_REGION", "").strip()

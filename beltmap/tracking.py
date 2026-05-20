@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import hypot, log
 from typing import Any, Sequence
 
@@ -225,31 +225,35 @@ def track_particle_detections(
     config: ParticleTrackingConfig | None = None,
     frame_indices: Sequence[float] | None = None,
 ) -> list[ParticleTrack]:
-    """Associate particle detections across frames with configurable assignment."""
+    """Associate particle detections across frames with configurable assignment.
+
+    When ``frame_indices`` is omitted, the position of each entry in
+    ``detections_by_frame`` is used as the frame index.
+    """
 
     cfg = config or ParticleTrackingConfig()
     _validate_tracking_config(cfg)
-    explicit_frame_indices = (
-        None if frame_indices is None else [float(index) for index in frame_indices]
+    effective_frame_indices = (
+        [float(index) for index in range(len(detections_by_frame))]
+        if frame_indices is None
+        else [float(index) for index in frame_indices]
     )
-    if explicit_frame_indices is not None and len(explicit_frame_indices) != len(detections_by_frame):
+    if len(effective_frame_indices) != len(detections_by_frame):
         raise ValueError("frame_indices must have the same length as detections_by_frame")
 
     tracks: list[list[ParticleDetection]] = []
     active_track_ids: list[int] = []
 
     for frame_number, detections in enumerate(detections_by_frame):
-        current = sorted(detections, key=lambda item: (item.frame_index, item.y, item.x))
-        frame_index = (
-            explicit_frame_indices[frame_number]
-            if explicit_frame_indices is not None
-            else (current[0].frame_index if current else None)
+        frame_index = effective_frame_indices[frame_number]
+        current = sorted(
+            (_with_frame_index(detection, frame_index) for detection in detections),
+            key=lambda item: (item.frame_index, item.y, item.x),
         )
         if not current:
             active_track_ids = _drop_expired_tracks(active_track_ids, tracks, frame_index, cfg)
             continue
 
-        assert frame_index is not None
         active_track_ids = _drop_expired_tracks(active_track_ids, tracks, frame_index, cfg)
         candidates = _association_candidates(
             active_track_ids,
@@ -983,6 +987,17 @@ def _augment_shortest_path(graph: list[list[_FlowEdge]], source: int, sink: int)
         graph[node][edge.rev].capacity += 1
         node = previous
     return True
+
+
+def _with_frame_index(
+    detection: ParticleDetection,
+    frame_index: float,
+) -> ParticleDetection:
+    """Return ``detection`` with the effective frame index used for tracking."""
+
+    if detection.frame_index == frame_index:
+        return detection
+    return replace(detection, frame_index=frame_index)
 
 
 def _drop_expired_tracks(

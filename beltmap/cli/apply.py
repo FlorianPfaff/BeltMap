@@ -24,7 +24,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("reuse_static_background_path", "REUSE_STATIC_BACKGROUND_PATH", "path", (("reuse_static_background_path",), ("reuse", "static_background_path")), "Optional existing static_background.npy additive residual map to subtract during detection.", "NPY"),
     ("reuse_recurrent_artifact_map_path", "REUSE_RECURRENT_ARTIFACT_MAP_PATH", "path", (("reuse_recurrent_artifact_map_path",), ("reuse", "recurrent_artifact_map_path")), "Optional existing recurrent_artifact_map.npy to reuse for recurrent artifact filtering.", "NPY"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
-    ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity in pixels per frame, or 'auto'.", "PX_PER_FRAME|auto"),
+    ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity, or 'auto'. Numeric values use --belt-velocity-frame-unit when frames are strided.", "PX_PER_FRAME|auto"),
+    ("belt_velocity_frame_unit", "BELT_VELOCITY_FRAME_UNIT", "path", (("belt_velocity_frame_unit",), ("belt", "velocity_frame_unit")), "Frame unit for a supplied belt velocity: selected_frame or source_frame.", "UNIT"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
     ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for bright particles.", "Z"),
     ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
@@ -120,6 +121,9 @@ stride = 1
 [belt]
 region = [0, 220, 1330, 1800]
 velocity_px_per_frame = "auto"
+# Required when velocity_px_per_frame is numeric and frames.stride > 1.
+# Use "source_frame" for adjacent original input frames or "selected_frame" for processed frames.
+# velocity_frame_unit = "source_frame"
 # period_px = 14723
 
 [detection]

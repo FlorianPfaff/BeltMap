@@ -66,8 +66,14 @@ underscores.
   flags, and either `[top, left, height, width]` or a comma-separated string in
   config files.
 - `belt.velocity_px_per_frame` is either a signed number in pixels per frame or
-  the string `"auto"`. Positive velocity means the belt texture moves downward
-  in image coordinates.
+  the string `"auto"`. Automatic velocity is estimated between selected frames
+  after `frames.stride` has been applied. If a numeric velocity is supplied and
+  `frames.stride > 1`, set `belt.velocity_frame_unit` to `"selected_frame"` when
+  the value is already per processed/selected frame, or `"source_frame"` when it
+  was measured between adjacent original input frames. Source-frame velocities
+  are multiplied by `frames.stride` before map building, phase prediction,
+  tracking priors, and velocity-ratio outputs. Positive velocity means the belt
+  texture moves downward in image coordinates.
 - Boolean environment values accept `1`, `true`, `yes`, `on`, `0`, `false`,
   `no`, and `off`.
 - Empty optional environment variables are ignored by `beltmap-apply`.
@@ -90,7 +96,8 @@ underscores.
 | `frames.max_frames` | `MAX_FRAMES` | `--max-frames` | `0` | frames | Maximum number of selected frames to process after sorting and striding. `0` means process all selected frames. |
 | `frames.stride` | `FRAME_STRIDE` | `--frame-stride` | `1` | frames | Process every Nth frame after natural filename sorting. Must be at least 1. |
 | `belt.region` | `BELT_REGION` | `--belt-region` | full frame | px | Belt crop as `top,left,height,width`. Coordinates are full-frame image coordinates. Omit only when the full frame is belt texture. |
-| `belt.velocity_px_per_frame` | `BELT_VELOCITY_PX_PER_FRAME` | `--belt-velocity-px-per-frame` | `auto` | px/frame | Signed vertical belt texture velocity. Use `auto` to estimate from frame-to-frame vertical correlation shifts. |
+| `belt.velocity_px_per_frame` | `BELT_VELOCITY_PX_PER_FRAME` | `--belt-velocity-px-per-frame` | `auto` | px/frame | Signed vertical belt texture velocity, or `auto`. Numeric values use `belt.velocity_frame_unit` when `frames.stride > 1`; `auto` is estimated on selected-frame pairs. |
+| `belt.velocity_frame_unit` | `BELT_VELOCITY_FRAME_UNIT` | `--belt-velocity-frame-unit` | contextual | unit | Required when `belt.velocity_px_per_frame` is numeric and `frames.stride > 1`. Use `selected_frame` when the supplied velocity is already per processed/selected frame. Use `source_frame` when it is per adjacent original input frame; the driver multiplies it by `frames.stride`. |
 | `belt.period_px` | `BELT_PERIOD_PX` | `--belt-period-px` | unset | px | Belt circumference/period in belt-map pixels. If unset or non-positive, the driver builds a finite map covering the selected sequence phase range. |
 | `detection.threshold` | `DETECTION_THRESHOLD` | `--detection-threshold` | `5.0` | z | Threshold on normalized residuals for final bright-particle detection. |
 | `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. Must be at least 1. |

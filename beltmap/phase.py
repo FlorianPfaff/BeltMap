@@ -73,6 +73,8 @@ class PhaseRegistrationConfig:
     def candidate_offsets(self) -> FloatArray:
         """Return the tested phase offsets, including zero when possible."""
 
+        if self.search_radius_px < 0:
+            raise ValueError("search_radius_px must be non-negative")
         if self.search_step_px <= 0:
             raise ValueError("search_step_px must be positive")
         count = int(np.floor(2 * self.search_radius_px / self.search_step_px)) + 1

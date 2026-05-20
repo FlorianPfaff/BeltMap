@@ -33,8 +33,8 @@ class RecurrentArtifactMap:
     """Belt-coordinate recurrence map and diagnostics."""
 
     mask: NDArray[np.bool_]
-    counts: NDArray[np.unsignedinteger]
-    exposure_counts: NDArray[np.unsignedinteger]
+    counts: NDArray[np.uint32]
+    exposure_counts: NDArray[np.uint32]
     probability: NDArray[np.floating]
     revolution_count: int
     candidate_detections: int

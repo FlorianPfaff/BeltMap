@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap import (
     BeltMotionModel,
@@ -72,6 +73,11 @@ def test_render_belt_view_uses_fractional_phase():
     rendered = render_belt_view(belt, phase_px=0.5, height=3)
 
     np.testing.assert_allclose(rendered[:, 0], [0.5, 1.5, 2.5])
+
+
+def test_registration_config_rejects_negative_search_radius():
+    with pytest.raises(ValueError, match="search_radius_px must be non-negative"):
+        PhaseRegistrationConfig(search_radius_px=-1).candidate_offsets()
 
 
 def test_uniform_filter_axis_matches_edge_padded_reference():

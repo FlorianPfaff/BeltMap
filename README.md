@@ -65,6 +65,13 @@ beltmap-apply \
   --belt-period-px 14723
 ```
 
+When processing every Nth input frame with `--frame-stride`, manually supplied
+belt velocities must declare their frame unit. Use
+`--belt-velocity-frame-unit source_frame` when the velocity was measured between
+adjacent original input frames; the driver multiplies it by the stride before
+phase prediction. Use `selected_frame` when the velocity is already expressed per
+processed/selected frame. Automatic velocity estimation uses selected-frame pairs.
+
 The CLI keeps compatibility with the original environment variables. Runtime
 configuration is resolved in this order, with later sources taking precedence:
 
@@ -92,6 +99,9 @@ output_dir = "outputs"
 [belt]
 region = [0, 220, 1330, 1800]
 velocity_px_per_frame = 59.3
+# If frames.stride > 1 and this velocity is measured between original input
+# frames, also set: velocity_frame_unit = "source_frame"
+# Use "selected_frame" if the value already refers to processed frames.
 period_px = 14723
 
 [detection]

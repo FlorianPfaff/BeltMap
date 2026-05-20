@@ -38,7 +38,12 @@ from ._driver_map import (
     expanded_detection_mask,
     sample_indices,
 )
-from ._driver_motion import estimate_velocity, parse_region, validate_auto_velocity_region
+from ._driver_motion import (
+    estimate_velocity,
+    parse_region,
+    resolve_supplied_velocity,
+    validate_auto_velocity_region,
+)
 from .recurrent_artifacts import (
     RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
@@ -117,13 +122,50 @@ def load_reuse_metadata(belt_map_path: Path) -> tuple[dict, Path | None]:
     return json.loads(metadata_path.read_text(encoding="utf-8")), metadata_path
 
 
-def load_phase_estimates(path: Path) -> dict[int, PhaseEstimate]:
+def _relative_image_name(path: Path, *, data_dir: Path) -> str:
+    try:
+        return str(path.relative_to(data_dir))
+    except ValueError:
+        try:
+            return str(path.resolve().relative_to(data_dir.resolve()))
+        except ValueError:
+            return str(path)
+
+
+def _normalize_phase_image_name(image: str) -> str:
+    normalized = image.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def load_phase_estimates(
+    path: Path,
+    *,
+    expected_image_paths: list[Path] | None = None,
+    data_dir: Path | None = None,
+) -> dict[int, PhaseEstimate]:
     estimates: dict[int, PhaseEstimate] = {}
+    image_names: dict[int, str] = {}
+    require_image_names = expected_image_paths is not None
+
     with path.open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
+        reader = csv.DictReader(handle)
+        if require_image_names and (
+            reader.fieldnames is None or "image" not in reader.fieldnames
+        ):
+            raise ValueError("phase estimates used for reuse must include an image column")
+        for row in reader:
             frame_index = int(row["frame_index"])
             if frame_index in estimates:
                 raise ValueError(f"duplicate phase estimate for frame {frame_index}")
+            if require_image_names:
+                image_name = row.get("image", "").strip()
+                if not image_name:
+                    raise ValueError(
+                        f"phase estimate for frame {frame_index} has an empty image column"
+                    )
+                image_names[frame_index] = image_name
             estimates[frame_index] = PhaseEstimate(
                 phase_px=float(row["phase_px"]),
                 frame_index=float(row["frame_index"]),
@@ -135,6 +177,14 @@ def load_phase_estimates(path: Path) -> dict[int, PhaseEstimate]:
             )
     if not estimates:
         raise ValueError(f"no phase estimates found in {path}")
+    if expected_image_paths is not None:
+        validate_reused_phase_estimates(
+            estimates,
+            frame_count=len(expected_image_paths),
+            image_names=image_names,
+            paths=expected_image_paths,
+            data_dir=data_dir if data_dir is not None else rt.DATA,
+        )
     return estimates
 
 
@@ -170,12 +220,42 @@ def validate_reused_phase_estimates(
     estimates: dict[int, PhaseEstimate],
     *,
     frame_count: int,
+    image_names: dict[int, str] | None = None,
+    paths: list[Path] | None = None,
+    data_dir: Path | None = None,
 ) -> None:
     missing = [index for index in range(frame_count) if index not in estimates]
     if missing:
         preview = ", ".join(str(index) for index in missing[:8])
         raise ValueError(
             f"phase estimates are missing {len(missing)} selected frames; first missing: {preview}"
+        )
+    if image_names is None and paths is None:
+        return
+    if image_names is None or paths is None:
+        raise ValueError("image_names and paths must be provided together")
+    if len(paths) != frame_count:
+        raise ValueError(
+            "frame_count must match number of selected image paths when validating "
+            "phase image names"
+        )
+
+    root = data_dir if data_dir is not None else rt.DATA
+    mismatches: list[tuple[int, str, str]] = []
+    for index, path in enumerate(paths):
+        actual = image_names.get(index, "")
+        expected = _relative_image_name(path, data_dir=root)
+        if _normalize_phase_image_name(actual) != _normalize_phase_image_name(expected):
+            mismatches.append((index, actual, expected))
+
+    if mismatches:
+        preview = ", ".join(
+            f"{index}: {actual!r} != {expected!r}"
+            for index, actual, expected in mismatches[:3]
+        )
+        raise ValueError(
+            "phase estimates image column does not match selected image sequence; "
+            f"first mismatches: {preview}"
         )
 
 
@@ -642,12 +722,28 @@ def main() -> None:
     )
 
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
+    belt_velocity_source = "auto"
+    belt_velocity_frame_unit = "selected_frame"
+    supplied_belt_velocity_px_per_frame: float | None = None
     if velocity_spec == "auto":
         validate_auto_velocity_region(region, first.shape)
         belt_velocity, pair_shifts = estimate_velocity(paths, region)
     else:
-        belt_velocity, pair_shifts = float(velocity_spec), []
-        rt.emit("velocity", "using supplied belt velocity", belt_velocity_px_per_frame=belt_velocity)
+        (
+            belt_velocity,
+            belt_velocity_frame_unit,
+            supplied_belt_velocity_px_per_frame,
+        ) = resolve_supplied_velocity(velocity_spec, frame_stride)
+        belt_velocity_source = "supplied"
+        pair_shifts = []
+        rt.emit(
+            "velocity",
+            "using supplied belt velocity",
+            supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
+            belt_velocity_frame_unit=belt_velocity_frame_unit,
+            belt_velocity_px_per_selected_frame=belt_velocity,
+            frame_stride=frame_stride,
+        )
 
     period_px = optional_positive_int("BELT_PERIOD_PX")
     detection_threshold = rt.env_float("DETECTION_THRESHOLD", 5.0)
@@ -760,6 +856,9 @@ def main() -> None:
         "config",
         "runtime parameters",
         belt_velocity_px_per_frame=belt_velocity,
+        belt_velocity_source=belt_velocity_source,
+        belt_velocity_frame_unit=belt_velocity_frame_unit,
+        supplied_belt_velocity_px_per_frame=supplied_belt_velocity_px_per_frame,
         belt_period_px=period_px,
         detection_threshold=detection_threshold,
         min_area_px=min_area_px,
@@ -913,12 +1012,15 @@ def main() -> None:
         min_noise=residual_min_noise,
     )
     reused_phase_estimates = (
-        load_phase_estimates(reuse_phase_estimates_path)
+        load_phase_estimates(
+            reuse_phase_estimates_path,
+            expected_image_paths=paths,
+            data_dir=rt.DATA,
+        )
         if reuse_phase_estimates_path is not None
         else None
     )
     if reused_phase_estimates is not None:
-        validate_reused_phase_estimates(reused_phase_estimates, frame_count=len(paths))
         rt.emit(
             "detect",
             "loaded reused phase estimates",
@@ -1334,6 +1436,9 @@ def main() -> None:
         "frame_stride": frame_stride,
         "first_image_shape": list(first.shape),
         "belt_region": {"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
+        "belt_velocity_source": belt_velocity_source,
+        "belt_velocity_frame_unit": belt_velocity_frame_unit,
+        "supplied_belt_velocity_px_per_frame": supplied_belt_velocity_px_per_frame,
         "belt_velocity_px_per_frame": belt_velocity,
         "belt_period_px_input": period_px,
         "belt_map_height_px": map_height,
@@ -1369,6 +1474,7 @@ def main() -> None:
         "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
         "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
         "reuse_static_noise_path": "" if reuse_static_noise_path is None else str(reuse_static_noise_path),
+        "reuse_static_background_path": "" if reuse_static_background_path is None else str(reuse_static_background_path),
         "reuse_recurrent_artifact_map_path": "" if reuse_recurrent_artifact_map_path is None else str(reuse_recurrent_artifact_map_path),
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
@@ -1376,6 +1482,11 @@ def main() -> None:
         "static_noise_mask_margin_px": static_noise_mask_margin_px,
         "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
         "static_noise_map_used": static_noise_map is not None,
+        "static_background_sample_frames": static_background_sample_frames,
+        "static_background_mask_threshold": static_background_mask_threshold,
+        "static_background_mask_margin_px": static_background_mask_margin_px,
+        "static_background_mask_min_area_px": static_background_mask_min_area_px,
+        "static_background_map_used": static_background_map is not None,
         "recurrent_artifact_min_revolutions": recurrent_artifact_config.min_revolutions,
         "recurrent_artifact_margin_px": recurrent_artifact_config.margin_px,
         "recurrent_artifact_max_overlap_fraction": recurrent_artifact_config.max_overlap_fraction,

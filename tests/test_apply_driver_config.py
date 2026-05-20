@@ -125,6 +125,58 @@ def test_load_phase_estimates_for_reuse_mode(tmp_path):
     assert estimates[1].score is None
 
 
+def test_load_phase_estimates_validates_reused_image_sequence(tmp_path):
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "frame_index,image,phase_px,phase_fraction,phase_rad,predicted_phase_px,correction_px,loss,score,method",
+                "0,frames/frame0.bmp,1.5,0.15,0.94,1.0,0.5,0.2,0.8,registration",
+                "1,frames/frame1.bmp,9.5,0.95,5.97,10.0,-0.5,,,motion_model",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    estimates = load_phase_estimates(
+        path,
+        expected_image_paths=[
+            tmp_path / "frames" / "frame0.bmp",
+            tmp_path / "frames" / "frame1.bmp",
+        ],
+        data_dir=tmp_path,
+    )
+
+    assert estimates[0].phase_px == 1.5
+    assert estimates[1].phase_px == 9.5
+
+
+def test_load_phase_estimates_rejects_reordered_or_stale_images(tmp_path):
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "frame_index,image,phase_px,phase_fraction,phase_rad,predicted_phase_px,correction_px,loss,score,method",
+                "0,other_sequence/frame0.bmp,1.5,0.15,0.94,1.0,0.5,0.2,0.8,registration",
+                "1,frames/frame1.bmp,9.5,0.95,5.97,10.0,-0.5,,,motion_model",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="image column does not match"):
+        load_phase_estimates(
+            path,
+            expected_image_paths=[
+                tmp_path / "frames" / "frame0.bmp",
+                tmp_path / "frames" / "frame1.bmp",
+            ],
+            data_dir=tmp_path,
+        )
+
+
 def test_validate_reused_phase_estimates_reports_missing_frames():
     estimates = {
         0: PhaseEstimate(
