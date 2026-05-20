@@ -84,7 +84,16 @@ def parse_region(first_frame: np.ndarray) -> tuple[int, int, int, int]:
     height, width = first_frame.shape
     if not value:
         return 0, 0, height, width
-    top, left, crop_height, crop_width = [int(x.strip()) for x in value.split(",")]
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError(
+            f"BELT_REGION must contain exactly four comma-separated integers "
+            f"top,left,height,width; got {value!r}"
+        )
+    try:
+        top, left, crop_height, crop_width = [int(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError(f"BELT_REGION values must be integers; got {value!r}") from exc
     if (
         top < 0 or left < 0 or crop_height <= 0 or crop_width <= 0
         or top + crop_height > height or left + crop_width > width

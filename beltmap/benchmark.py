@@ -1002,7 +1002,8 @@ def generate_benchmark_report(
 ) -> BenchmarkArtifacts:
     """Compute and write synthetic benchmark artifacts."""
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not output_dir.is_dir():
+        raise FileNotFoundError(f"BeltMap output directory does not exist: {output_dir}")
     metrics = compute_benchmark_metrics(
         output_dir=output_dir,
         truth_path=truth_path,

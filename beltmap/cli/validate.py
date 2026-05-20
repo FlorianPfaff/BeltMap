@@ -614,7 +614,8 @@ def generate_validation_report(
     report_path: Path | None = None,
     make_plots: bool = True,
 ) -> ValidationArtifacts:
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not output_dir.is_dir():
+        raise FileNotFoundError(f"BeltMap output directory does not exist: {output_dir}")
     report = report_path or (output_dir / "validation_report.md")
     summary_path = report.with_name("validation_summary.json")
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -630,11 +631,14 @@ def generate_validation_report(
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    artifacts = generate_validation_report(
-        args.output_dir,
-        report_path=args.report_path,
-        make_plots=not args.no_plots,
-    )
+    try:
+        artifacts = generate_validation_report(
+            args.output_dir,
+            report_path=args.report_path,
+            make_plots=not args.no_plots,
+        )
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
     if not args.quiet:
         print(
             json.dumps(

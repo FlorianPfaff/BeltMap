@@ -10,7 +10,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 from PIL import Image
@@ -22,12 +22,87 @@ OUT = Path(os.getenv("BELTMAP_OUTPUT_DIR", "outputs"))
 EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 START_TIME = time.perf_counter()
 
+GENERATED_OUTPUT_FILES = {
+    "metadata.json",
+    "progress.jsonl",
+    "progress_latest.json",
+    "phase_estimates.csv",
+    "phase_refinement.csv",
+    "detections.csv",
+    "detections_per_frame.csv",
+    "tracks.csv",
+    "velocities.csv",
+    "track_scores.csv",
+    "filtered_tracks.csv",
+    "filtered_velocities.csv",
+    "recurrent_artifact_detections.csv",
+    "belt_map.npy",
+    "belt_map.png",
+    "static_noise.npy",
+    "static_noise.png",
+    "static_background.npy",
+    "static_background.png",
+    "recurrent_artifact_map.npy",
+    "recurrent_artifact_map.png",
+    "recurrent_artifact_counts.npy",
+    "recurrent_artifact_counts.png",
+    "validation_report.md",
+    "validation_summary.json",
+    "benchmark_metrics.json",
+    "benchmark_report.md",
+    "phase_corrections.png",
+    "phase_correction_timeseries.png",
+    "registration_score.png",
+    "detections_per_frame.png",
+    "velocity_ratio_histogram.png",
+    "track_length_histogram.png",
+    "residual_histogram.png",
+    "belt_map_coverage.png",
+    "overlay_contact_sheet.png",
+}
+
+GENERATED_OUTPUT_PATTERNS = (
+    "residual_frame_*.png",
+    "detections_overlay_sample_*.png",
+    "tracks_overlay_sample_*.png",
+)
+
 
 def refresh_runtime_paths() -> None:
     global DATA, OUT, START_TIME
     DATA = Path(os.getenv("BELTMAP_IMAGE_DIR", "data/images"))
     OUT = Path(os.getenv("BELTMAP_OUTPUT_DIR", "outputs"))
     START_TIME = time.perf_counter()
+
+
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path.absolute()
+
+
+def clear_generated_outputs(*, protected_paths: Iterable[Path] = ()) -> None:
+    """Remove stale BeltMap-generated files from ``OUT`` before starting a run."""
+
+    if not OUT.exists():
+        return
+    if not OUT.is_dir():
+        raise ValueError(f"BELTMAP_OUTPUT_DIR is not a directory: {OUT}")
+
+    protected = {_safe_resolve(path) for path in protected_paths}
+
+    def unlink_if_generated(path: Path) -> None:
+        if _safe_resolve(path) in protected:
+            return
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+
+    for name in GENERATED_OUTPUT_FILES:
+        unlink_if_generated(OUT / name)
+    for pattern in GENERATED_OUTPUT_PATTERNS:
+        for path in OUT.glob(pattern):
+            unlink_if_generated(path)
 
 
 def env_int(name: str, default: int, minimum: int | None = None) -> int:
@@ -63,6 +138,16 @@ def elapsed_s() -> float:
     return time.perf_counter() - START_TIME
 
 
+def rss_mb() -> float | None:
+    """Return peak resident set size in MiB when available on this platform."""
+
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    except Exception:
+        return None
+
+
 def jsonable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
@@ -87,6 +172,9 @@ def emit(stage: str, message: str, **data: Any) -> None:
         "stage": stage,
         "message": message,
     }
+    mem = rss_mb()
+    if mem is not None:
+        payload["rss_mb"] = round(mem, 1)
     payload.update({k: jsonable(v) for k, v in data.items()})
     compact = {k: v for k, v in payload.items() if k not in {"timestamp", "stage", "message"}}
     print(f"[{payload['elapsed_s']:9.1f}s] {stage}: {message} {json.dumps(compact, sort_keys=True)}", flush=True)

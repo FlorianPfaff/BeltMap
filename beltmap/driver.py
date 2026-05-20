@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -91,6 +91,14 @@ TRACK_SCORE_FIELDS = [
     "passes_min_track_length", "passes_velocity_ratio",
     "passes_lateral_velocity", "accepted", "plausibility_score",
 ]
+
+
+@dataclass(frozen=True)
+class ReusedPhaseEstimate:
+    """Loaded phase estimate plus the source image recorded in phase_estimates.csv."""
+
+    estimate: PhaseEstimate
+    image: str | None = None
 
 
 def optional_positive_int(name: str) -> int | None:
@@ -740,6 +748,22 @@ def main() -> None:
     """Run the BeltMap image-sequence driver."""
 
     rt.refresh_runtime_paths()
+    reuse_belt_map_input_path = optional_path("REUSE_BELT_MAP_PATH")
+    protected_output_inputs = [
+        path for path in (
+            reuse_belt_map_input_path,
+            optional_path("REUSE_STATIC_NOISE_PATH"),
+            optional_path("REUSE_STATIC_BACKGROUND_PATH"),
+            optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH"),
+            optional_path("REUSE_PHASE_ESTIMATES_PATH"),
+        )
+        if path is not None
+    ]
+    if reuse_belt_map_input_path is not None:
+        protected_output_inputs.append(
+            reuse_belt_map_input_path.with_name("metadata.json")
+        )
+    rt.clear_generated_outputs(protected_paths=protected_output_inputs)
     rt.OUT.mkdir(parents=True, exist_ok=True)
     rt.emit("startup", "starting BeltMap image driver", data_dir=rt.DATA, output_dir=rt.OUT)
     paths, discovered_frame_count, frame_stride = rt.image_paths()

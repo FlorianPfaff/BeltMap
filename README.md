@@ -167,8 +167,13 @@ The Brick 10g/s GitHub Actions workflow runs this validation step automatically
 after a successful `beltmap-apply` job, so downloaded workflow artifacts include
 the report, plots, and overlay samples.
 
-Compare several output directories, for example detection-only threshold sweeps,
-with:
+Compare several output directories, for example detection-only threshold sweeps, with:
+
+The visual contact sheet can only show frames that have residual preview PNGs in
+each compared output directory. Before running the compared jobs, set
+`DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES` or
+`--debug-residual-preview-interval-frames` so the frames passed to `--frames`
+are actually saved.
 
 ```bash
 beltmap-compare \
