@@ -68,6 +68,32 @@ PLOT_COLORS = [
     (23, 190, 207),
 ]
 
+REQUIRED_CSV_COLUMNS = {
+    "detections.csv": {
+        "frame_index",
+        "y",
+        "x",
+        "area_px",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    },
+    "detections_per_frame.csv": {"frame_index", "n_detections"},
+    "velocities.csv": {"n_detections", "velocity_ratio_y"},
+    "filtered_velocities.csv": {"n_detections", "velocity_ratio_y"},
+    "filtered_tracks.csv": {
+        "track_id",
+        "frame_index",
+        "y",
+        "x",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    },
+}
+
 TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
 TRUTH_FRAME_KEYS = ("frame", "image_index")
 TRUTH_FRAME_SET_KEYS = ("scored_frames", "frames", "labeled_frames")
@@ -130,13 +156,33 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_csv_rows(path: Path) -> list[dict[str, str]]:
+def validate_csv_columns(
+    path: Path,
+    fieldnames: list[str] | None,
+    required_columns: set[str] | None,
+) -> None:
+    if required_columns is None:
+        return
+    available = set(fieldnames or [])
+    missing = sorted(required_columns - available)
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"{path} is missing required column(s): {missing_text}")
+
+
+def read_csv_rows(
+    path: Path,
+    *,
+    required_columns: set[str] | None = None,
+) -> list[dict[str, str]]:
     """Read CSV rows, returning an empty list when the file is absent."""
 
     if not path.is_file():
         return []
     with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        validate_csv_columns(path, reader.fieldnames, required_columns)
+        return list(reader)
 
 
 def finite_float(value: Any) -> float | None:
@@ -412,17 +458,32 @@ def restrict_detection_rows_to_frames(
 def load_run_data(spec: RunSpec) -> RunData:
     """Load standard outputs from one BeltMap run directory."""
 
-    detections = read_csv_rows(spec.output_dir / "detections.csv")
+    detections = read_csv_rows(
+        spec.output_dir / "detections.csv",
+        required_columns=REQUIRED_CSV_COLUMNS["detections.csv"],
+    )
     records = parse_detection_records(detections)
-    filtered_tracks = read_csv_rows(spec.output_dir / "filtered_tracks.csv")
+    filtered_tracks = read_csv_rows(
+        spec.output_dir / "filtered_tracks.csv",
+        required_columns=REQUIRED_CSV_COLUMNS["filtered_tracks.csv"],
+    )
     filtered_records = parse_detection_records(filtered_tracks)
     return RunData(
         spec=spec,
         metadata=read_json(spec.output_dir / "metadata.json"),
         detections=detections,
-        detections_per_frame=read_csv_rows(spec.output_dir / "detections_per_frame.csv"),
-        velocities=read_csv_rows(spec.output_dir / "velocities.csv"),
-        filtered_velocities=read_csv_rows(spec.output_dir / "filtered_velocities.csv"),
+        detections_per_frame=read_csv_rows(
+            spec.output_dir / "detections_per_frame.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["detections_per_frame.csv"],
+        ),
+        velocities=read_csv_rows(
+            spec.output_dir / "velocities.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["velocities.csv"],
+        ),
+        filtered_velocities=read_csv_rows(
+            spec.output_dir / "filtered_velocities.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["filtered_velocities.csv"],
+        ),
         filtered_tracks=filtered_tracks,
         preview_paths=find_preview_paths(spec.output_dir),
         detections_by_frame=group_detections_by_frame(records),

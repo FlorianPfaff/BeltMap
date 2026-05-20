@@ -58,6 +58,8 @@ def belt_phase(frame_index: int, velocity: float, reference_phase: float, period
 
 
 def map_geometry(frame_count: int, crop_height: int, velocity: float, supplied_period: int | None) -> tuple[int, float, float | None]:
+    if supplied_period is not None and supplied_period <= 0:
+        raise ValueError("supplied_period must be positive when set")
     if supplied_period:
         return supplied_period, 0.0, float(supplied_period)
     phases = -velocity * np.arange(frame_count, dtype=np.float64)
@@ -636,6 +638,10 @@ def detect_map_particle_mask(
             min_area_px=min_area_px,
             margin_px=margin_px,
             dilation_px=dilation_px,
+        )
+    if grow_threshold > threshold:
+        raise ValueError(
+            "grow_threshold must be less than or equal to threshold for hysteresis_abs map masks"
         )
     seed_mask = valid & (abs_values >= threshold)
     grow_mask = valid & (abs_values >= grow_threshold)

@@ -832,7 +832,7 @@ def main() -> None:
     residual_noise_exclusion_radius_px = rt.env_int(
         "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", 2, minimum=0
     )
-    min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=1)
+    min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=2)
     tracking_assignment_method = os.getenv("TRACKING_ASSIGNMENT_METHOD", "global").strip().lower()
     tracking_area_cost_weight_px = rt.env_float(
         "TRACKING_AREA_COST_WEIGHT_PX", 0.0, minimum=0.0

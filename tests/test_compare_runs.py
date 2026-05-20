@@ -205,3 +205,18 @@ def test_compare_main_prints_artifact_paths(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert Path(payload["report"]).is_file()
     assert Path(payload["summary_csv"]).is_file()
+
+
+def test_compare_rejects_existing_csv_with_missing_required_columns(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    write_csv(run_b / "detections.csv", [{"frame_index": 0, "area_px": 4}])
+
+    try:
+        generate_comparison_report([RunSpec("a", run_a), RunSpec("b", run_b)], report_dir=tmp_path / "comparison")
+    except ValueError as exc:
+        assert "bbox_bottom" in str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected schema validation to reject malformed CSV")

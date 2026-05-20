@@ -20,6 +20,21 @@ PLOT_FILENAMES = {
     "track_length_histogram": "track_length_histogram.png",
 }
 
+REQUIRED_CSV_COLUMNS = {
+    "phase_estimates.csv": {"frame_index", "correction_px", "score"},
+    "detections.csv": {
+        "frame_index",
+        "y",
+        "x",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    },
+    "detections_per_frame.csv": {"frame_index", "n_detections"},
+    "velocities.csv": {"n_detections", "velocity_ratio_y"},
+}
+
 
 @dataclass(frozen=True)
 class PlotGeometry:
@@ -81,11 +96,31 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_csv_rows(path: Path) -> list[dict[str, str]]:
+def validate_csv_columns(
+    path: Path,
+    fieldnames: list[str] | None,
+    required_columns: set[str] | None,
+) -> None:
+    if required_columns is None:
+        return
+    available = set(fieldnames or [])
+    missing = sorted(required_columns - available)
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"{path} is missing required column(s): {missing_text}")
+
+
+def read_csv_rows(
+    path: Path,
+    *,
+    required_columns: set[str] | None = None,
+) -> list[dict[str, str]]:
     if not path.is_file():
         return []
     with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        validate_csv_columns(path, reader.fieldnames, required_columns)
+        return list(reader)
 
 
 def read_progress_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -184,10 +219,22 @@ def load_run_data(output_dir: Path) -> dict[str, Any]:
         "metadata": read_json(output_dir / "metadata.json"),
         "config": read_json(output_dir / "config_resolved.json"),
         "progress": read_progress_jsonl(output_dir / "progress.jsonl"),
-        "phase_rows": read_csv_rows(output_dir / "phase_estimates.csv"),
-        "detections": read_csv_rows(output_dir / "detections.csv"),
-        "detections_per_frame": read_csv_rows(output_dir / "detections_per_frame.csv"),
-        "velocities": read_csv_rows(output_dir / "velocities.csv"),
+        "phase_rows": read_csv_rows(
+            output_dir / "phase_estimates.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["phase_estimates.csv"],
+        ),
+        "detections": read_csv_rows(
+            output_dir / "detections.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["detections.csv"],
+        ),
+        "detections_per_frame": read_csv_rows(
+            output_dir / "detections_per_frame.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["detections_per_frame.csv"],
+        ),
+        "velocities": read_csv_rows(
+            output_dir / "velocities.csv",
+            required_columns=REQUIRED_CSV_COLUMNS["velocities.csv"],
+        ),
     }
 
 

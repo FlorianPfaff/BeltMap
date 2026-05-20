@@ -10,6 +10,7 @@ from beltmap.benchmark import (
     circular_signed_error_px,
     compute_benchmark_metrics,
     event_metrics,
+    finite_int,
     generate_benchmark_report,
 )
 
@@ -152,6 +153,11 @@ def test_bbox_iou_for_overlapping_half_open_boxes():
     b = {"top": 1.0, "left": 1.0, "bottom": 4.0, "right": 4.0}
 
     assert bbox_iou(a, b) == pytest.approx(4 / 14)
+
+
+def test_finite_int_accepts_float_like_integer_strings():
+    assert finite_int("7.0") == 7
+    assert finite_int("7.5") is None
 
 
 def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):

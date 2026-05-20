@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from beltmap._driver_map import detect_map_particle_mask, validate_map_particle_mask_mode
+from beltmap._driver_map import (
+    detect_map_particle_mask,
+    map_geometry,
+    validate_map_particle_mask_mode,
+)
 from beltmap.residual import ResidualImage
 
 
@@ -157,3 +161,28 @@ def test_absolute_map_mask_catches_dark_components_that_positive_mode_misses():
 def test_invalid_map_particle_mask_mode_raises_useful_error():
     with pytest.raises(ValueError, match="MAP_PARTICLE_MASK_MODE"):
         validate_map_particle_mask_mode("unknown")
+
+
+def test_hysteresis_abs_rejects_grow_threshold_above_seed_threshold():
+    residual = make_residual(np.zeros((8, 8), dtype=np.float64))
+
+    with pytest.raises(ValueError, match="grow_threshold"):
+        detect_map_particle_mask(
+            residual,
+            mode="hysteresis_abs",
+            threshold=4.0,
+            grow_threshold=5.0,
+            dilation_px=0,
+            margin_px=0,
+            min_area_px=1,
+        )
+
+
+def test_map_geometry_rejects_non_positive_supplied_period():
+    with pytest.raises(ValueError, match="supplied_period"):
+        map_geometry(
+            frame_count=10,
+            crop_height=4,
+            velocity=1.0,
+            supplied_period=-5,
+        )

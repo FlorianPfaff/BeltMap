@@ -59,9 +59,12 @@ def finite_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
-        return int(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def circular_signed_error_px(estimate: float, truth: float, period: float) -> float:

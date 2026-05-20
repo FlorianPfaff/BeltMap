@@ -184,6 +184,11 @@ def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int)
 
     shifts = np.arange(-max_shift, max_shift + 1)
     scores = np.array([score(int(s)) for s in shifts])
+    if not np.isfinite(scores).any():
+        raise ValueError(
+            "Automatic velocity estimation is uninformative: all candidate "
+            "correlation scores are invalid"
+        )
     best_index = int(np.argmax(scores))
     best_shift = float(shifts[best_index])
     if 0 < best_index < len(scores) - 1:
