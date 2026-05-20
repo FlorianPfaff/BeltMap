@@ -54,6 +54,14 @@ beltmap-advanced-report = "beltmap.cli.advanced_report:main"
 beltmap-evaluate-real = "beltmap.cli.evaluate_real:main"
 beltmap-sweep = "beltmap.cli.sweep:main"
 beltmap-synthetic-suite = "beltmap.cli.synthetic_suite:main"
+beltmap-detect-roi = "beltmap.cli.detect_roi:main"
+beltmap-estimate-period = "beltmap.cli.estimate_period:main"
+beltmap-suggest-threshold = "beltmap.cli.suggest_threshold:main"
+beltmap-manifest = "beltmap.cli.manifest:main"
+beltmap-flux-summary = "beltmap.cli.flux_summary:main"
+beltmap-review = "beltmap.cli.review:main"
+beltmap-write-templates = "beltmap.cli.write_templates:main"
+beltmap-stream-snapshot = "beltmap.cli.stream_snapshot:main"
 
 [project.optional-dependencies]
 test = [
