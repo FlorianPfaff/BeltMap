@@ -19,7 +19,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray

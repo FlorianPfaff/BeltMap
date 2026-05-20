@@ -18,6 +18,7 @@ from .tracking import ParticleComponentConfig, extract_particle_detections
 
 MAP_PARTICLE_MASK_MODES = {"positive", "absolute", "hysteresis_abs"}
 MAP_AGGREGATION_METHODS = {"mean", "huber"}
+MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
     "smoothed_correction_px", "refined_phase_px", "loss", "score",
@@ -411,8 +412,16 @@ def accumulate_belt_map(
         raise ValueError("robust_huber_delta must be positive")
     if use_huber_weights and robust_min_scale <= 0:
         raise ValueError("robust_min_scale must be positive")
+    if not 0.0 <= map_trim_fraction < 0.5:
+        raise ValueError(
+            f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be in [0, 0.5), "
+            f"got {map_trim_fraction!r}"
+        )
+    use_trimmed_mean = map_trim_fraction > 0.0 and not use_huber_weights
     sums = np.zeros((map_height, crop_width), dtype=np.float64)
     weights = np.zeros((map_height, crop_width), dtype=np.float64)
+    stacked_values: list[np.ndarray] = []
+    stacked_weights: list[np.ndarray] = []
     masked_pixels = 0
     contributed_pixels = 0
     for sample_number, index in enumerate(samples, start=1):
@@ -464,9 +473,11 @@ def accumulate_belt_map(
                 outliers = finite_valid & (centered_abs > cutoff)
                 pixel_weights[outliers] = cutoff / centered_abs[outliers]
                 valid &= pixel_weights > 0
+        frame_sums = sums if not use_trimmed_mean else np.zeros_like(sums)
+        frame_weights = weights if not use_trimmed_mean else np.zeros_like(weights)
         contributed_pixels += _accumulate_frame_linear(
-            sums=sums,
-            weights=weights,
+            sums=frame_sums,
+            weights=frame_weights,
             frame=frame,
             valid=valid,
             phase=phase,
@@ -474,6 +485,11 @@ def accumulate_belt_map(
             model_period=model_period,
             pixel_weights=pixel_weights,
         )
+        if use_trimmed_mean:
+            stacked_values.append(frame_sums)
+            stacked_weights.append(frame_weights)
+            sums += frame_sums
+            weights += frame_weights
         if sample_number == 1 or sample_number == len(samples) or sample_number % progress_interval == 0:
             emit(
                 "belt_map",
@@ -499,6 +515,18 @@ def accumulate_belt_map(
     total_weight = float(np.sum(weights))
     if total_weight <= 0:
         raise RuntimeError("No pixels contributed to the belt map")
+    if use_trimmed_mean:
+        values_by_sample = np.stack(stacked_values, axis=0)
+        weights_by_sample = np.stack(stacked_weights, axis=0)
+        sums, weights = _trim_belt_map_accumulators(
+            values_by_sample,
+            weights_by_sample,
+            trim_fraction=map_trim_fraction,
+        )
+        known_pixels = weights > 0
+        total_weight = float(np.sum(weights))
+        if total_weight <= 0:
+            raise RuntimeError("No pixels contributed to the belt map after trimming")
     global_mean = float(np.sum(sums) / total_weight)
     for col in range(crop_width):
         known = np.flatnonzero(known_pixels[:, col])
@@ -519,6 +547,46 @@ def accumulate_belt_map(
         "observed_pixels": int(np.count_nonzero(known_pixels)),
         "total_pixels": int(weights.size),
     }
+
+
+def _trim_belt_map_accumulators(
+    values_by_sample: np.ndarray,
+    weights_by_sample: np.ndarray,
+    *,
+    trim_fraction: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    _sample_count, map_height, map_width = values_by_sample.shape
+    sums = np.zeros((map_height, map_width), dtype=np.float64)
+    weights = np.zeros((map_height, map_width), dtype=np.float64)
+    for row in range(map_height):
+        for col in range(map_width):
+            positive = weights_by_sample[:, row, col] > 0
+            if not np.any(positive):
+                continue
+            values = (
+                values_by_sample[positive, row, col]
+                / weights_by_sample[positive, row, col]
+            )
+            sample_weights = weights_by_sample[positive, row, col]
+            keep = _trim_sample_mask(values, trim_fraction=trim_fraction)
+            if not np.any(keep):
+                continue
+            sums[row, col] = float(np.sum(values[keep] * sample_weights[keep]))
+            weights[row, col] = float(np.sum(sample_weights[keep]))
+    return sums, weights
+
+
+def _trim_sample_mask(values: np.ndarray, *, trim_fraction: float) -> np.ndarray:
+    if trim_fraction <= 0.0 or values.size <= 1:
+        return np.ones(values.shape, dtype=bool)
+    sorted_order = np.argsort(values)
+    trim_count = int(np.floor(trim_fraction * values.size))
+    if trim_count <= 0:
+        return np.ones(values.shape, dtype=bool)
+    keep_sorted = sorted_order[trim_count : values.size - trim_count]
+    keep = np.zeros(values.shape, dtype=bool)
+    keep[keep_sorted] = True
+    return keep
 
 
 def _accumulate_frame_linear(

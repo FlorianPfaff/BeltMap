@@ -32,6 +32,7 @@ from . import (
     track_particle_detections,
 )
 from . import _driver_runtime as rt
+from .detection import detect_particles_from_residual_hysteresis
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
     PhaseFeedbackConfig,
@@ -45,6 +46,7 @@ from ._driver_motion import (
     resolve_supplied_velocity,
     validate_auto_velocity_region,
 )
+from .phase import PhaseDriftConfig, PhaseDriftFilter, refine_phase_by_registration
 from .recurrent_artifacts import (
     RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
@@ -128,6 +130,13 @@ def env_bool(name: str, default: bool = False) -> bool:
 def optional_path(name: str) -> Path | None:
     value = os.getenv(name, "").strip()
     return Path(value) if value else None
+
+
+def static_residual_sample_frames(name: str, *, frame_count: int) -> int:
+    value = os.getenv(name, "").strip().lower()
+    if value == "auto":
+        return max(1, min(frame_count, 120))
+    return rt.env_int(name, 0, minimum=0)
 
 
 def optional_csv_float(row: dict[str, str], key: str) -> float | None:
@@ -226,6 +235,12 @@ def load_recurrent_artifact_map(
             f"{artifact_map.shape} != {map_shape}"
         )
     if artifact_map.dtype == np.bool_ or np.issubdtype(artifact_map.dtype, np.bool_):
+        return np.asarray(artifact_map, dtype=bool)
+    if np.issubdtype(artifact_map.dtype, np.integer):
+        if np.any((artifact_map < 0) | (artifact_map > 1)):
+            raise ValueError(
+                "reused recurrent artifact integer map values must be 0 or 1"
+            )
         return np.asarray(artifact_map, dtype=bool)
     artifact_map = np.asarray(artifact_map, dtype=np.float32)
     if not np.all(np.isfinite(artifact_map)):

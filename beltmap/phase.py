@@ -78,8 +78,8 @@ class PhaseRegistrationConfig:
     search_step_px: float = 0.5
     trim_fraction: float = 0.08
     highpass_radius_px: int = 15
-    subpixel_refinement: bool = True
-    robust_normalization: bool = True
+    subpixel_refinement: bool = False
+    robust_normalization: bool = False
 
     def candidate_offsets(self) -> FloatArray:
         """Return the tested phase offsets, including zero when possible."""
@@ -628,7 +628,7 @@ def _prepare_for_registration(
     image: FloatArray,
     highpass_radius_px: int,
     *,
-    robust_normalization: bool = True,
+    robust_normalization: bool = False,
 ) -> FloatArray:
     if highpass_radius_px <= 0:
         prepared = image.copy()

@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 import beltmap.tracking as tracking_module
 from beltmap import (

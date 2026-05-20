@@ -177,6 +177,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
+            frame_height=None,
         )
         other_counts = counts - revolution_mask.astype(counts.dtype)
         other_probability = _recurrence_probability(
