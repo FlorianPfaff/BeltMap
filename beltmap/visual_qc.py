@@ -192,7 +192,7 @@ def estimate_belt_map_coverage(
 ) -> np.ndarray | None:
     """Estimate nominal belt-map row coverage from phase estimates.
 
-    This uses the recovered phase trajectory and crop geometry. It is a QC proxy
+    This uses the recovered phase trajectory and crop height. It is a QC proxy
     for observation coverage, not the exact accumulation mask used by the driver.
     """
 
@@ -201,7 +201,7 @@ def estimate_belt_map_coverage(
     if height is None or height <= 0 or shape is None:
         return None
 
-    crop_height, crop_width = shape
+    crop_height, _crop_width = shape
     row_counts = np.zeros(height, dtype=np.float64)
     for row in phase_rows:
         phase = finite_float(row.get("phase_px"))
@@ -216,7 +216,7 @@ def estimate_belt_map_coverage(
         np.add.at(row_counts, y0, 1.0 - frac)
         np.add.at(row_counts, y1, frac)
 
-    return np.repeat(row_counts[:, None], crop_width, axis=1)
+    return row_counts
 
 
 def draw_coverage_image(path: Path, coverage: np.ndarray | None) -> None:
@@ -227,6 +227,11 @@ def draw_coverage_image(path: Path, coverage: np.ndarray | None) -> None:
         return
 
     arr = np.asarray(coverage, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    elif arr.ndim != 2:
+        draw_empty_plot(path, "Belt-map coverage", "Coverage must be 1-D or 2-D")
+        return
     finite = arr[np.isfinite(arr)]
     low = float(np.min(finite))
     high = float(np.max(finite))
@@ -236,7 +241,11 @@ def draw_coverage_image(path: Path, coverage: np.ndarray | None) -> None:
         scaled = np.clip((arr - low) / (high - low), 0.0, 1.0)
         scaled = np.round(255.0 * scaled).astype(np.uint8)
 
-    image = Image.fromarray(scaled, mode="L").convert("RGB")
+    image = Image.fromarray(scaled, mode="L")
+    if image.width == 1:
+        display_width = min(1024, max(64, image.height // 4))
+        image = image.resize((display_width, image.height), Image.Resampling.NEAREST)
+    image = image.convert("RGB")
     draw = ImageDraw.Draw(image)
     covered_rows = int(np.count_nonzero(np.nanmax(arr, axis=1) > 0))
     draw.text((8, 8), "nominal belt-map coverage", fill=(255, 0, 0))

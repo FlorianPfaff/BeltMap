@@ -187,9 +187,47 @@ def natural_key(path: Path) -> list[int | str]:
     return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", str(path))]
 
 
+def _absolute_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path.absolute()
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        _absolute_path(path).relative_to(_absolute_path(parent))
+    except ValueError:
+        return False
+    return True
+
+
+def _output_dir_to_exclude_from_inputs() -> Path | None:
+    data_root = _absolute_path(DATA)
+    output_root = _absolute_path(OUT)
+    if output_root == data_root:
+        raise ValueError(
+            "BELTMAP_OUTPUT_DIR must not be the same directory as BELTMAP_IMAGE_DIR; "
+            "otherwise generated PNG outputs can be rediscovered as input frames"
+        )
+    if _path_is_relative_to(output_root, data_root):
+        return output_root
+    return None
+
+
 def image_paths() -> tuple[list[Path], int, int]:
+    excluded_output_root = _output_dir_to_exclude_from_inputs()
     all_paths = sorted(
-        [p for p in DATA.rglob("*") if p.suffix.lower() in EXTS and not p.name.startswith("._")],
+        [
+            p
+            for p in DATA.rglob("*")
+            if p.suffix.lower() in EXTS
+            and not p.name.startswith("._")
+            and not (
+                excluded_output_root is not None
+                and _path_is_relative_to(p, excluded_output_root)
+            )
+        ],
         key=natural_key,
     )
     if not all_paths:

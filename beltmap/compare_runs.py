@@ -178,6 +178,26 @@ def finite_values(rows: Iterable[dict[str, Any]], field: str) -> list[float]:
     return values
 
 
+def paired_values(
+    rows: Iterable[dict[str, Any]],
+    *,
+    x_field: str,
+    y_field: str,
+) -> tuple[list[float], list[float]]:
+    """Collect aligned x/y values, falling back to row index for missing x."""
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for index, row in enumerate(rows):
+        y_value = finite_float(row.get(y_field))
+        if y_value is None:
+            continue
+        x_value = finite_float(row.get(x_field))
+        xs.append(float(index) if x_value is None else x_value)
+        ys.append(y_value)
+    return xs, ys
+
+
 def describe(values: Iterable[float]) -> dict[str, float | int | None]:
     """Return compact scalar statistics for finite values."""
 
@@ -785,10 +805,14 @@ def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path],
     }
     series = []
     for run in runs:
-        xs = finite_values(run.detections_per_frame, "frame_index")
+        xs, ys = paired_values(
+            run.detections_per_frame,
+            x_field="frame_index",
+            y_field="n_detections",
+        )
         if not xs:
-            xs = [float(index) for index in range(len(run.detections_per_frame))]
-        ys = finite_values(run.detections_per_frame, "n_detections")
+            ys = finite_values(run.detections_per_frame, "n_detections")
+            xs = [float(index) for index in range(len(ys))]
         series.append((run.spec.label, xs, ys))
     draw_multiline_plot(
         plots["detections_per_frame"],

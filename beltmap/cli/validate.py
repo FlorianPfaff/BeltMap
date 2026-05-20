@@ -398,7 +398,17 @@ def missing_standard_files(output_dir: Path) -> list[str]:
 
 
 def final_belt_map_progress(progress_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    belt_rows = [row for row in progress_rows if row.get("stage") == "belt_map"]
+    coverage_fields = {
+        "observed_pixels",
+        "total_pixels",
+        "masked_pixels",
+        "contributed_pixels",
+    }
+    belt_rows = [
+        row
+        for row in progress_rows
+        if row.get("stage") == "belt_map" and coverage_fields.intersection(row)
+    ]
     return belt_rows[-1] if belt_rows else {}
 
 

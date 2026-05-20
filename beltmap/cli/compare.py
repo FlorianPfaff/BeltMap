@@ -71,14 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    specs = [parse_run_spec(value) for value in args.run]
-    artifacts = generate_comparison_report(
-        specs,
-        report_dir=args.report_dir,
-        frames=args.frames,
-        truth_path=args.truth_path,
-        truth_iou_threshold=args.truth_iou_threshold,
-    )
+    try:
+        specs = [parse_run_spec(value) for value in args.run]
+        artifacts = generate_comparison_report(
+            specs,
+            report_dir=args.report_dir,
+            frames=args.frames,
+            truth_path=args.truth_path,
+            truth_iou_threshold=args.truth_iou_threshold,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
     if not args.quiet:
         print(
             json.dumps(

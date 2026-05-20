@@ -73,10 +73,20 @@ def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[fl
     """Return effective selected-frame velocity, frame unit, and raw supplied value."""
 
     raw_velocity = float(velocity_spec)
+    if not math.isfinite(raw_velocity):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME must be finite or the literal value 'auto'"
+        )
     frame_unit = resolve_velocity_frame_unit(frame_stride)
     if frame_unit == SOURCE_FRAME_VELOCITY_UNIT:
-        return raw_velocity * frame_stride, frame_unit, raw_velocity
-    return raw_velocity, frame_unit, raw_velocity
+        effective_velocity = raw_velocity * frame_stride
+    else:
+        effective_velocity = raw_velocity
+    if not math.isfinite(effective_velocity):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME must produce a finite selected-frame velocity"
+        )
+    return effective_velocity, frame_unit, raw_velocity
 
 
 def parse_region(first_frame: np.ndarray) -> tuple[int, int, int, int]:
