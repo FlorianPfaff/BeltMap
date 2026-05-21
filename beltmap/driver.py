@@ -32,6 +32,7 @@ from . import (
     track_particle_detections,
 )
 from . import _driver_runtime as rt
+from .advanced_quality import apply_gain_offset, robust_gain_offset
 from .detection import detect_particles_from_residual_hysteresis
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
@@ -54,6 +55,7 @@ from .recurrent_artifacts import (
     score_recurrent_artifact_detections,
     score_recurrent_artifact_detections_excluding_current_revolution,
 )
+from .residual import generate_residual_image
 
 DETECTION_FIELDS = [
     "frame_index", "image", "label", "y", "x", "area_px",
@@ -92,6 +94,9 @@ TRACK_SCORE_FIELDS = [
     "velocity_ratio_y", "abs_x_velocity_px_per_frame",
     "passes_min_track_length", "passes_velocity_ratio",
     "passes_lateral_velocity", "accepted", "plausibility_score",
+]
+PHOTOMETRIC_FIELDS = [
+    "frame_index", "image", "gain", "offset", "n_pixels", "rmse_gray", "trimmed_fraction", "status",
 ]
 
 
@@ -332,6 +337,10 @@ def write_phase_refinement_outputs(phase_refinement_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_refinement.csv", phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
 
 
+def write_photometric_outputs(photometric_rows: list[dict]) -> None:
+    rt.write_csv(rt.OUT / "photometric_fits.csv", photometric_rows, PHOTOMETRIC_FIELDS)
+
+
 def detection_rows_for_frame(detections: list, path: Path, frame_index: int) -> list[dict]:
     rows: list[dict] = []
     for detection in detections:
@@ -493,6 +502,71 @@ def subtract_static_background(
         expected_background=expected,
         clean_render=residual.clean_render,
     )
+
+
+def apply_photometric_correction(
+    *,
+    frame: np.ndarray,
+    residual: ResidualImage,
+    residual_config: ResidualConfig,
+    frame_index: int,
+    path: Path,
+    enabled: bool,
+    trim_fraction: float,
+    max_iterations: int,
+    min_pixels: int,
+) -> tuple[ResidualImage, dict | None]:
+    """Fit and apply a per-frame gain/offset correction to the clean render."""
+
+    if not enabled:
+        return residual, None
+
+    row: dict = {
+        "frame_index": frame_index,
+        "image": _relative_image_name(path, data_dir=rt.DATA),
+        "gain": "",
+        "offset": "",
+        "n_pixels": "",
+        "rmse_gray": "",
+        "trimmed_fraction": "",
+        "status": "ok",
+    }
+    try:
+        fit = robust_gain_offset(
+            observed=frame,
+            expected=residual.expected_background,
+            mask=residual.mask,
+            trim_fraction=trim_fraction,
+            max_iterations=max_iterations,
+            min_pixels=min_pixels,
+        )
+    except ValueError as exc:
+        row["status"] = f"skipped:{exc}"
+        return residual, row
+
+    corrected_expected = apply_gain_offset(residual.expected_background, fit)
+    corrected = generate_residual_image(
+        frame,
+        corrected_expected,
+        mask=residual.mask,
+        config=residual_config,
+    )
+    corrected = ResidualImage(
+        raw=corrected.raw,
+        local_noise=corrected.local_noise,
+        normalized=corrected.normalized,
+        mask=corrected.mask,
+        expected_background=corrected.expected_background,
+        clean_render=residual.clean_render,
+    )
+    row.update(
+        gain=fit.gain,
+        offset=fit.offset,
+        n_pixels=fit.n_pixels,
+        rmse_gray=fit.rmse_gray,
+        trimmed_fraction=fit.trimmed_fraction,
+    )
+    return corrected, row
 
 
 def _nanmedian(values: np.ndarray, *, axis: int) -> np.ndarray:
@@ -847,8 +921,15 @@ def main() -> None:
     residual_noise_exclusion_radius_px = rt.env_int(
         "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", 2, minimum=0
     )
+    photometric_enabled = env_bool("PHOTOMETRIC_ENABLED", False)
+    photometric_trim_fraction = rt.env_float("PHOTOMETRIC_TRIM_FRACTION", 0.05, minimum=0.0)
+    if photometric_trim_fraction >= 0.5:
+        raise ValueError("PHOTOMETRIC_TRIM_FRACTION must be in [0, 0.5)")
+    photometric_max_iterations = rt.env_int("PHOTOMETRIC_MAX_ITERATIONS", 3, minimum=1)
+    photometric_min_pixels = rt.env_int("PHOTOMETRIC_MIN_PIXELS", 128, minimum=1)
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=2)
     tracking_assignment_method = os.getenv("TRACKING_ASSIGNMENT_METHOD", "global").strip().lower()
+    tracking_max_frame_gap = rt.env_float("TRACKING_MAX_FRAME_GAP", 1.0, minimum=1e-9)
     tracking_area_cost_weight_px = rt.env_float(
         "TRACKING_AREA_COST_WEIGHT_PX", 0.0, minimum=0.0
     )
@@ -967,8 +1048,13 @@ def main() -> None:
         residual_min_noise=residual_min_noise,
         residual_noise_exclusion_sigma=residual_noise_exclusion_sigma,
         residual_noise_exclusion_radius_px=residual_noise_exclusion_radius_px,
+        photometric_enabled=photometric_enabled,
+        photometric_trim_fraction=photometric_trim_fraction,
+        photometric_max_iterations=photometric_max_iterations,
+        photometric_min_pixels=photometric_min_pixels,
         min_track_length=min_track_length,
         tracking_assignment_method=tracking_assignment_method,
+        tracking_max_frame_gap=tracking_max_frame_gap,
         tracking_area_cost_weight_px=tracking_area_cost_weight_px,
         tracking_signal_cost_weight_px=tracking_signal_cost_weight_px,
         tracking_lateral_cost_weight=tracking_lateral_cost_weight,
@@ -1116,6 +1202,7 @@ def main() -> None:
         noise_exclusion_sigma=residual_noise_exclusion_sigma,
         noise_exclusion_radius_px=residual_noise_exclusion_radius_px,
         min_noise=residual_min_noise,
+        noise_exclusion_mode=detection_mode,
     )
     reused_phase_estimates = (
         load_phase_estimates(
@@ -1266,6 +1353,7 @@ def main() -> None:
     detections_by_frame = []
     detection_rows: list[dict] = []
     phase_rows: list[dict] = []
+    photometric_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
     phase_drift_filter = PhaseDriftFilter(
         phase_drift_config,
@@ -1301,6 +1389,19 @@ def main() -> None:
             registration_config=registration_config,
             residual_config=residual_config,
         )
+        residual, photometric_row = apply_photometric_correction(
+            frame=frame,
+            residual=residual,
+            residual_config=residual_config,
+            frame_index=frame_index,
+            path=path,
+            enabled=photometric_enabled,
+            trim_fraction=photometric_trim_fraction,
+            max_iterations=photometric_max_iterations,
+            min_pixels=photometric_min_pixels,
+        )
+        if photometric_row is not None:
+            photometric_rows.append(photometric_row)
         residual = subtract_static_background(
             residual,
             static_background_map,
@@ -1338,6 +1439,8 @@ def main() -> None:
         ):
             write_detection_outputs(detections_by_frame, detection_rows)
             write_phase_outputs(phase_rows)
+            if photometric_enabled:
+                write_photometric_outputs(photometric_rows)
             rt.emit("detect", "wrote partial detection and phase outputs", processed_frames=processed, total_detections=len(detection_rows), phase_estimates=len(phase_rows))
         if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
             dt = rt.time.perf_counter() - detection_start
@@ -1483,11 +1586,14 @@ def main() -> None:
 
     write_detection_outputs(detections_by_frame, detection_rows)
     write_phase_outputs(phase_rows)
+    if photometric_enabled:
+        write_photometric_outputs(photometric_rows)
     rt.emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows))
 
     max_match = os.getenv("MAX_MATCH_DISTANCE_PX", "").strip()
     tracking_config = ParticleTrackingConfig(
         max_match_distance_px=float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity)),
+        max_frame_gap=tracking_max_frame_gap,
         velocity_prior_y_px_per_frame=0.8 * belt_velocity,
         assignment_method=tracking_assignment_method,
         area_cost_weight_px=tracking_area_cost_weight_px,
@@ -1500,6 +1606,7 @@ def main() -> None:
         "starting particle tracking",
         frames=len(detections_by_frame),
         max_match_distance_px=tracking_config.max_match_distance_px,
+        max_frame_gap=tracking_config.max_frame_gap,
         velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame,
         velocity_prior_x_px_per_frame=tracking_config.velocity_prior_x_px_per_frame,
         assignment_method=tracking_config.assignment_method,
@@ -1588,7 +1695,12 @@ def main() -> None:
         "detection_min_bbox_height_px": detection_min_bbox_height_px,
         "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
         "detection_min_bbox_extent": detection_min_bbox_extent,
+        "photometric_enabled": photometric_enabled,
+        "photometric_trim_fraction": photometric_trim_fraction,
+        "photometric_max_iterations": photometric_max_iterations,
+        "photometric_min_pixels": photometric_min_pixels,
         "tracking_assignment_method": tracking_config.assignment_method,
+        "tracking_max_frame_gap": tracking_config.max_frame_gap,
         "tracking_area_cost_weight_px": tracking_config.area_cost_weight_px,
         "tracking_signal_cost_weight_px": tracking_config.signal_cost_weight_px,
         "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
@@ -1642,6 +1754,7 @@ def main() -> None:
         "n_phase_refinement_rows": len(phase_refinement_rows),
         "n_phase_refinement_used": sum(1 for row in phase_refinement_rows if row.get("used_for_refinement")),
         "n_phase_estimates": len(phase_rows),
+        "n_photometric_fits": len(photometric_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
         "tracking_backend": tracking_config.assignment_method,

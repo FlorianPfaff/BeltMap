@@ -3,7 +3,12 @@ import pytest
 from PIL import Image
 
 from beltmap import _driver_runtime as rt
-from beltmap._driver_map import accumulate_belt_map, validate_map_trim_fraction
+from beltmap._driver_map import (
+    _accumulate_frame_linear,
+    _accumulate_frame_nearest,
+    accumulate_belt_map,
+    validate_map_trim_fraction,
+)
 
 
 def _write_gray(path, value: int) -> None:
@@ -51,6 +56,38 @@ def test_trimmed_map_reconstruction_rejects_single_bright_outlier(tmp_path, monk
     assert trimmed_coverage == mean_coverage
     assert mean_map[0, 0] == pytest.approx(70.0)
     assert trimmed_map[0, 0] == pytest.approx(10.0)
+
+
+def test_non_fractional_map_accumulation_uses_nearest_row_assignment():
+    frame = np.asarray([[10.0], [100.0]], dtype=np.float64)
+    valid = np.ones(frame.shape, dtype=bool)
+    sums_linear = np.zeros((4, 1), dtype=np.float64)
+    weights_linear = np.zeros_like(sums_linear)
+    sums_nearest = np.zeros((4, 1), dtype=np.float64)
+    weights_nearest = np.zeros_like(sums_nearest)
+
+    common_kwargs = dict(
+        frame=frame,
+        valid=valid,
+        phase=0.4,
+        map_height=4,
+        model_period=None,
+    )
+    assert _accumulate_frame_linear(
+        sums=sums_linear,
+        weights=weights_linear,
+        **common_kwargs,
+    ) == 2
+    assert _accumulate_frame_nearest(
+        sums=sums_nearest,
+        weights=weights_nearest,
+        **common_kwargs,
+    ) == 2
+
+    np.testing.assert_allclose(weights_linear[:, 0], [0.6, 1.0, 0.4, 0.0])
+    np.testing.assert_allclose(sums_linear[:, 0], [6.0, 64.0, 40.0, 0.0])
+    np.testing.assert_allclose(weights_nearest[:, 0], [1.0, 1.0, 0.0, 0.0])
+    np.testing.assert_allclose(sums_nearest[:, 0], [10.0, 100.0, 0.0, 0.0])
 
 
 @pytest.mark.parametrize("trim_fraction", [0.0, 0.1, 0.49])

@@ -26,6 +26,7 @@ Inspect these outputs first:
 - `detections_overlay_sample_*.png`
 - `tracks_overlay_sample_*.png`
 - `phase_estimates.csv`
+- `photometric_fits.csv` when `[photometric].enabled = true`
 - `track_scores.csv`
 - `filtered_velocities.csv`
 
@@ -38,8 +39,9 @@ This avoids attributing a detection-threshold effect to a changed map.
 
 ```toml
 [detection]
-method = "threshold"
+mode = "positive"
 threshold = 5.0
+low_threshold = 0.0
 
 [map]
 sample_frames = 120
@@ -57,7 +59,7 @@ sample_frames = 0
 min_revolutions = 0
 
 [tracking]
-matching_strategy = "greedy"
+assignment_method = "greedy"
 ```
 
 ### 2. Strong map
@@ -81,6 +83,16 @@ smoothing_window_frames = 25
 ```
 
 ### 3. Strong map plus image-fixed residual model
+
+Enable per-frame photometric correction if validation overlays show broad
+positive/negative residual structure after the belt texture is geometrically
+aligned:
+
+```toml
+[photometric]
+enabled = true
+trim_fraction = 0.05
+```
 
 ```toml
 [static_background]
@@ -106,9 +118,9 @@ mask_min_area_px = 4
 
 ```toml
 [detection]
-method = "hysteresis"
+mode = "positive"
 threshold = 4.5
-grow_threshold = 2.0
+low_threshold = 2.0
 min_area_px = 4
 min_bbox_width_px = 3
 min_bbox_height_px = 3
