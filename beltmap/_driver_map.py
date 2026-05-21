@@ -18,7 +18,7 @@ from .phase import PhaseEstimate, PhaseRegistrationConfig, refine_phase_by_regis
 from .residual import ResidualConfig, ResidualImage, generate_residual_image
 from .tracking import ParticleComponentConfig, extract_particle_detections
 
-MAP_PARTICLE_MASK_MODES = {"positive", "absolute", "hysteresis_abs"}
+MAP_PARTICLE_MASK_MODES = {"positive", "negative", "absolute", "hysteresis_abs"}
 MAP_AGGREGATION_METHODS = {"mean", "huber"}
 MAP_SAMPLING_STRATEGIES = {"uniform", "adaptive_phase_coverage"}
 MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
@@ -444,7 +444,9 @@ def accumulate_belt_map(
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
     residual_config = ResidualConfig(
-        noise_exclusion_mode="absolute" if mask_mode in {"absolute", "hysteresis_abs"} else "positive",
+        noise_exclusion_mode=(
+            "absolute" if mask_mode in {"absolute", "hysteresis_abs"} else mask_mode
+        ),
     )
     use_huber_weights = robust_reference_belt_map is not None
     if use_huber_weights and robust_huber_delta <= 0:
@@ -795,8 +797,12 @@ def detect_map_particle_mask(
     min_area_px: int,
 ) -> np.ndarray:
     mode = validate_map_particle_mask_mode(mode)
-    if mode == "positive":
-        raw_mask = detect_particles_from_residual(residual, threshold=threshold)
+    if mode in {"positive", "negative"}:
+        raw_mask = detect_particles_from_residual(
+            residual,
+            threshold=threshold,
+            mode=mode,
+        )
         return _component_mask_with_optional_dilation(
             raw_mask,
             residual=residual,

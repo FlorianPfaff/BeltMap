@@ -587,6 +587,7 @@ def learn_static_residual_noise_map(
     sample_frames: int,
     min_scale: float,
     mask_threshold: float | None = None,
+    mask_mode: str = "positive",
     mask_margin_px: int = 0,
     mask_min_area_px: int = 1,
     chunk_rows: int = 48,
@@ -612,6 +613,7 @@ def learn_static_residual_noise_map(
         sampled_frames=len(samples),
         selected_frames=len(paths),
         mask_threshold=mask_threshold,
+        mask_mode=mask_mode,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
         min_scale=min_scale,
@@ -649,7 +651,11 @@ def learn_static_residual_noise_map(
             )
             raw = np.asarray(residual.raw, dtype=np.float32).copy()
             if mask_threshold is not None:
-                mask = detect_particles_from_residual(residual, threshold=mask_threshold)
+                mask = detect_particles_from_residual(
+                    residual,
+                    threshold=mask_threshold,
+                    mode=mask_mode,
+                )
                 detections = extract_particle_detections(
                     mask,
                     residual=residual,
@@ -717,6 +723,7 @@ def learn_static_residual_background_map(
     residual_config: ResidualConfig,
     sample_frames: int,
     mask_threshold: float | None = None,
+    mask_mode: str = "positive",
     mask_margin_px: int = 0,
     mask_min_area_px: int = 1,
     chunk_rows: int = 48,
@@ -740,6 +747,7 @@ def learn_static_residual_background_map(
         sampled_frames=len(samples),
         selected_frames=len(paths),
         mask_threshold=mask_threshold,
+        mask_mode=mask_mode,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
     )
@@ -776,7 +784,11 @@ def learn_static_residual_background_map(
             )
             raw = np.asarray(residual.raw, dtype=np.float32).copy()
             if mask_threshold is not None:
-                mask = detect_particles_from_residual(residual, threshold=mask_threshold)
+                mask = detect_particles_from_residual(
+                    residual,
+                    threshold=mask_threshold,
+                    mode=mask_mode,
+                )
                 detections = extract_particle_detections(
                     mask,
                     residual=residual,
@@ -943,7 +955,13 @@ def main() -> None:
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_sampling_strategy = os.getenv("MAP_SAMPLING_STRATEGY", "uniform").strip().lower()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
-    map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
+    map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
+    if map_particle_mask_mode_value:
+        map_particle_mask_mode = map_particle_mask_mode_value
+    elif detection_mode in {"negative", "absolute"}:
+        map_particle_mask_mode = detection_mode
+    else:
+        map_particle_mask_mode = "positive"
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
@@ -1256,6 +1274,7 @@ def main() -> None:
             residual_config=residual_config,
             sample_frames=static_background_sample_frames,
             mask_threshold=static_background_mask_threshold,
+            mask_mode=detection_mode,
             mask_margin_px=static_background_mask_margin_px,
             mask_min_area_px=static_background_mask_min_area_px,
         )
@@ -1305,6 +1324,7 @@ def main() -> None:
             sample_frames=static_noise_sample_frames,
             min_scale=static_noise_min_scale,
             mask_threshold=static_noise_mask_threshold,
+            mask_mode=detection_mode,
             mask_margin_px=static_noise_mask_margin_px,
             mask_min_area_px=static_noise_mask_min_area_px,
         )
@@ -1721,6 +1741,10 @@ def main() -> None:
         "map_robust_iterations": map_robust_iterations,
         "map_robust_huber_delta": map_robust_huber_delta,
         "map_robust_min_scale": map_robust_min_scale,
+        "registration_search_radius_px": registration_config.search_radius_px,
+        "registration_search_step_px": registration_config.search_step_px,
+        "registration_subpixel_refinement": registration_config.subpixel_refinement,
+        "registration_robust_normalization": registration_config.robust_normalization,
         "phase_refinement_iterations": phase_refinement_iterations,
         "phase_refinement_min_score": phase_refinement_min_score,
         "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,
