@@ -9,7 +9,30 @@ from .residual import ResidualImage
 
 
 DETECTION_MODES = {"positive", "negative", "absolute"}
+DETECTION_MODE_ALIASES = {
+    "threshold": "positive",
+    "hysteresis": "positive",
+    "hysteresis_abs": "absolute",
+}
 FloatArray = NDArray[np.floating]
+
+
+def normalize_detection_mode(mode: str) -> str:
+    """Return the canonical residual-polarity detection mode.
+
+    Legacy detector-method names are accepted so environment variables,
+    config files, and public API calls share the same normalization path.
+    """
+
+    normalized = str(mode).strip().lower()
+    normalized = DETECTION_MODE_ALIASES.get(normalized, normalized)
+    if normalized in DETECTION_MODES:
+        return normalized
+    choices = ", ".join(sorted(DETECTION_MODES))
+    aliases = ", ".join(sorted(DETECTION_MODE_ALIASES))
+    raise ValueError(
+        f"mode must be one of {choices}; legacy aliases: {aliases}; got {mode!r}"
+    )
 
 
 def detection_signal_from_residual(
@@ -123,7 +146,7 @@ def _residual_values_and_valid_mask(
 
 
 def _oriented_detection_signal(values: FloatArray, *, mode: str) -> FloatArray:
-    normalized_mode = mode.strip().lower()
+    normalized_mode = normalize_detection_mode(mode)
     if normalized_mode == "positive":
         return values
     if normalized_mode == "negative":

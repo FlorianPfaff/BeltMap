@@ -91,6 +91,11 @@ def render_expected_clean_belt(
         observed = _as_float_image(observed_frame, name="observed_frame")
         if observed.ndim != 2:
             raise ValueError("observed_frame must be a 2-D array")
+        if output_shape is not None and tuple(int(value) for value in output_shape) != observed.shape:
+            raise ValueError(
+                "output_shape must match observed_frame.shape when observed_frame "
+                "is supplied"
+            )
         if output_shape is None:
             output_shape = observed.shape
 

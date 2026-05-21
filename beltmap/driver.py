@@ -23,7 +23,6 @@ from . import (
     RecurrentArtifactConfig,
     TrackFilterConfig,
     detect_particles_from_residual,
-    detection_signal_from_residual,
     estimate_particle_velocities_vs_belt,
     estimate_local_noise,
     extract_particle_detections,
@@ -33,7 +32,7 @@ from . import (
 )
 from . import _driver_runtime as rt
 from .advanced_quality import apply_gain_offset, robust_gain_offset
-from .detection import detect_particles_from_residual_hysteresis
+from .detection import detect_particles_from_residual_hysteresis, normalize_detection_mode
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
     PhaseFeedbackConfig,
@@ -742,6 +741,7 @@ def learn_static_residual_noise_map(
                 detections = extract_particle_detections(
                     mask,
                     residual=residual,
+                    signal_mode=mask_mode,
                     frame_index=float(frame_index),
                     config=component_config,
                 )
@@ -875,6 +875,7 @@ def learn_static_residual_background_map(
                 detections = extract_particle_detections(
                     mask,
                     residual=residual,
+                    signal_mode=mask_mode,
                     frame_index=float(frame_index),
                     config=component_config,
                 )
@@ -996,7 +997,7 @@ def main() -> None:
 
     period_px = optional_positive_int("BELT_PERIOD_PX")
     detection_threshold = rt.env_float("DETECTION_THRESHOLD", 5.0)
-    detection_mode = os.getenv("DETECTION_MODE", "positive").strip().lower()
+    detection_mode = normalize_detection_mode(os.getenv("DETECTION_MODE", "positive"))
     detection_low_threshold = optional_positive_float("DETECTION_LOW_THRESHOLD", 0.0)
     min_area_px = rt.env_int("MIN_AREA_PX", 4, minimum=1)
     detection_max_area_px = optional_positive_int("DETECTION_MAX_AREA_PX")
@@ -1568,10 +1569,6 @@ def main() -> None:
         phase_px_by_frame.append(float(phase_row["phase_px"]))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
-        detection_signal = detection_signal_from_residual(
-            residual,
-            mode=detection_mode,
-        )
         mask = detect_particles_from_residual(
             residual,
             threshold=detection_threshold,
@@ -1580,7 +1577,8 @@ def main() -> None:
         )
         detections = extract_particle_detections(
             mask,
-            residual=detection_signal,
+            residual=residual,
+            signal_mode=detection_mode,
             frame_index=float(frame_index),
             config=component_config,
         )
@@ -1689,6 +1687,7 @@ def main() -> None:
                     recurrent_result,
                     config=recurrent_artifact_config,
                     detection_threshold=detection_threshold,
+                    frame_shape=(region[2], region[3]),
                 )
             )
         recurrent_artifact_rows = recurrent_artifact_rows_from_scores(
@@ -1905,11 +1904,13 @@ def main() -> None:
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
         "static_noise_mask_threshold": static_noise_mask_threshold,
+        "static_noise_mask_mode": detection_mode,
         "static_noise_mask_margin_px": static_noise_mask_margin_px,
         "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
         "static_noise_map_used": static_noise_map is not None,
         "static_background_sample_frames": static_background_sample_frames,
         "static_background_mask_threshold": static_background_mask_threshold,
+        "static_background_mask_mode": detection_mode,
         "static_background_mask_margin_px": static_background_mask_margin_px,
         "static_background_mask_min_area_px": static_background_mask_min_area_px,
         "static_background_map_used": static_background_map is not None,

@@ -201,6 +201,45 @@ def test_built_recurrent_scores_reject_cross_revolution_recurrence():
     ]
 
 
+def test_built_recurrent_probability_excludes_current_revolution_exposure():
+    recurrent_first = detection(0, 0, 1, 1, 2, peak_signal=4.0)
+    recurrent_second = detection(1, 0, 1, 1, 2, peak_signal=4.0)
+    detections_by_frame = [[recurrent_first], [recurrent_second]]
+    phase_px_by_frame = [0.0, 0.0]
+    revolution_by_frame = [0, 1]
+
+    result = build_recurrent_artifact_map(
+        detections_by_frame,
+        phase_px_by_frame=phase_px_by_frame,
+        revolution_by_frame=revolution_by_frame,
+        map_shape=(4, 4),
+        frame_shape=(1, 4),
+        config=RecurrentArtifactConfig(
+            min_revolutions=2,
+            margin_px=0,
+            max_overlap_fraction=0.75,
+            min_recurrence_probability=0.75,
+        ),
+    )
+    scores = score_recurrent_artifact_detections_excluding_current_revolution(
+        detections_by_frame,
+        phase_px_by_frame,
+        revolution_by_frame,
+        result,
+        config=RecurrentArtifactConfig(
+            min_revolutions=2,
+            margin_px=0,
+            max_overlap_fraction=0.75,
+            min_recurrence_probability=0.75,
+            mode="probabilistic",
+        ),
+        detection_threshold=5.0,
+        frame_shape=(1, 4),
+    )
+
+    assert [score.artifact_probability for frame in scores for score in frame] == [1.0, 1.0]
+
+
 def test_soft_recurrent_filter_keeps_strong_peak_and_rejects_weak_peak():
     artifact_map = np.zeros((12, 12), dtype=bool)
     artifact_map[1:3, 2:4] = True

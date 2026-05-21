@@ -477,7 +477,8 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
     matches = 0
     ious: list[float] = []
     centroid_errors: list[float] = []
-    detection_count = sum(len(v) for v in detections.values())
+    labeled_frames = set(truth)
+    detection_count = sum(len(detections.get(frame_index, [])) for frame_index in labeled_frames)
     truth_count = sum(len(v) for v in truth.values())
     for frame_index, truth_boxes in truth.items():
         frame_detections = detections.get(frame_index, [])
@@ -501,7 +502,12 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
             centroid_errors.append(float(math.hypot(ty - dy, tx - dx)))
     precision = None if detection_count == 0 else matches / detection_count
     recall = None if truth_count == 0 else matches / truth_count
-    f1 = None if not precision or not recall else 2.0 * precision * recall / (precision + recall)
+    if precision is None or recall is None:
+        f1 = None
+    elif precision + recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2.0 * precision * recall / (precision + recall)
     return RealLabelMetrics(
         frames=len(truth),
         truth_boxes=truth_count,
@@ -541,8 +547,10 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     correction_values = [finite_float(row.get("correction_px")) for row in phase_rows]
     corrections = np.asarray([v for v in correction_values if v is not None], dtype=np.float64)
     search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
+    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
-        boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= 0.5))
+        boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
         if boundary_share > 0.05:
             flags.append({"severity": "warning", "code": "registration_boundary", "message": "phase corrections often hit the search boundary", "share": boundary_share})
 
