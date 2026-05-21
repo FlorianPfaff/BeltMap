@@ -8,7 +8,9 @@ belts, cameras, and particle sizes.
 ## Recommended first Brick run
 
 Start from `examples/brick_10gpers/beltmap.toml`. The committed default now uses
-a stronger map build, hysteresis detection, static-background learning, soft
+a stronger map build, phase-coverage map sampling, Huber map aggregation,
+hysteresis detection, static-background and static-noise learning,
+offline phase smoothing, dense-component splitting, robust velocity fitting, soft
 recurrent-artifact suppression, conservative shape gates, optional fractional
 map accumulation, and global tracking assignment.
 
@@ -41,6 +43,8 @@ Inspect these outputs first:
 
 Use one high-quality belt map first, then reuse it for detection-only sweeps.
 This avoids attributing a detection-threshold effect to a changed map.
+
+If sparse real labels are available, rank the matrix by labeled precision/recall/F1 first; use proxy metrics only as a fallback.
 
 ### 1. Baseline
 
@@ -75,6 +79,8 @@ assignment_method = "greedy"
 [map]
 sample_frames = 500
 sampling_strategy = "adaptive_phase_coverage"
+sample_strategy = "phase_coverage"
+adaptive_candidate_frames = 3000
 reconstruction_trim_fraction = 0.05
 mask_iterations = 2
 fractional_splat = true
@@ -90,6 +96,8 @@ iterations = 1
 max_abs_correction_px = 4
 smoothing_window_frames = 25
 ```
+
+For contaminated maps, compare `aggregation = "mean"` to `aggregation = "huber"` with `robust_iterations = 1`.
 
 ### 3. Strong map plus image-fixed residual model
 
@@ -110,6 +118,9 @@ mask_threshold = 4.0
 mask_margin_px = 16
 mask_min_area_px = 4
 ```
+
+Keep this map reusable during detection sweeps via `reuse.static_noise_path`;
+otherwise threshold changes can be confounded by a different noise floor.
 
 Add static noise only if validation overlays still show camera-fixed residual
 variation after static-background subtraction:
@@ -144,6 +155,22 @@ mode = "soft"
 soft_penalty_weight = 1.0
 ```
 
+### 5. Offline phase smoothing, merged-component splitting, and robust velocities
+
+```toml
+[phase_smoothing]
+window_frames = 25
+min_score = 0.05
+max_abs_correction_px = 4
+
+[detection]
+split_merged_components = true
+split_min_projection_gap_px = 1
+
+[tracking]
+velocity_fit_method = "theil_sen"
+```
+
 ## What still needs labels
 
 The synthetic benchmark checks phase, map reconstruction, detections, and
@@ -158,3 +185,5 @@ correction, and track filters.
 
 Keep the labeled set separate from this repository unless redistribution rights
 are clear.
+
+The Brick comparison workflow now supports an optional `truth_path` input. When it points to a checked-out label JSON, each variant writes `real_label_metrics.json` and the summary ranks labeled metrics alongside the existing proxy metrics.

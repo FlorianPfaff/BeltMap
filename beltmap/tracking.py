@@ -20,6 +20,7 @@ _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 _SCIPY_OPTIMIZE: Any = _IMPORT_UNCHECKED
 _TRACKING_ASSIGNMENT_METHODS = {"global", "greedy", "pyrecest_gnn"}
+_VELOCITY_FIT_METHODS = {"linear", "theil_sen"}
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,9 @@ class ParticleComponentConfig:
     min_bbox_extent: float | None = None
     connectivity: int = 8
     weighted_centroid: bool = True
+    split_merged_components: bool = False
+    split_min_projection_gap_px: int = 2
+    split_min_component_area_px: int | None = None
 
 
 @dataclass(frozen=True)
@@ -171,12 +175,15 @@ def extract_particle_detections(
         raise ValueError("particle_mask must be a 2-D array")
 
     signal = _residual_values(residual, mask.shape)
+    components: list[tuple[NDArray[np.integer], NDArray[np.integer]]] = []
+    for rows, cols in _connected_components(mask, connectivity=cfg.connectivity):
+        components.extend(_split_connected_component(rows, cols, config=cfg))
+
     detections: list[ParticleDetection] = []
-    for label, (rows, cols) in enumerate(
-        _connected_components(mask, connectivity=cfg.connectivity),
-        start=1,
-    ):
+    for label, (rows, cols) in enumerate(components, start=1):
         area = rows.size
+        if area <= 0:
+            continue
         if area < cfg.min_area_px:
             continue
         if cfg.max_area_px is not None and area > cfg.max_area_px:
@@ -411,6 +418,7 @@ def estimate_particle_velocities_vs_belt(
     *,
     belt_image_velocity_px_per_frame: float,
     min_track_length: int = 2,
+    fit_method: str = "linear",
 ) -> list[ParticleVelocity]:
     """Estimate particle velocities and compare them with belt image velocity."""
 
@@ -420,6 +428,7 @@ def estimate_particle_velocities_vs_belt(
         raise ValueError("belt_image_velocity_px_per_frame must be non-zero")
     if min_track_length < 2:
         raise ValueError("min_track_length must be at least 2")
+    fit_method = _validate_velocity_fit_method(fit_method)
 
     velocities: list[ParticleVelocity] = []
     for track in tracks:
@@ -430,8 +439,8 @@ def estimate_particle_velocities_vs_belt(
             continue
         ys = np.asarray([d.y for d in track.detections], dtype=np.float64)
         xs = np.asarray([d.x for d in track.detections], dtype=np.float64)
-        vy = _linear_slope(frames, ys)
-        vx = _linear_slope(frames, xs)
+        vy = _fit_slope(frames, ys, method=fit_method)
+        vx = _fit_slope(frames, xs, method=fit_method)
         velocities.append(
             ParticleVelocity(
                 track_id=track.track_id,
@@ -532,6 +541,7 @@ def extract_particle_velocities_vs_belt(
     component_config: ParticleComponentConfig | None = None,
     tracking_config: ParticleTrackingConfig | None = None,
     min_track_length: int = 2,
+    fit_method: str = "linear",
 ) -> list[ParticleVelocity]:
     """Extract particle velocities directly from per-frame particle masks."""
 
@@ -575,6 +585,7 @@ def extract_particle_velocities_vs_belt(
         tracks,
         belt_image_velocity_px_per_frame=belt_image_velocity_px_per_frame,
         min_track_length=min_track_length,
+        fit_method=fit_method,
     )
 
 
@@ -596,6 +607,21 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
     if config.connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
+    if config.split_min_projection_gap_px < 1:
+        raise ValueError("split_min_projection_gap_px must be positive")
+    if (
+        config.split_min_component_area_px is not None
+        and config.split_min_component_area_px < 1
+    ):
+        raise ValueError("split_min_component_area_px must be positive when set")
+
+
+def _validate_velocity_fit_method(method: str) -> str:
+    normalized = str(method).strip().lower()
+    if normalized not in _VELOCITY_FIT_METHODS:
+        choices = ", ".join(sorted(_VELOCITY_FIT_METHODS))
+        raise ValueError(f"fit_method must be one of {choices}")
+    return normalized
 
 
 def _validate_tracking_config(config: ParticleTrackingConfig) -> None:
@@ -689,6 +715,123 @@ def _residual_values(
     if arr.shape != shape:
         raise ValueError("residual must have the same shape as particle_mask")
     return arr
+
+
+def _split_connected_component(
+    rows: NDArray[np.integer],
+    cols: NDArray[np.integer],
+    *,
+    config: ParticleComponentConfig,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]]:
+    """Split a merged component at narrow projection valleys.
+
+    This is intentionally conservative and dependency-free. It only splits when
+    a component has a sustained row/column projection valley, such as two blobs
+    joined by a one-pixel bridge. The bridge pixels are discarded; this is
+    preferable to reporting one merged component for downstream tracking.
+    """
+
+    if not config.split_merged_components:
+        return [(rows, cols)]
+
+    min_area = config.split_min_component_area_px or config.min_area_px
+    pending: list[tuple[NDArray[np.integer], NDArray[np.integer]]] = [(rows, cols)]
+    result: list[tuple[NDArray[np.integer], NDArray[np.integer]]] = []
+    # Bound recursion so pathological masks cannot create excessive splitting.
+    for _depth in range(16):
+        if not pending:
+            break
+        current_rows, current_cols = pending.pop()
+        split = _projection_valley_split(
+            current_rows,
+            current_cols,
+            min_gap_px=config.split_min_projection_gap_px,
+            min_area_px=min_area,
+        )
+        if split is None:
+            result.append((current_rows, current_cols))
+        else:
+            pending.extend(split)
+    result.extend(pending)
+    return result
+
+
+def _projection_valley_split(
+    rows: NDArray[np.integer],
+    cols: NDArray[np.integer],
+    *,
+    min_gap_px: int,
+    min_area_px: int,
+) -> list[tuple[NDArray[np.integer], NDArray[np.integer]]] | None:
+    if rows.size < 2 * min_area_px:
+        return None
+    top = int(np.min(rows))
+    left = int(np.min(cols))
+    height = int(np.max(rows)) - top + 1
+    width = int(np.max(cols)) - left + 1
+    if height < 3 and width < 3:
+        return None
+
+    local_rows = rows - top
+    local_cols = cols - left
+    local = np.zeros((height, width), dtype=bool)
+    local[local_rows, local_cols] = True
+    row_counts = np.count_nonzero(local, axis=1)
+    col_counts = np.count_nonzero(local, axis=0)
+    row_run = _best_projection_valley(row_counts, min_gap_px=min_gap_px)
+    col_run = _best_projection_valley(col_counts, min_gap_px=min_gap_px)
+    if row_run is None and col_run is None:
+        return None
+
+    use_axis = "y"
+    if row_run is None:
+        use_axis = "x"
+    elif col_run is not None and (col_run[1] - col_run[0]) >= (row_run[1] - row_run[0]):
+        use_axis = "x"
+
+    if use_axis == "x":
+        assert col_run is not None
+        gap_start, gap_stop = col_run
+        first = local_cols < gap_start
+        second = local_cols >= gap_stop
+    else:
+        assert row_run is not None
+        gap_start, gap_stop = row_run
+        first = local_rows < gap_start
+        second = local_rows >= gap_stop
+
+    if int(np.count_nonzero(first)) < min_area_px or int(np.count_nonzero(second)) < min_area_px:
+        return None
+    return [(rows[first], cols[first]), (rows[second], cols[second])]
+
+
+def _best_projection_valley(
+    counts: NDArray[np.integer],
+    *,
+    min_gap_px: int,
+) -> tuple[int, int] | None:
+    if counts.size < 3:
+        return None
+    max_count = int(np.max(counts))
+    if max_count <= 1:
+        return None
+    valley_threshold = max(1, int(np.floor(0.15 * max_count)))
+    valley = counts <= valley_threshold
+    # Avoid splitting at the outside border of a component.
+    valley[0] = False
+    valley[-1] = False
+    best: tuple[int, int] | None = None
+    start: int | None = None
+    for index, is_valley in enumerate(valley):
+        if is_valley and start is None:
+            start = index
+        if (not is_valley or index == valley.size - 1) and start is not None:
+            stop = index if not is_valley else index + 1
+            if stop - start >= min_gap_px:
+                if best is None or stop - start > best[1] - best[0]:
+                    best = (start, stop)
+            start = None
+    return best
 
 
 def _component_centroid(
@@ -1178,6 +1321,13 @@ def _drop_expired_tracks(
     ]
 
 
+def _fit_slope(times: FloatArray, values: FloatArray, *, method: str) -> float:
+    method = _validate_velocity_fit_method(method)
+    if method == "linear":
+        return _linear_slope(times, values)
+    return _theil_sen_slope(times, values)
+
+
 def _linear_slope(times: FloatArray, values: FloatArray) -> float:
     centered_times = times - float(np.mean(times))
     denominator = float(np.sum(np.square(centered_times)))
@@ -1185,3 +1335,21 @@ def _linear_slope(times: FloatArray, values: FloatArray) -> float:
         raise ValueError("at least two distinct frame indices are required")
     centered_values = values - float(np.mean(values))
     return float(np.sum(centered_times * centered_values) / denominator)
+
+
+def _theil_sen_slope(times: FloatArray, values: FloatArray) -> float:
+    finite = np.isfinite(times) & np.isfinite(values)
+    t = np.asarray(times[finite], dtype=np.float64)
+    y = np.asarray(values[finite], dtype=np.float64)
+    if np.unique(t).size < 2:
+        raise ValueError("at least two distinct frame indices are required")
+    slopes: list[np.ndarray] = []
+    for index in range(t.size - 1):
+        dt = t[index + 1 :] - t[index]
+        dy = y[index + 1 :] - y[index]
+        valid = dt != 0
+        if np.any(valid):
+            slopes.append(dy[valid] / dt[valid])
+    if not slopes:
+        raise ValueError("at least two distinct frame indices are required")
+    return float(np.median(np.concatenate(slopes)))

@@ -108,6 +108,9 @@ underscores.
 | `detection.min_bbox_height_px` | `DETECTION_MIN_BBOX_HEIGHT_PX` | `--detection-min-bbox-height-px` | `0` | px | Optional minimum component bounding-box height. `0` disables this gate. |
 | `detection.max_bbox_aspect_ratio` | `DETECTION_MAX_BBOX_ASPECT_RATIO` | `--detection-max-bbox-aspect-ratio` | `0` | ratio | Optional maximum bounding-box aspect ratio `max(height/width, width/height)`. `0` disables this gate. |
 | `detection.min_bbox_extent` | `DETECTION_MIN_BBOX_EXTENT` | `--detection-min-bbox-extent` | `0` | fraction | Optional minimum component extent `area / (bbox_width * bbox_height)`. `0` disables this gate. |
+| `detection.split_merged_components` | `DETECTION_SPLIT_MERGED_COMPONENTS` | `--detection-split-merged-components` / `--no-detection-split-merged-components` | `false` | bool | Split connected components at narrow row/column projection valleys before writing detections. Useful for dense particles joined by a weak bridge. |
+| `detection.split_min_projection_gap_px` | `DETECTION_SPLIT_MIN_PROJECTION_GAP_PX` | `--detection-split-min-projection-gap-px` | `2` | px | Minimum valley width used by the merged-component splitter. |
+| `detection.split_min_component_area_px` | `DETECTION_SPLIT_MIN_COMPONENT_AREA_PX` | `--detection-split-min-component-area-px` | `0` | px | Minimum area for each side of a split. `0` reuses `detection.min_area_px`. |
 | `residual.noise_radius_px` | `RESIDUAL_NOISE_RADIUS_PX` | `--residual-noise-radius-px` | `15` | px | Local box radius used to estimate the residual-noise scale. |
 | `residual.clip_sigma` | `RESIDUAL_CLIP_SIGMA` | `--residual-clip-sigma` | `5.0` | sigma | Symmetric residual clipping level before local variance estimation. `0` disables clipping. |
 | `residual.min_noise` | `RESIDUAL_MIN_NOISE` | `--residual-min-noise` | `1e-6` | gray | Minimum local residual-noise scale. Must be positive. |
@@ -120,11 +123,14 @@ underscores.
 | `tracking.min_track_length` | `MIN_TRACK_LENGTH` | `--min-track-length` | `2` | detections | Minimum number of detections required before a particle track contributes a velocity row. Must be at least 1 at driver parsing and at least 2 for velocity estimation. |
 | `tracking.max_match_distance_px` | `MAX_MATCH_DISTANCE_PX` | `--max-match-distance-px` | `max(5, 1.5 * abs(belt_velocity))` | px | Maximum frame-to-frame nearest-neighbor association distance for tracking. Leave unset to derive it from the belt speed. |
 | `tracking.max_frame_gap` | `TRACKING_MAX_FRAME_GAP` | `--tracking-max-frame-gap` | `1.0` | selected frames | Maximum selected-frame gap allowed when linking detections into one track. Raise this to bridge occasional missed detections. |
+| `tracking.velocity_fit_method` | `TRACKING_VELOCITY_FIT_METHOD` | `--tracking-velocity-fit-method` | `linear` | method | Velocity slope estimator: `linear` for least-squares or `theil_sen` for a robust median pairwise slope. |
 | `track_filter.min_length` | `TRACK_FILTER_MIN_LENGTH` | `--track-filter-min-length` | `max(5, tracking.min_track_length)` | detections | Minimum detections per accepted filtered velocity row. Raw `velocities.csv` is not modified. |
 | `track_filter.min_velocity_ratio_y` | `TRACK_FILTER_MIN_VELOCITY_RATIO_Y` | `--track-filter-min-velocity-ratio-y` | `0.0` | ratio | Minimum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_velocity_ratio_y` | `TRACK_FILTER_MAX_VELOCITY_RATIO_Y` | `--track-filter-max-velocity-ratio-y` | `1.1` | ratio | Maximum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_abs_x_velocity_px_per_frame` | `TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME` | `--track-filter-max-abs-x-velocity-px-per-frame` | `0` | px/frame | Optional lateral-velocity gate. `0` disables this gate. |
 | `map.sample_frames` | `MAP_SAMPLE_FRAMES` | `--map-sample-frames` | `120` | frames | Number of frames sampled across the selected sequence to reconstruct the belt map. Must be at least 1. |
+| `map.sample_strategy` | `MAP_SAMPLE_STRATEGY` | `--map-sample-strategy` | `uniform` | strategy | Alias for `map.sampling_strategy`; accepts `uniform`, `phase_coverage`, or `adaptive_phase_coverage`. |
+| `map.adaptive_candidate_frames` | `MAP_ADAPTIVE_CANDIDATE_FRAMES` | `--map-adaptive-candidate-frames` | `0` | frames | Candidate pool size for adaptive sampling. `0` considers all selected frames. |
 | `map.sampling_strategy` | `MAP_SAMPLING_STRATEGY` | `--map-sampling-strategy` | `uniform` | mode | Frame sampling strategy for map reconstruction. `uniform` preserves the original linspace sampling; `adaptive_phase_coverage` spreads samples across nominal belt-coordinate coverage. |
 | `map.reconstruction_trim_fraction` | `MAP_RECONSTRUCTION_TRIM_FRACTION` | `--map-reconstruction-trim-fraction` | `0` | fraction | Symmetric per-pixel trim fraction for robust belt-map reconstruction. Must be in `[0, 0.5)`. |
 | `map.fractional_splat` | `MAP_FRACTIONAL_SPLAT` | `--map-fractional-splat` / `--no-map-fractional-splat` | `true` | bool | Use linear fractional row weights when accumulating belt-map pixels. When false, each image row contributes to its nearest belt-map row. |
@@ -163,6 +169,10 @@ underscores.
 | `phase_drift.min_score` | `PHASE_DRIFT_MIN_SCORE` | `--phase-drift-min-score` | `0.05` | score | Minimum registration score accepted by the online phase-drift filter. |
 | `phase_drift.max_abs_residual_correction_px` | `PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX` | `--phase-drift-max-abs-residual-correction-px` | `0` | px | Optional gate on individual residual corrections accepted by the drift filter. `0` disables the gate. |
 | `phase_drift.max_abs_px` | `PHASE_DRIFT_MAX_ABS_PX` | `--phase-drift-max-abs-px` | `0` | px | Optional cap on accumulated online drift. `0` disables the cap. |
+| `phase_smoothing.window_frames` | `PHASE_SMOOTHING_WINDOW_FRAMES` | `--phase-smoothing-window-frames` | `0` | frames | Optional two-pass phase smoothing. When positive, BeltMap first registers all frames, smooths the correction trajectory, then renders detections from smoothed phases. |
+| `phase_smoothing.min_score` | `PHASE_SMOOTHING_MIN_SCORE` | `--phase-smoothing-min-score` | `0` | score | Minimum registration score admitted into the smoothing fit. `0` disables this gate. |
+| `phase_smoothing.max_abs_correction_px` | `PHASE_SMOOTHING_MAX_ABS_CORRECTION_PX` | `--phase-smoothing-max-abs-correction-px` | `0` | px | Maximum absolute correction admitted into the smoothing fit. `0` disables this gate. |
+| `phase_smoothing.min_support` | `PHASE_SMOOTHING_MIN_SUPPORT` | `--phase-smoothing-min-support` | `3` | frames | Minimum neighboring estimates used for local phase smoothing. |
 | `progress.interval_frames` | `PROGRESS_INTERVAL_FRAMES` | `--progress-interval-frames` | `25` | frames | Progress-log interval for long velocity, map-building, and detection stages. Must be at least 1. |
 | `progress.partial_output_interval_frames` | `PARTIAL_OUTPUT_INTERVAL_FRAMES` | `--partial-output-interval-frames` | `250` | frames | Interval for writing partial detection and phase CSV outputs during long runs. `0` means final outputs only. |
 | `debug.residual_preview_frames` | `DEBUG_RESIDUAL_PREVIEW_FRAMES` | `--debug-residual-preview-frames` | `3` | frames | Save normalized residual PNG previews for the first N processed frames. |
@@ -215,11 +225,49 @@ remaining budget:
 [map]
 sample_frames = 500
 sampling_strategy = "adaptive_phase_coverage"
+adaptive_candidate_frames = 3000
 ```
 
 Use this with stable velocity/period settings. If phase registration diagnostics
 show large corrections or boundary hits, fix velocity, crop, or phase-refinement
 settings before trusting adaptive coverage.
+
+## Offline phase smoothing
+
+Per-frame registration can be noisy when one frame contains large particles,
+scratches, or illumination bursts. `phase_smoothing` runs a two-pass detection
+path: first register all frames, then smooth accepted correction estimates with
+the existing robust local-linear smoother, then render residuals from those
+smoothed phases. This increases runtime because frames are read once for phase
+planning and once for residual rendering, so keep it disabled for quick sweeps.
+
+```toml
+[phase_smoothing]
+window_frames = 25
+min_score = 0.05
+max_abs_correction_px = 4
+min_support = 3
+```
+
+## Dense-particle component splitting
+
+When high density causes neighboring particles to be joined by a weak residual
+bridge, enable projection-valley splitting before track association:
+
+```toml
+[detection]
+split_merged_components = true
+split_min_projection_gap_px = 1
+split_min_component_area_px = 4
+```
+
+For velocity estimates with occasional centroid outliers, use the robust slope
+fit:
+
+```toml
+[tracking]
+velocity_fit_method = "theil_sen"
+```
 
 ## Detection-only reuse mode
 
