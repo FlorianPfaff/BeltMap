@@ -47,6 +47,24 @@ def test_reused_period_state_trusts_explicit_metadata_period():
     assert state.source == "metadata"
 
 
+def test_reused_period_state_rejects_periodic_metadata_without_period():
+    with pytest.raises(ValueError, match="declares a periodic belt map"):
+        reused_period_state(
+            map_height_px=120,
+            supplied_period_px=None,
+            metadata={"belt_period_known": True},
+        )
+
+
+def test_reused_period_state_rejects_periodic_map_metadata_without_period():
+    with pytest.raises(ValueError, match="declares a periodic belt map"):
+        reused_period_state(
+            map_height_px=120,
+            supplied_period_px=None,
+            metadata={"belt_map_periodic": True},
+        )
+
+
 def test_reused_period_state_rejects_incompatible_metadata_height():
     with pytest.raises(ValueError, match="belt_map_height_px must match"):
         reused_period_state(
