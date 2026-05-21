@@ -57,6 +57,14 @@ def test_homography_warp_identity_preserves_image():
     np.testing.assert_allclose(warped, image)
 
 
+def test_homography_warp_negative_projective_scale_preserves_image():
+    image = np.arange(16, dtype=float).reshape(4, 4)
+
+    warped = warp_perspective(image, -np.eye(3), image.shape, interpolation="nearest")
+
+    np.testing.assert_allclose(warped, image)
+
+
 def test_period_estimator_recovers_repeated_profile():
     base = np.array([0.0, 1.0, 0.0, -1.0, 0.5, -0.5])
     profile = np.tile(base, 10)

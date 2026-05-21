@@ -338,26 +338,30 @@ def refine_phase_by_registration(
             "frame and belt_map must have the same width; crop or x-slice before registration"
         )
 
-    valid_mask = _prepare_mask(mask, observed.shape)
+    user_mask = _prepare_mask(mask, observed.shape)
+    valid_mask = _registration_valid_mask(observed, user_mask)
     observed_prepared = _prepare_for_registration(
         observed,
         cfg.highpass_radius_px,
         robust_normalization=cfg.robust_normalization,
+        mask=valid_mask,
     )
 
     losses: list[tuple[float, float]] = []
     for offset in cfg.candidate_offsets():
         phase = wrap_phase(predicted_phase_px + float(offset), period_px)
         expected = render_belt_view(belt, phase, observed.shape[0])
+        candidate_mask = valid_mask & np.isfinite(expected)
         expected_prepared = _prepare_for_registration(
             expected,
             cfg.highpass_radius_px,
             robust_normalization=cfg.robust_normalization,
+            mask=candidate_mask,
         )
         loss = _trimmed_mean_square(
             observed_prepared - expected_prepared,
             trim_fraction=cfg.trim_fraction,
-            mask=valid_mask,
+            mask=candidate_mask,
         )
         losses.append((loss, float(offset)))
 
@@ -632,19 +636,46 @@ def _prepare_mask(mask: ArrayLike | None, shape: tuple[int, int]) -> NDArray[np.
     return arr
 
 
+def _registration_valid_mask(
+    image: ArrayLike,
+    mask: NDArray[np.bool_] | None,
+) -> NDArray[np.bool_]:
+    values = np.asarray(image, dtype=np.float64)
+    valid = np.isfinite(values)
+    if mask is not None:
+        valid &= mask
+    if not np.any(valid):
+        raise ValueError("registration mask excludes all finite pixels")
+    return valid
+
+
 def _prepare_for_registration(
     image: FloatArray,
     highpass_radius_px: int,
     *,
     robust_normalization: bool = False,
+    mask: NDArray[np.bool_] | None = None,
 ) -> FloatArray:
+    values = np.asarray(image, dtype=np.float64)
+    valid = np.isfinite(values)
+    if mask is not None:
+        if mask.shape != values.shape:
+            raise ValueError("mask must have the same shape as image")
+        valid &= mask
+    if not np.any(valid):
+        raise ValueError("registration mask excludes all finite pixels")
+
+    fill_value = float(np.median(values[valid]))
+    sanitized = np.where(valid, values, fill_value)
     if highpass_radius_px <= 0:
-        prepared = image.copy()
+        prepared = sanitized.copy()
     else:
-        prepared = image - _box_blur(image, radius=highpass_radius_px)
-    scale = _robust_scale(prepared) if robust_normalization else float(np.std(prepared))
+        prepared = sanitized - _box_blur(sanitized, radius=highpass_radius_px)
+    scale_values = prepared[valid]
+    scale = _robust_scale(scale_values) if robust_normalization else float(np.std(scale_values))
     if scale > 0:
         prepared = prepared / scale
+    prepared[~valid] = np.nan
     return prepared
 
 
@@ -726,6 +757,7 @@ def _trimmed_mean_square(
     if not 0 <= trim_fraction < 1:
         raise ValueError("trim_fraction must be in [0, 1)")
     values = residual[mask] if mask is not None else residual.ravel()
+    values = values[np.isfinite(values)]
     if values.size == 0:
         raise ValueError("registration mask excludes all pixels")
     squared = np.square(values)

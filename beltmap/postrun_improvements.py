@@ -201,13 +201,13 @@ def compute_phase_row_counts(
         raise ValueError("map_height must be positive")
     if crop_height <= 0:
         raise ValueError("crop_height must be positive")
-    counts = np.zeros(map_height, dtype=np.uint32)
+    counts = np.zeros(map_height, dtype=np.uint64)
     image_rows = np.arange(crop_height, dtype=np.float64)
     for phase in phases_px:
         if not np.isfinite(phase):
             continue
         rows = np.mod(np.floor(image_rows + float(phase)).astype(np.int64), map_height)
-        counts += np.bincount(rows, minlength=map_height).astype(np.uint32)
+        counts += np.bincount(rows, minlength=map_height).astype(np.uint64)
     return counts
 
 

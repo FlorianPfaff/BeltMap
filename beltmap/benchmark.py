@@ -593,11 +593,12 @@ def event_metrics(
     false_negatives = len(truth_events) - true_positives
     precision = true_positives / len(predicted_events) if predicted_events else None
     recall = true_positives / len(truth_events) if truth_events else None
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision is not None and recall is not None and precision + recall > 0
-        else None
-    )
+    if precision is None or recall is None:
+        f1 = None
+    elif precision + recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
 
     def mean_field(name: str) -> float | None:
         values = [finite_float(match.get(name)) for match in matches]
@@ -704,11 +705,12 @@ def detection_metrics(
 
     precision = true_positives / (true_positives + false_positives) if true_positives + false_positives else None
     recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives else None
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision is not None and recall is not None and precision + recall > 0
-        else None
-    )
+    if precision is None or recall is None:
+        f1 = None
+    elif precision + recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
     centroid_stats = summary_errors(centroid_errors, unit="px")
     iou_values = np.asarray(matched_ious, dtype=np.float64)
 

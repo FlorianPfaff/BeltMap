@@ -5,8 +5,10 @@ from beltmap.phase import (
     PhaseDriftFilter,
     PhaseEstimate,
     PhaseRegistrationConfig,
+    PhaseTrajectorySmoothingConfig,
     refine_phase_by_registration,
     render_belt_view,
+    smooth_phase_estimates,
 )
 
 
@@ -44,6 +46,44 @@ def test_subpixel_phase_registration_is_not_quantized_to_search_step():
     assert not np.isclose(grid_units, round(grid_units))
 
 
+def test_phase_registration_mask_ignores_masked_nan_pixels():
+    rows = np.arange(128, dtype=np.float64)[:, None]
+    cols = np.arange(7, dtype=np.float64)[None, :]
+    belt_map = (
+        np.sin(2.0 * np.pi * rows / 19.0)
+        + 0.25 * np.cos(2.0 * np.pi * rows / 11.0)
+        + 0.02 * cols
+    )
+    true_phase = 41.6
+    predicted_phase = 41.0
+    frame = render_belt_view(belt_map, true_phase, height=72)
+    mask = np.ones(frame.shape, dtype=bool)
+    mask[:8, :] = False
+    mask[-8:, :] = False
+    frame_with_masked_nans = frame.copy()
+    frame_with_masked_nans[~mask] = np.nan
+
+    config = PhaseRegistrationConfig(
+        search_radius_px=1.0,
+        search_step_px=0.25,
+        trim_fraction=0.0,
+        highpass_radius_px=3,
+        subpixel_refinement=True,
+        robust_normalization=True,
+    )
+    estimate = refine_phase_by_registration(
+        frame=frame_with_masked_nans,
+        belt_map=belt_map,
+        predicted_phase_px=predicted_phase,
+        period_px=belt_map.shape[0],
+        config=config,
+        mask=mask,
+    )
+
+    assert np.isfinite(estimate.loss)
+    assert abs(estimate.correction_px - (true_phase - predicted_phase)) < 0.15
+
+
 def test_phase_drift_filter_smooths_accepted_registration_residuals():
     drift_filter = PhaseDriftFilter(
         PhaseDriftConfig(enabled=True, smoothing_alpha=0.5, min_score=0.1),
@@ -67,3 +107,33 @@ def test_phase_drift_filter_smooths_accepted_registration_residuals():
     assert drift_filter.accepted_updates == 1
     assert drift_filter.rejected_updates == 0
     assert drift_filter.predict(10.0) == 11.5
+
+
+def test_smoothed_phase_estimates_preserve_applied_drift_metadata():
+    estimates = [
+        PhaseEstimate(
+            phase_px=11.0,
+            frame_index=0.0,
+            predicted_phase_px=10.0,
+            correction_px=1.0,
+            score=1.0,
+            method="registration+drift",
+            drift_px=2.5,
+        ),
+        PhaseEstimate(
+            phase_px=12.0,
+            frame_index=1.0,
+            predicted_phase_px=10.0,
+            correction_px=2.0,
+            score=1.0,
+            method="registration+drift",
+            drift_px=3.0,
+        ),
+    ]
+
+    smoothed = smooth_phase_estimates(
+        estimates,
+        config=PhaseTrajectorySmoothingConfig(window_radius_frames=1, min_support=1),
+    )
+
+    assert [estimate.drift_px for estimate in smoothed] == [2.5, 3.0]

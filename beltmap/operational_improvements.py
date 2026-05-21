@@ -435,9 +435,14 @@ def warp_perspective(
     yy, xx = np.indices((out_h, out_w), dtype=np.float64)
     target = np.stack([xx.ravel(), yy.ravel(), np.ones(xx.size)], axis=0)
     source = np.linalg.inv(matrix) @ target
-    source /= np.maximum(source[2:3], 1e-12)
-    sx = source[0].reshape(output_shape)
-    sy = source[1].reshape(output_shape)
+    w = source[2]
+    finite_w = np.isfinite(w) & (np.abs(w) > 1e-12)
+    sx_flat = np.full(w.shape, -1.0, dtype=np.float64)
+    sy_flat = np.full(w.shape, -1.0, dtype=np.float64)
+    np.divide(source[0], w, out=sx_flat, where=finite_w)
+    np.divide(source[1], w, out=sy_flat, where=finite_w)
+    sx = sx_flat.reshape(output_shape)
+    sy = sy_flat.reshape(output_shape)
     if interpolation == "nearest":
         return _sample_nearest(arr, sy, sx, fill_value=fill_value)
     return _sample_bilinear(arr, sy, sx, fill_value=fill_value)
