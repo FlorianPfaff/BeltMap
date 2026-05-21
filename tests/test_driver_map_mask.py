@@ -80,7 +80,10 @@ def test_hysteresis_abs_map_mask_can_dilate_grown_components():
     assert dilated[7, 9]
 
 
-@pytest.mark.parametrize(("mode", "signal"), [("positive", 5.0), ("absolute", -5.0)])
+@pytest.mark.parametrize(
+    ("mode", "signal"),
+    [("positive", 5.0), ("negative", -5.0), ("absolute", -5.0)],
+)
 def test_non_hysteresis_map_masks_can_dilate_components(mode, signal):
     z = np.zeros((15, 15), dtype=np.float64)
     z[7, 7] = signal
@@ -156,6 +159,25 @@ def test_absolute_map_mask_catches_dark_components_that_positive_mode_misses():
 
     assert not positive.any()
     assert absolute[4:8, 4:8].all()
+
+
+def test_negative_map_mask_catches_dark_components_without_absolute_mode():
+    z = np.zeros((12, 12), dtype=np.float64)
+    z[4:8, 4:8] = -5.0
+    residual = make_residual(z)
+
+    negative = detect_map_particle_mask(
+        residual,
+        mode="negative",
+        threshold=4.0,
+        grow_threshold=1.5,
+        dilation_px=0,
+        margin_px=0,
+        min_area_px=1,
+    )
+
+    assert negative[4:8, 4:8].all()
+    assert not negative[0, 0]
 
 
 def test_invalid_map_particle_mask_mode_raises_useful_error():

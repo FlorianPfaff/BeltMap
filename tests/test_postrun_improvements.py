@@ -17,6 +17,22 @@ def test_uncertainty_from_counts_marks_unobserved_rows():
     assert uncertainty[2] == 1.0
 
 
+def test_map_uncertainty_creates_explicit_report_dir(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    report = tmp_path / "reports" / "map_uncertainty"
+    (out / "metadata.json").write_text(
+        json.dumps({"belt_map_height_px": 5, "belt_region": {"height": 3, "width": 2}}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,phase_px\n0,0\n1,3\n", encoding="utf-8")
+
+    summary = pri.write_map_uncertainty_outputs(out, report_dir=report)
+
+    assert summary["available"]
+    assert (report / "belt_map_row_counts.npy").is_file()
+
+
 def test_quality_contract_uses_standard_csvs(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
@@ -30,6 +46,25 @@ def test_quality_contract_uses_standard_csvs(tmp_path):
 
     assert results
     assert all(result.passed for result in results)
+
+
+def test_quality_contract_uses_metadata_registration_search_radius(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 4.0, "registration_search_step_px": 0.5}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,4.0,0.8\n", encoding="utf-8")
+    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n", encoding="utf-8")
+    (out / "velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
+    (out / "filtered_velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(out, {"max_registration_boundary_share": 0.05})
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
 
 
 def test_label_plan_combines_failure_buckets(tmp_path):
@@ -59,6 +94,15 @@ def test_belt_edge_ignore_mask_excludes_edges():
     mask = pri.belt_edge_ignore_mask((5, 6), margin_px=1)
     assert not mask[0, 0]
     assert mask[2, 2]
+
+
+def test_seam_discontinuity_window_changes_current_seam_score():
+    belt = np.array([[0.0], [100.0], [0.0], [0.0]])
+
+    narrow = pri.seam_discontinuity_profile(belt, window_px=1)
+    wider = pri.seam_discontinuity_profile(belt, window_px=2)
+
+    assert narrow["current_mean_abs_jump_gray"] != wider["current_mean_abs_jump_gray"]
 
 
 def test_warp_perspective_identity():

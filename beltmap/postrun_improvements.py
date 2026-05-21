@@ -14,7 +14,7 @@ import json
 import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -241,6 +241,7 @@ def write_map_uncertainty_outputs(
 
     output_dir = Path(output_dir)
     report_dir = output_dir if report_dir is None else Path(report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
     metadata = load_metadata(output_dir)
     shape = map_shape_from_outputs(output_dir, metadata)
     crop_height = crop_height_from_metadata(metadata)
@@ -304,8 +305,7 @@ def seam_discontinuity_profile(
         raise ValueError("belt_map must be 2-D")
     if window_px < 1:
         raise ValueError("window_px must be positive")
-    height = belt.shape[0]
-    jumps = np.mean(np.abs(belt - np.roll(belt, 1, axis=0)), axis=1)
+    jumps = _seam_discontinuity_jumps(belt, window_px=window_px)
     best_row = int(np.argmin(jumps))
     current_jump = float(jumps[0])
     best_jump = float(jumps[best_row])
@@ -320,6 +320,23 @@ def seam_discontinuity_profile(
     }
 
 
+def _seam_discontinuity_jumps(belt: FloatArray, *, window_px: int) -> FloatArray:
+    """Return candidate seam costs using a symmetric row window around each seam."""
+
+    height = belt.shape[0]
+    if height <= 0:
+        raise ValueError("belt_map must have at least one row")
+    window = max(1, min(int(window_px), max(1, height // 2)))
+    before_offsets = np.arange(window, 0, -1, dtype=np.int64)
+    after_offsets = np.arange(window, dtype=np.int64)
+    jumps = np.empty(height, dtype=np.float64)
+    for row in range(height):
+        before_rows = (row - before_offsets) % height
+        after_rows = (row + after_offsets) % height
+        jumps[row] = float(np.mean(np.abs(belt[before_rows] - belt[after_rows])))
+    return jumps
+
+
 def write_seam_diagnostics(output_dir: Path, *, report_dir: Path | None = None) -> dict[str, Any]:
     output_dir = Path(output_dir)
     report_dir = output_dir if report_dir is None else Path(report_dir)
@@ -331,7 +348,10 @@ def write_seam_diagnostics(output_dir: Path, *, report_dir: Path | None = None) 
     belt_map = np.load(belt_map_path)
     result = {"available": True, **seam_discontinuity_profile(belt_map)}
     write_json(report_dir / "seam_diagnostics.json", result)
-    jumps = np.mean(np.abs(belt_map.astype(np.float64) - np.roll(belt_map.astype(np.float64), 1, axis=0)), axis=1)
+    jumps = _seam_discontinuity_jumps(
+        np.asarray(belt_map, dtype=np.float64),
+        window_px=8,
+    )
     normalized_png(report_dir / "seam_discontinuity_profile.png", jumps[:, None])
     return result
 
@@ -416,8 +436,10 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
         if value is not None
     ], dtype=np.float64)
     search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
+    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
-        boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= 0.5))
+        boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
         if boundary_share > 0.05:
             flags.append(QualityFlag("warning", "registration_boundary", "phase corrections often hit the search boundary", boundary_share, 0.05))
 
@@ -668,7 +690,9 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
         if value is not None
     ], dtype=np.float64)
     search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
-    boundary_share = None if corrections.size == 0 else float(np.mean(np.abs(np.abs(corrections) - search_radius) <= 0.5))
+    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    boundary_tolerance = max(1e-9, 0.5 * search_step)
+    boundary_share = None if corrections.size == 0 else float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
     threshold = finite_float(contract.get("max_registration_boundary_share"))
     if threshold is not None:
         results.append(ContractResult("registration_boundary_share", boundary_share is None or boundary_share <= threshold, boundary_share, threshold, "<=", "share of phase corrections at search boundary"))

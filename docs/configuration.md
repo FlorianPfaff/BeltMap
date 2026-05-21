@@ -129,8 +129,8 @@ underscores.
 | `map.fractional_splat` | `MAP_FRACTIONAL_SPLAT` | `--map-fractional-splat` / `--no-map-fractional-splat` | `true` | bool | Use linear fractional row weights when accumulating belt-map pixels. When false, each image row contributes to its nearest belt-map row. |
 | `map.mask_iterations` | `MAP_MASK_ITERATIONS` | `--map-mask-iterations` | `1` | passes | Number of particle-masked belt-map refinement passes after the initial provisional map. `0` disables particle masking during map reconstruction. |
 | `map.particle_mask_threshold` | `MAP_PARTICLE_MASK_THRESHOLD` | `--map-particle-mask-threshold` | `detection.threshold` | z | Strong residual threshold used to seed particle masks while building the clean belt map. |
-| `map.particle_mask_mode` | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive` | mode | Map-building particle-mask mode. Valid values are `positive`, `absolute`, and `hysteresis_abs`. |
-| `map.particle_mask_grow_threshold` | `MAP_PARTICLE_MASK_GROW_THRESHOLD` | `--map-particle-mask-grow-threshold` | `2.0` | z | Lower absolute-residual threshold used to grow `hysteresis_abs` map masks from strong seeds. Ignored by `positive` and `absolute`. |
+| `map.particle_mask_mode` | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive`; follows `detection.mode` for `negative`/`absolute` when unset | mode | Map-building particle-mask mode. Valid values are `positive`, `negative`, `absolute`, and `hysteresis_abs`. |
+| `map.particle_mask_grow_threshold` | `MAP_PARTICLE_MASK_GROW_THRESHOLD` | `--map-particle-mask-grow-threshold` | `2.0` | z | Lower absolute-residual threshold used to grow `hysteresis_abs` map masks from strong seeds. Ignored by `positive`, `negative`, and `absolute`. |
 | `map.particle_mask_dilation_px` | `MAP_PARTICLE_MASK_DILATION_PX` | `--map-particle-mask-dilation-px` | `0` | px | Morphological dilation radius for `hysteresis_abs` map masks before applying the rectangular safety margin. `0` disables dilation. |
 | `map.particle_mask_margin_px` | `MAP_PARTICLE_MASK_MARGIN_PX` | `--map-particle-mask-margin-px` | `8` | px | Safety margin added around detected or grown particle regions during map reconstruction. |
 | `map.particle_mask_min_area_px` | `MAP_PARTICLE_MASK_MIN_AREA_PX` | `--map-particle-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area used for particle masking during map reconstruction. Must be at least 1. |
@@ -187,6 +187,7 @@ excluded while reconstructing `belt_map.npy`.
 | Mode | Behavior | Best use |
 |---|---|---|
 | `positive` | Threshold positive normalized residuals, extract connected components, and expand their bounding boxes. | Bright particles on a darker belt. This is the default and preserves the original behavior. |
+| `negative` | Threshold negative normalized residuals, extract connected components, and expand their bounding boxes. | Dark particles on a brighter belt. |
 | `absolute` | Threshold `abs(normalized_residual)`, extract connected components, and expand their bounding boxes. | Particles that create both dark and bright residuals, but do not need hysteresis growing. |
 | `hysteresis_abs` | Find strong absolute-residual seed pixels, grow them through connected lower-threshold absolute-residual regions, remove small regions, optionally dilate, then apply the rectangular margin. | Larger or structured particle artifacts where a strong core should pull in weaker surrounding residuals. |
 
