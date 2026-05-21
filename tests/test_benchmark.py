@@ -9,6 +9,7 @@ from beltmap.benchmark import (
     bbox_iou,
     circular_signed_error_px,
     compute_benchmark_metrics,
+    detection_metrics,
     event_metrics,
     finite_int,
     generate_benchmark_report,
@@ -158,6 +159,63 @@ def test_bbox_iou_for_overlapping_half_open_boxes():
 def test_finite_int_accepts_float_like_integer_strings():
     assert finite_int("7.0") == 7
     assert finite_int("7.5") is None
+
+
+def test_detection_metrics_no_matches_report_zero_f1():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 0,
+                "left": 0,
+                "bottom": 10,
+                "right": 10,
+            }
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "30",
+            "bbox_right": "30",
+            "y": "25",
+            "x": "25",
+        }
+    ]
+
+    metrics = detection_metrics(detections, truth, iou_threshold=0.5)
+
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["f1"] == 0.0
+
+
+def test_event_metrics_no_matches_report_zero_f1():
+    truth = {
+        "particles": [
+            {"event_id": "truth", "frame_index": 0, "top": 0, "left": 0, "bottom": 10, "right": 10}
+        ]
+    }
+    detections = [
+        {
+            "track_id": "pred",
+            "frame_index": "0",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "30",
+            "bbox_right": "30",
+            "y": "25",
+            "x": "25",
+        }
+    ]
+
+    metrics = event_metrics(detections, truth, iou_threshold=0.5)
+
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["f1"] == 0.0
 
 
 def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):

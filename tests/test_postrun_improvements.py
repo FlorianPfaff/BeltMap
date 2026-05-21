@@ -7,6 +7,7 @@ from beltmap import postrun_improvements as pri
 
 def test_compute_phase_row_counts_wraps_periodically():
     counts = pri.compute_phase_row_counts([0.0, 3.0], map_height=5, crop_height=3)
+    assert counts.dtype == np.uint64
     assert counts.tolist() == [2, 1, 1, 1, 1]
 
 
