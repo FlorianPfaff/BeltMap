@@ -68,6 +68,7 @@ def render_expected_clean_belt(
     phase_estimate: PhaseEstimate | None = None,
     registration_config: PhaseRegistrationConfig | None = None,
     registration_mask: ArrayLike | None = None,
+    periodic: bool | None = None,
     fill_value: float = np.nan,
 ) -> CleanBeltRender:
     """Render the expected particle-free belt for one frame.
@@ -80,6 +81,10 @@ def render_expected_clean_belt(
     refined by registering the observed belt crop against ``belt_map``.
     Otherwise the constant-speed ``motion_model`` supplies the phase. When a
     ``phase_estimate`` is passed explicitly, ``motion_model`` is not required.
+
+    ``periodic`` controls whether belt-map rows wrap cyclically. When omitted,
+    the value is inferred from ``motion_model.period_px`` when a motion model is
+    available; otherwise it defaults to the historical cyclic behavior.
     """
 
     belt = _as_float_image(belt_map, name="belt_map")
@@ -111,6 +116,7 @@ def render_expected_clean_belt(
     if region.width != belt.shape[1]:
         raise ValueError("belt_region width must match belt_map width")
 
+    render_periodic = _resolve_periodic_rendering(periodic, motion_model)
     phase = phase_estimate
     if phase is None:
         if motion_model is None:
@@ -126,11 +132,16 @@ def render_expected_clean_belt(
             mask=mask_crop,
         )
 
-    clean_crop = render_belt_view(belt, phase.phase_px, region.height)
+    clean_crop = render_belt_view(
+        belt,
+        phase.phase_px,
+        region.height,
+        periodic=render_periodic,
+    )
     clean = np.full(output_shape, fill_value, dtype=np.float64)
     valid = np.zeros(output_shape, dtype=bool)
     clean[region.y_slice, region.x_slice] = clean_crop
-    valid[region.y_slice, region.x_slice] = True
+    valid[region.y_slice, region.x_slice] = np.isfinite(clean_crop)
 
     return CleanBeltRender(
         image=clean,
@@ -138,6 +149,17 @@ def render_expected_clean_belt(
         phase_estimate=phase,
         belt_region=region,
     )
+
+
+def _resolve_periodic_rendering(
+    periodic: bool | None,
+    motion_model: BeltMotionModel | None,
+) -> bool:
+    if periodic is not None:
+        return bool(periodic)
+    if motion_model is not None:
+        return motion_model.period_px is not None
+    return True
 
 
 def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
