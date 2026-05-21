@@ -373,6 +373,63 @@ def test_track_particle_detections_can_use_legacy_greedy_assignment():
     assert sorted(track.n_detections for track in tracks) == [1, 1, 2]
 
 
+def test_track_particle_detections_can_use_pyrecest_gnn_assignment(monkeypatch):
+    calls = {}
+
+    class FakeGlobalNearestNeighbor:
+        def __init__(
+            self,
+            *,
+            initial_prior,
+            association_param,
+            log_prior_estimates,
+            log_posterior_estimates,
+        ):
+            calls["initial_prior"] = initial_prior
+            calls["association_param"] = association_param
+            calls["log_prior_estimates"] = log_prior_estimates
+            calls["log_posterior_estimates"] = log_posterior_estimates
+
+        def find_association(self, measurements, *_args, **kwargs):
+            np.testing.assert_allclose(measurements, np.asarray([[13.0], [5.0]]))
+            assert kwargs["warn_on_no_meas_for_track"] is False
+            return np.asarray([0], dtype=int)
+
+    monkeypatch.setattr(
+        tracking_module,
+        "_load_pyrecest_global_nearest_neighbor",
+        lambda: FakeGlobalNearestNeighbor,
+    )
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0, 1, y=10.0, x=5.0, area_px=4,
+                bbox_top=9, bbox_left=4, bbox_bottom=11, bbox_right=6,
+            )
+        ],
+        [
+            ParticleDetection(
+                1, 1, y=13.0, x=5.0, area_px=4,
+                bbox_top=12, bbox_left=4, bbox_bottom=14, bbox_right=6,
+            )
+        ],
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=5.0,
+            velocity_prior_y_px_per_frame=3.0,
+            assignment_method="pyrecest_gnn",
+        ),
+    )
+
+    assert [track.n_detections for track in tracks] == [2]
+    assert calls["association_param"]["gating_distance_threshold"] == 5.0
+    assert calls["log_prior_estimates"] is False
+    assert calls["log_posterior_estimates"] is False
+
+
 def test_extract_particle_velocities_vs_belt_from_masks():
     masks = []
     for frame_index in range(5):

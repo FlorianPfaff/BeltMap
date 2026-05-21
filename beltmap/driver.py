@@ -313,7 +313,7 @@ def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> di
     phase_fraction = estimate.phase_px / period_px
     return {
         "frame_index": frame_index,
-        "image": str(path.relative_to(rt.DATA)),
+        "image": _relative_image_name(path, data_dir=rt.DATA),
         "phase_px": estimate.phase_px,
         "phase_fraction": phase_fraction,
         "phase_rad": phase_fraction * 2.0 * np.pi,
@@ -356,7 +356,7 @@ def detection_rows_for_frame(detections: list, path: Path, frame_index: int) -> 
             if field != "image"
         }
         row["frame_index"] = frame_index
-        row["image"] = str(path.relative_to(rt.DATA))
+        row["image"] = _relative_image_name(path, data_dir=rt.DATA)
         rows.append(row)
     return rows
 
@@ -398,7 +398,7 @@ def track_detection_rows(tracks: list, paths: list[Path]) -> list[dict]:
             row["track_id"] = track.track_id
             row["track_detection_index"] = detection_index
             row["frame_index"] = frame_index
-            row["image"] = str(paths[frame_index].relative_to(rt.DATA))
+            row["image"] = _relative_image_name(paths[frame_index], data_dir=rt.DATA)
             rows.append(row)
     return rows
 
