@@ -941,6 +941,7 @@ def main() -> None:
     )
     tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
+    map_sampling_strategy = os.getenv("MAP_SAMPLING_STRATEGY", "uniform").strip().lower()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
     map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
@@ -1060,6 +1061,7 @@ def main() -> None:
         tracking_lateral_cost_weight=tracking_lateral_cost_weight,
         tracking_max_area_ratio=tracking_max_area_ratio,
         map_mask_iterations=map_mask_iterations,
+        map_sampling_strategy=map_sampling_strategy,
         map_particle_mask_threshold=map_particle_mask_threshold,
         map_particle_mask_mode=map_particle_mask_mode,
         map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
@@ -1154,6 +1156,7 @@ def main() -> None:
             mask_min_area_px=map_particle_mask_min_area_px,
             aggregation=map_aggregation,
             robust_iterations=map_robust_iterations,
+            sampling_strategy=map_sampling_strategy,
             robust_huber_delta=map_robust_huber_delta,
             robust_min_scale=map_robust_min_scale,
             fractional_splat=map_fractional_splat,
@@ -1706,6 +1709,7 @@ def main() -> None:
         "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
         "tracking_max_area_ratio": tracking_config.max_area_ratio,
         "map_mask_iterations": map_mask_iterations,
+        "map_sampling_strategy": map_sampling_strategy,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
         "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,

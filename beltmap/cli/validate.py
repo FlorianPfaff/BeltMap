@@ -231,6 +231,7 @@ def load_run_data(output_dir: Path) -> dict[str, Any]:
             output_dir / "detections_per_frame.csv",
             required_columns=REQUIRED_CSV_COLUMNS["detections_per_frame.csv"],
         ),
+        "recurrent_artifact_detections": read_csv_rows(output_dir / "recurrent_artifact_detections.csv"),
         "velocities": read_csv_rows(
             output_dir / "velocities.csv",
             required_columns=REQUIRED_CSV_COLUMNS["velocities.csv"],
@@ -467,6 +468,27 @@ def markdown_link(path: Path, *, relative_to: Path) -> str:
     return str(target).replace("\\", "/")
 
 
+def recurrent_artifact_summary(rows: list[dict[str, str]]) -> dict[str, Any]:
+    """Summarize the optional first-pass recurrent-artifact decision table."""
+
+    if not rows:
+        return {"available": False, "rows": 0, "rejected": 0, "kept": 0, "rejected_share": None}
+    rejected = sum(
+        1
+        for row in rows
+        if str(row.get("recurrent_artifact_rejected", "")).strip().lower()
+        in {"1", "true", "yes", "y"}
+    )
+    rows_count = len(rows)
+    return {
+        "available": True,
+        "rows": rows_count,
+        "rejected": rejected,
+        "kept": rows_count - rejected,
+        "rejected_share": safe_share(rejected, rows_count),
+    }
+
+
 def build_markdown_report(
     output_dir: Path,
     report_path: Path,
@@ -479,6 +501,7 @@ def build_markdown_report(
     detection_rows = data["detections_per_frame"]
     velocity_rows = data["velocities"]
     progress_rows = data["progress"]
+    recurrent_summary = recurrent_artifact_summary(data.get("recurrent_artifact_detections", []))
 
     corrections = finite_values(phase_rows, "correction_px")
     scores = finite_values(phase_rows, "score")
@@ -564,6 +587,26 @@ def build_markdown_report(
             f"| max | {format_value(detection_stats['max'])} |",
             "",
             plot_line("detections_per_frame", "Detections per frame"),
+        ]
+    )
+    if recurrent_summary["available"]:
+        lines.extend(
+            [
+                "## Recurrent artifact filtering",
+                "",
+                "| Quantity | Value |",
+                "| --- | ---: |",
+                f"| first-pass detections scored | {format_value(recurrent_summary['rows'])} |",
+                f"| kept | {format_value(recurrent_summary['kept'])} |",
+                f"| rejected | {format_value(recurrent_summary['rejected'])} |",
+                f"| rejected share | {format_value(recurrent_summary['rejected_share'])} |",
+                "",
+                "Inspect `recurrent_artifact_detections.csv` when this share is high, especially strong detections rejected in soft mode.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
             "## Velocities",
             "",
             "| Statistic | velocity_ratio_y |",
@@ -606,6 +649,8 @@ def build_markdown_report(
             "- Check detection-count spikes against residual previews.",
             "- Check velocity-ratio outliers against the experiment physics.",
             "- Check that useful configurations produce enough long tracks, not just many tiny detections.",
+            "- Use a sparse labeled real-data set to choose thresholds and artifact settings whenever available.",
+            "- Inspect photometric fits when illumination drift or LED flicker is suspected.",
             "",
         ]
     )
@@ -618,6 +663,7 @@ def build_validation_summary(output_dir: Path, data: dict[str, Any]) -> dict[str
     detection_rows = data["detections_per_frame"]
     velocity_rows = data["velocities"]
     progress_rows = data["progress"]
+    recurrent_rows = data.get("recurrent_artifact_detections", [])
 
     corrections = finite_values(phase_rows, "correction_px")
     scores = finite_values(phase_rows, "score")
@@ -661,6 +707,7 @@ def build_validation_summary(output_dir: Path, data: dict[str, Any]) -> dict[str
             "tracks_ge_5": sum(1 for value in track_lengths if value >= 5),
             "tracks_ge_10": sum(1 for value in track_lengths if value >= 10),
         },
+        "recurrent_artifact_filtering": recurrent_artifact_summary(recurrent_rows),
         "belt_map_progress": final_belt_map_progress(progress_rows),
     }
 

@@ -19,6 +19,13 @@ beltmap-apply --config examples/brick_10gpers/beltmap.toml --print-config
 beltmap-validate --output-dir outputs
 ```
 
+The Brick GitHub Actions workflow should use the same values as this checked-in
+config by default: 500 sampled map frames, adaptive phase-coverage sampling,
+phase-feedback refinement, additive static-background learning, soft recurrent
+artifact filtering, shape gates, and global tracking. Use workflow inputs for
+ablation sweeps rather than treating the weaker historical defaults as the main
+result path.
+
 Inspect these outputs first:
 
 - `validation_report.md`
@@ -67,6 +74,8 @@ assignment_method = "greedy"
 ```toml
 [map]
 sample_frames = 500
+sampling_strategy = "adaptive_phase_coverage"
+reconstruction_trim_fraction = 0.05
 mask_iterations = 2
 fractional_splat = true
 particle_mask_mode = "hysteresis_abs"
@@ -138,11 +147,14 @@ soft_penalty_weight = 1.0
 ## What still needs labels
 
 The synthetic benchmark checks phase, map reconstruction, detections, and
-velocities when latent truth is known. Real-data quality still needs a small
-manual validation set because true Brick detections are not encoded in the
+velocities when latent truth is known. Real-data quality should be selected by a
+small manual validation set because true Brick detections are not encoded in the
 image sequence. A practical minimum is 20 to 50 annotated frames containing
-particle boxes and obvious false-positive regions. Use that set to select the
-final threshold, shape gates, recurrent-artifact settings, and track filters.
+particle boxes, labeled empty frames, belt scratches, recurrent artifact regions,
+edge particles, dense-particle frames, and illumination-change examples. Use that
+set as the primary criterion for the final threshold, shape gates, recurrent
+artifact settings, static-background/static-noise settings, photometric
+correction, and track filters.
 
 Keep the labeled set separate from this repository unless redistribution rights
 are clear.
