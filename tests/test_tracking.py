@@ -170,6 +170,49 @@ def test_track_particle_detections_uses_velocity_prior():
     assert velocity.belt_minus_particle_velocity_y_px_per_frame == 2.0
 
 
+def test_theil_sen_velocity_fit_is_less_sensitive_to_one_outlier():
+    detections = [
+        ParticleDetection(
+            float(frame),
+            1,
+            y=float(2 * frame),
+            x=0.0,
+            area_px=4,
+            bbox_top=0,
+            bbox_left=0,
+            bbox_bottom=2,
+            bbox_right=2,
+        )
+        for frame in range(5)
+    ]
+    detections[4] = ParticleDetection(
+        4.0,
+        1,
+        y=50.0,
+        x=0.0,
+        area_px=4,
+        bbox_top=0,
+        bbox_left=0,
+        bbox_bottom=2,
+        bbox_right=2,
+    )
+    tracks = [tracking_module.ParticleTrack(track_id=0, detections=tuple(detections))]
+
+    least_squares = estimate_particle_velocities_vs_belt(
+        tracks,
+        belt_image_velocity_px_per_frame=10.0,
+        fit_method="least_squares",
+    )[0]
+    robust = estimate_particle_velocities_vs_belt(
+        tracks,
+        belt_image_velocity_px_per_frame=10.0,
+        fit_method="theil_sen",
+    )[0]
+
+    assert least_squares.velocity_y_px_per_frame > 2.0
+    assert robust.velocity_y_px_per_frame == 2.0
+
+
 def test_track_particle_detections_uses_positional_indices_by_default():
     detections_by_frame = [
         [

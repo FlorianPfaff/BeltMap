@@ -20,6 +20,7 @@ _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 _SCIPY_OPTIMIZE: Any = _IMPORT_UNCHECKED
 _TRACKING_ASSIGNMENT_METHODS = {"global", "greedy", "pyrecest_gnn"}
+_VELOCITY_FIT_METHODS = {"least_squares", "theil_sen"}
 
 
 @dataclass(frozen=True)
@@ -411,9 +412,11 @@ def estimate_particle_velocities_vs_belt(
     *,
     belt_image_velocity_px_per_frame: float,
     min_track_length: int = 2,
+    fit_method: str = "least_squares",
 ) -> list[ParticleVelocity]:
     """Estimate particle velocities and compare them with belt image velocity."""
 
+    fit_method = _validate_velocity_fit_method(fit_method)
     if not np.isfinite(belt_image_velocity_px_per_frame):
         raise ValueError("belt_image_velocity_px_per_frame must be finite")
     if belt_image_velocity_px_per_frame == 0:
@@ -430,8 +433,8 @@ def estimate_particle_velocities_vs_belt(
             continue
         ys = np.asarray([d.y for d in track.detections], dtype=np.float64)
         xs = np.asarray([d.x for d in track.detections], dtype=np.float64)
-        vy = _linear_slope(frames, ys)
-        vx = _linear_slope(frames, xs)
+        vy = _velocity_slope(frames, ys, fit_method=fit_method)
+        vx = _velocity_slope(frames, xs, fit_method=fit_method)
         velocities.append(
             ParticleVelocity(
                 track_id=track.track_id,
@@ -532,6 +535,7 @@ def extract_particle_velocities_vs_belt(
     component_config: ParticleComponentConfig | None = None,
     tracking_config: ParticleTrackingConfig | None = None,
     min_track_length: int = 2,
+    velocity_fit_method: str = "least_squares",
 ) -> list[ParticleVelocity]:
     """Extract particle velocities directly from per-frame particle masks."""
 
@@ -575,6 +579,7 @@ def extract_particle_velocities_vs_belt(
         tracks,
         belt_image_velocity_px_per_frame=belt_image_velocity_px_per_frame,
         min_track_length=min_track_length,
+        fit_method=velocity_fit_method,
     )
 
 
@@ -1185,3 +1190,45 @@ def _linear_slope(times: FloatArray, values: FloatArray) -> float:
         raise ValueError("at least two distinct frame indices are required")
     centered_values = values - float(np.mean(values))
     return float(np.sum(centered_times * centered_values) / denominator)
+
+
+def _validate_velocity_fit_method(method: str) -> str:
+    normalized = str(method).strip().lower().replace("-", "_")
+    aliases = {
+        "ols": "least_squares",
+        "linear": "least_squares",
+        "linear_regression": "least_squares",
+        "theilsen": "theil_sen",
+        "robust": "theil_sen",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in _VELOCITY_FIT_METHODS:
+        choices = ", ".join(sorted(_VELOCITY_FIT_METHODS))
+        raise ValueError(f"fit_method must be one of {choices}")
+    return normalized
+
+
+def _velocity_slope(times: FloatArray, values: FloatArray, *, fit_method: str) -> float:
+    fit_method = _validate_velocity_fit_method(fit_method)
+    if fit_method == "least_squares":
+        return _linear_slope(times, values)
+    return _theil_sen_slope(times, values)
+
+
+def _theil_sen_slope(times: FloatArray, values: FloatArray) -> float:
+    if times.shape != values.shape or times.ndim != 1:
+        raise ValueError("times and values must be one-dimensional arrays of equal length")
+    finite = np.isfinite(times) & np.isfinite(values)
+    t = times[finite]
+    y = values[finite]
+    if np.unique(t).size < 2:
+        raise ValueError("at least two distinct frame indices are required")
+    slopes: list[float] = []
+    for index in range(t.size - 1):
+        dt = t[index + 1 :] - t[index]
+        dy = y[index + 1 :] - y[index]
+        valid = dt != 0
+        slopes.extend((dy[valid] / dt[valid]).tolist())
+    if not slopes:
+        raise ValueError("at least two distinct frame indices are required")
+    return float(np.median(np.asarray(slopes, dtype=np.float64)))

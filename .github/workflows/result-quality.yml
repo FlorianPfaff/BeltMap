@@ -1,0 +1,66 @@
+name: BeltMap result quality checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "beltmap/**"
+      - "examples/synthetic_sequence/**"
+      - "examples/brick_10gpers/**"
+      - ".github/workflows/result-quality.yml"
+      - "pyproject.toml"
+      - "poetry.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-quality:
+    name: Synthetic stress suite and quality contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[test,speed]"
+
+      - name: Run unit tests
+        run: python -m pytest
+
+      - name: Run synthetic stress suite
+        run: beltmap-synthetic-suite --output-root outputs/synthetic_suite --execute
+
+      - name: Generate synthetic contract template
+        run: beltmap-quality-contract --write-synthetic-template outputs/synthetic_contract.json
+
+      - name: Audit synthetic outputs when available
+        if: always()
+        run: |
+          shopt -s nullglob
+          for dir in outputs/synthetic_suite/*/outputs outputs/synthetic_suite/*; do
+            if [ -f "$dir/metadata.json" ]; then
+              beltmap-postrun-audit --output-dir "$dir" || true
+              beltmap-quality-contract --output-dir "$dir" || true
+            fi
+          done
+
+      - name: Upload quality artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: beltmap-result-quality
+          path: outputs/**
+          if-no-files-found: warn
+          retention-days: 7

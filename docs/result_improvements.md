@@ -36,6 +36,8 @@ Inspect these outputs first:
 - `photometric_fits.csv` when `[photometric].enabled = true`
 - `track_scores.csv`
 - `filtered_velocities.csv`
+- `xy_registration_diagnostics.csv` when `[diagnostics].xy_registration_interval_frames > 0`
+- sparse real-data metrics from `beltmap-compare --truth-path` or `beltmap-evaluate-real`
 
 ## Minimal ablation matrix
 
@@ -74,8 +76,12 @@ assignment_method = "greedy"
 ```toml
 [map]
 sample_frames = 500
-sampling_strategy = "adaptive_phase_coverage"
-reconstruction_trim_fraction = 0.05
+sampling_strategy = "adaptive_phase_coverage_low_density"
+reconstruction_trim_fraction = 0.0
+aggregation = "huber"
+robust_iterations = 1
+robust_huber_delta = 3.0
+robust_min_scale = 1.0
 mask_iterations = 2
 fractional_splat = true
 particle_mask_mode = "hysteresis_abs"
@@ -142,6 +148,22 @@ margin_px = 4
 max_overlap_fraction = 0.3
 mode = "soft"
 soft_penalty_weight = 1.0
+```
+
+### 5. Geometry and robust velocity checks
+
+Use an ignore mask for belt edges or static fixtures before lowering thresholds.
+Then enable sparse 2-D registration diagnostics and robust velocity fitting:
+
+```toml
+[masks]
+# ignore_mask_path = "masks/belt_ignore.png"
+
+[velocity]
+fit_method = "theil_sen"
+
+[diagnostics]
+xy_registration_interval_frames = 500
 ```
 
 ## What still needs labels

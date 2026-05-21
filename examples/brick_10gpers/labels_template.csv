@@ -1,0 +1,4 @@
+frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right,notes
+0,,,,,empty scored frame example
+248,100,120,118,140,particle box example; crop-local half-open coordinates
+496,220,300,245,335,false-positive scratch or recurrent artifact region

@@ -32,7 +32,7 @@ from . import (
     track_particle_detections,
 )
 from . import _driver_runtime as rt
-from .advanced_quality import apply_gain_offset, robust_gain_offset
+from .advanced_quality import apply_gain_offset, estimate_integer_xy_shift, robust_gain_offset
 from .detection import detect_particles_from_residual_hysteresis
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
@@ -48,6 +48,7 @@ from ._driver_motion import (
     validate_auto_velocity_region,
 )
 from .phase import PhaseDriftConfig, PhaseDriftFilter, refine_phase_by_registration
+from .operational_improvements import load_ignore_mask
 from .recurrent_artifacts import (
     RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
@@ -98,6 +99,9 @@ TRACK_SCORE_FIELDS = [
 PHOTOMETRIC_FIELDS = [
     "frame_index", "image", "gain", "offset", "n_pixels", "rmse_gray", "trimmed_fraction", "status",
 ]
+XY_REGISTRATION_FIELDS = [
+    "frame_index", "image", "shift_y_px", "shift_x_px", "loss", "score",
+]
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,31 @@ def env_bool(name: str, default: bool = False) -> bool:
 def optional_path(name: str) -> Path | None:
     value = os.getenv(name, "").strip()
     return Path(value) if value else None
+
+
+def load_residual_valid_mask(
+    path: Path | None,
+    *,
+    region: tuple[int, int, int, int],
+    frame_shape: tuple[int, int],
+) -> np.ndarray | None:
+    """Load an optional crop-local valid mask from a full-frame or crop mask image."""
+
+    if path is None:
+        return None
+    ignore = load_ignore_mask(path)
+    top, left, crop_height, crop_width = region
+    crop_shape = (crop_height, crop_width)
+    if ignore.shape == crop_shape:
+        crop_ignore = ignore
+    elif ignore.shape == frame_shape:
+        crop_ignore = ignore[top : top + crop_height, left : left + crop_width]
+    else:
+        raise ValueError(
+            "IGNORE_MASK_PATH must have either full-frame shape "
+            f"{frame_shape} or crop shape {crop_shape}; got {ignore.shape}"
+        )
+    return ~np.asarray(crop_ignore, dtype=bool)
 
 
 def static_residual_sample_frames(name: str, *, frame_count: int) -> int:
@@ -587,8 +616,10 @@ def learn_static_residual_noise_map(
     sample_frames: int,
     min_scale: float,
     mask_threshold: float | None = None,
+    mask_mode: str = "positive",
     mask_margin_px: int = 0,
     mask_min_area_px: int = 1,
+    residual_valid_mask: np.ndarray | None = None,
     chunk_rows: int = 48,
 ) -> np.ndarray:
     """Estimate per-pixel residual MAD from belt-subtracted sampled frames."""
@@ -612,9 +643,11 @@ def learn_static_residual_noise_map(
         sampled_frames=len(samples),
         selected_frames=len(paths),
         mask_threshold=mask_threshold,
+        mask_mode=mask_mode,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
         min_scale=min_scale,
+        ignore_mask_pixels=0 if residual_valid_mask is None else int(np.count_nonzero(~residual_valid_mask)),
     )
     component_config = ParticleComponentConfig(
         min_area_px=mask_min_area_px,
@@ -645,11 +678,17 @@ def learn_static_residual_noise_map(
                 belt_region=None,
                 phase_estimate=phase_estimate,
                 registration_config=registration_config,
+                registration_mask=residual_valid_mask,
+                residual_mask=residual_valid_mask,
                 residual_config=residual_config,
             )
             raw = np.asarray(residual.raw, dtype=np.float32).copy()
             if mask_threshold is not None:
-                mask = detect_particles_from_residual(residual, threshold=mask_threshold)
+                mask = detect_particles_from_residual(
+                    residual,
+                    threshold=mask_threshold,
+                    mode=mask_mode,
+                )
                 detections = extract_particle_detections(
                     mask,
                     residual=residual,
@@ -717,8 +756,10 @@ def learn_static_residual_background_map(
     residual_config: ResidualConfig,
     sample_frames: int,
     mask_threshold: float | None = None,
+    mask_mode: str = "positive",
     mask_margin_px: int = 0,
     mask_min_area_px: int = 1,
+    residual_valid_mask: np.ndarray | None = None,
     chunk_rows: int = 48,
 ) -> np.ndarray:
     """Estimate an additive image-fixed background from belt-subtracted residuals."""
@@ -740,8 +781,10 @@ def learn_static_residual_background_map(
         sampled_frames=len(samples),
         selected_frames=len(paths),
         mask_threshold=mask_threshold,
+        mask_mode=mask_mode,
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
+        ignore_mask_pixels=0 if residual_valid_mask is None else int(np.count_nonzero(~residual_valid_mask)),
     )
     component_config = ParticleComponentConfig(
         min_area_px=mask_min_area_px,
@@ -772,11 +815,17 @@ def learn_static_residual_background_map(
                 belt_region=None,
                 phase_estimate=phase_estimate,
                 registration_config=registration_config,
+                registration_mask=residual_valid_mask,
+                residual_mask=residual_valid_mask,
                 residual_config=residual_config,
             )
             raw = np.asarray(residual.raw, dtype=np.float32).copy()
             if mask_threshold is not None:
-                mask = detect_particles_from_residual(residual, threshold=mask_threshold)
+                mask = detect_particles_from_residual(
+                    residual,
+                    threshold=mask_threshold,
+                    mode=mask_mode,
+                )
                 detections = extract_particle_detections(
                     mask,
                     residual=residual,
@@ -875,6 +924,21 @@ def main() -> None:
         belt_region={"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
     )
 
+    ignore_mask_path = optional_path("IGNORE_MASK_PATH")
+    residual_valid_mask = load_residual_valid_mask(
+        ignore_mask_path,
+        region=region,
+        frame_shape=first.shape,
+    )
+    if residual_valid_mask is not None:
+        rt.emit(
+            "images",
+            "loaded residual ignore mask",
+            ignore_mask_path=ignore_mask_path,
+            ignored_pixels=int(np.count_nonzero(~residual_valid_mask)),
+            valid_pixels=int(np.count_nonzero(residual_valid_mask)),
+        )
+
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
     belt_velocity_source = "auto"
     belt_velocity_frame_unit = "selected_frame"
@@ -940,10 +1004,17 @@ def main() -> None:
         "TRACKING_LATERAL_COST_WEIGHT", 0.0, minimum=0.0
     )
     tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
+    velocity_fit_method = os.getenv("VELOCITY_FIT_METHOD", "least_squares").strip().lower()
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_sampling_strategy = os.getenv("MAP_SAMPLING_STRATEGY", "uniform").strip().lower()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
-    map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
+    map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
+    if map_particle_mask_mode_value:
+        map_particle_mask_mode = map_particle_mask_mode_value
+    elif detection_mode in {"negative", "absolute"}:
+        map_particle_mask_mode = detection_mode
+    else:
+        map_particle_mask_mode = "positive"
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
@@ -1029,6 +1100,11 @@ def main() -> None:
         25,
         minimum=0,
     )
+    xy_registration_interval = rt.env_int(
+        "XY_REGISTRATION_DIAGNOSTIC_INTERVAL_FRAMES",
+        0,
+        minimum=0,
+    )
     rt.emit(
         "config",
         "runtime parameters",
@@ -1108,6 +1184,7 @@ def main() -> None:
         phase_refinement_min_score=phase_refinement_min_score,
         phase_refinement_max_abs_correction_px=phase_refinement_max_abs_correction_px,
         phase_refinement_smoothing_window_frames=phase_refinement_smoothing_window_frames,
+        xy_registration_diagnostic_interval_frames=xy_registration_interval,
     )
 
     reuse_metadata: dict = {}
@@ -1256,8 +1333,10 @@ def main() -> None:
             residual_config=residual_config,
             sample_frames=static_background_sample_frames,
             mask_threshold=static_background_mask_threshold,
+            mask_mode=detection_mode,
             mask_margin_px=static_background_mask_margin_px,
             mask_min_area_px=static_background_mask_min_area_px,
+            residual_valid_mask=residual_valid_mask,
         )
         np.save(rt.OUT / "static_background.npy", static_background_map)
         rt.save_png(static_background_map, rt.OUT / "static_background.png")
@@ -1305,8 +1384,10 @@ def main() -> None:
             sample_frames=static_noise_sample_frames,
             min_scale=static_noise_min_scale,
             mask_threshold=static_noise_mask_threshold,
+            mask_mode=detection_mode,
             mask_margin_px=static_noise_mask_margin_px,
             mask_min_area_px=static_noise_mask_min_area_px,
+            residual_valid_mask=residual_valid_mask,
         )
         np.save(rt.OUT / "static_noise.npy", static_noise_map)
         rt.save_png(static_noise_map, rt.OUT / "static_noise.png")
@@ -1357,6 +1438,7 @@ def main() -> None:
     detection_rows: list[dict] = []
     phase_rows: list[dict] = []
     photometric_rows: list[dict] = []
+    xy_registration_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
     phase_drift_filter = PhaseDriftFilter(
         phase_drift_config,
@@ -1380,6 +1462,7 @@ def main() -> None:
                 frame_index=float(frame_index),
                 period_px=motion_model.period_px,
                 config=registration_config,
+                mask=residual_valid_mask,
             )
             phase_estimate = phase_drift_filter.observe(phase_estimate)
         residual = render_clean_belt_residual(
@@ -1390,6 +1473,8 @@ def main() -> None:
             belt_region=None,
             phase_estimate=phase_estimate,
             registration_config=registration_config,
+            registration_mask=residual_valid_mask,
+            residual_mask=residual_valid_mask,
             residual_config=residual_config,
         )
         residual, photometric_row = apply_photometric_correction(
@@ -1414,6 +1499,24 @@ def main() -> None:
         phase_row = phase_estimate_row(frame_index, path, residual, float(map_height))
         phase_rows.append(phase_row)
         phase_px_by_frame.append(float(phase_row["phase_px"]))
+        if xy_registration_interval > 0 and frame_index % xy_registration_interval == 0:
+            shift = estimate_integer_xy_shift(
+                frame,
+                residual.expected_background,
+                mask=residual.mask,
+                max_shift_y_px=min(4, int(np.ceil(registration_config.search_radius_px))),
+                max_shift_x_px=4,
+            )
+            xy_registration_rows.append(
+                {
+                    "frame_index": frame_index,
+                    "image": _relative_image_name(path, data_dir=rt.DATA),
+                    "shift_y_px": shift.shift_y_px,
+                    "shift_x_px": shift.shift_x_px,
+                    "loss": shift.loss,
+                    "score": shift.score,
+                }
+            )
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
         detection_signal = detection_signal_from_residual(
@@ -1591,6 +1694,8 @@ def main() -> None:
     write_phase_outputs(phase_rows)
     if photometric_enabled:
         write_photometric_outputs(photometric_rows)
+    if xy_registration_rows:
+        rt.write_csv(rt.OUT / "xy_registration_diagnostics.csv", xy_registration_rows, XY_REGISTRATION_FIELDS)
     rt.emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows))
 
     max_match = os.getenv("MAX_MATCH_DISTANCE_PX", "").strip()
@@ -1627,8 +1732,13 @@ def main() -> None:
     velocity_rows = []
     velocity_objects = []
     if abs(belt_velocity) > 1e-9:
-        rt.emit("velocity", "estimating particle velocities relative to belt", min_track_length=min_track_length)
-        for velocity in estimate_particle_velocities_vs_belt(tracks, belt_image_velocity_px_per_frame=belt_velocity, min_track_length=min_track_length):
+        rt.emit(
+            "velocity",
+            "estimating particle velocities relative to belt",
+            min_track_length=min_track_length,
+            fit_method=velocity_fit_method,
+        )
+        for velocity in estimate_particle_velocities_vs_belt(tracks, belt_image_velocity_px_per_frame=belt_velocity, min_track_length=min_track_length, fit_method=velocity_fit_method):
             velocity_objects.append(velocity)
             velocity_rows.append(asdict(velocity))
     else:
@@ -1689,6 +1799,8 @@ def main() -> None:
         "belt_period_px_input": period_px,
         "belt_map_height_px": map_height,
         "reference_phase_px": reference_phase,
+        "ignore_mask_path": "" if ignore_mask_path is None else str(ignore_mask_path),
+        "ignore_mask_pixels": 0 if residual_valid_mask is None else int(np.count_nonzero(~residual_valid_mask)),
         "detection_threshold": detection_threshold,
         "detection_mode": detection_mode,
         "detection_low_threshold": detection_low_threshold,
@@ -1708,6 +1820,11 @@ def main() -> None:
         "tracking_signal_cost_weight_px": tracking_config.signal_cost_weight_px,
         "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
         "tracking_max_area_ratio": tracking_config.max_area_ratio,
+        "velocity_fit_method": velocity_fit_method,
+        "registration_search_radius_px": registration_config.search_radius_px,
+        "registration_search_step_px": registration_config.search_step_px,
+        "registration_subpixel_refinement": registration_config.subpixel_refinement,
+        "registration_robust_normalization": registration_config.robust_normalization,
         "map_mask_iterations": map_mask_iterations,
         "map_sampling_strategy": map_sampling_strategy,
         "map_particle_mask_threshold": map_particle_mask_threshold,
@@ -1734,11 +1851,13 @@ def main() -> None:
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
         "static_noise_mask_threshold": static_noise_mask_threshold,
+        "static_noise_mask_mode": detection_mode,
         "static_noise_mask_margin_px": static_noise_mask_margin_px,
         "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
         "static_noise_map_used": static_noise_map is not None,
         "static_background_sample_frames": static_background_sample_frames,
         "static_background_mask_threshold": static_background_mask_threshold,
+        "static_background_mask_mode": detection_mode,
         "static_background_mask_margin_px": static_background_mask_margin_px,
         "static_background_mask_min_area_px": static_background_mask_min_area_px,
         "static_background_map_used": static_background_map is not None,
@@ -1759,6 +1878,8 @@ def main() -> None:
         "n_phase_refinement_used": sum(1 for row in phase_refinement_rows if row.get("used_for_refinement")),
         "n_phase_estimates": len(phase_rows),
         "n_photometric_fits": len(photometric_rows),
+        "xy_registration_diagnostic_interval_frames": xy_registration_interval,
+        "n_xy_registration_diagnostics": len(xy_registration_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
         "tracking_backend": tracking_config.assignment_method,
