@@ -140,6 +140,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
     recurrent_map: RecurrentArtifactMap,
     *,
     config: RecurrentArtifactConfig | None = None,
+    frame_shape: tuple[int, int] | None = None,
     detection_threshold: float | None = None,
 ) -> list[list[RecurrentArtifactDetectionScore]]:
     """Score detections against artifact evidence from other revolutions only.
@@ -163,8 +164,12 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
 
     counts = np.asarray(recurrent_map.counts, dtype=np.int64)
     map_height, map_width = _validate_map_shape(counts.shape)
+    exposure_counts = np.asarray(recurrent_map.exposure_counts, dtype=np.int64)
     if tuple(recurrent_map.mask.shape) != (map_height, map_width):
         raise ValueError("recurrent_map mask and counts shapes must match")
+    if tuple(exposure_counts.shape) != (map_height, map_width):
+        raise ValueError("recurrent_map exposure_counts and counts shapes must match")
+    frame_height = _validate_frame_shape(frame_shape, map_width)
 
     unique_revolutions = sorted({int(revolution) for revolution in revolution_by_frame})
     other_revolutions_required = max(1, cfg.min_revolutions - 1)
@@ -177,12 +182,26 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
-            frame_height=None,
+            frame_height=frame_height,
         )
-        other_counts = counts - revolution_mask.astype(counts.dtype)
+        revolution_exposure = _build_revolution_exposure_mask(
+            phase_px_by_frame,
+            revolution_by_frame,
+            revolution=revolution,
+            map_shape=(map_height, map_width),
+            frame_height=frame_height,
+        )
+        other_counts = np.maximum(
+            counts - revolution_mask.astype(np.int64, copy=False),
+            0,
+        )
+        other_exposure_counts = np.maximum(
+            exposure_counts - revolution_exposure.astype(np.int64, copy=False),
+            0,
+        )
         other_probability = _recurrence_probability(
             other_counts.astype(RECURRENT_ARTIFACT_COUNT_DTYPE, copy=False),
-            recurrent_map.exposure_counts,
+            other_exposure_counts.astype(RECURRENT_ARTIFACT_COUNT_DTYPE, copy=False),
         )
         other_mask = (other_counts >= other_revolutions_required) & (
             other_probability >= cfg.min_recurrence_probability

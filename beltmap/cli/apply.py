@@ -202,7 +202,8 @@ sampling_strategy = "uniform"
 reconstruction_trim_fraction = 0.0
 fractional_splat = true
 mask_iterations = 1
-particle_mask_mode = "positive"
+# Leave empty to follow detection.mode for negative/absolute and use positive otherwise.
+particle_mask_mode = ""
 particle_mask_threshold = 5.0
 particle_mask_grow_threshold = 2.0
 particle_mask_dilation_px = 0
