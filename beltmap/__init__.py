@@ -7,6 +7,14 @@ from .detection import (
     detection_signal_from_residual,
     normalize_detection_mode,
 )
+from .period_state import (
+    BeltPeriodState,
+    fresh_period_state,
+    metadata_fields,
+    phase_fraction_and_radians,
+    require_period_known,
+    reused_period_state,
+)
 from .phase import (
     BeltMotionModel,
     PhaseEstimate,
@@ -57,6 +65,7 @@ from .tracking import (
 
 __all__ = [
     "BeltMotionModel",
+    "BeltPeriodState",
     "BeltRegion",
     "CleanBeltRender",
     "DETECTION_MODES",
@@ -88,10 +97,15 @@ __all__ = [
     "extract_particle_velocities_vs_belt",
     "filter_recurrent_artifact_detections",
     "filter_particle_velocities",
+    "fresh_period_state",
     "generate_residual_image",
+    "metadata_fields",
+    "phase_fraction_and_radians",
     "refine_phase_by_registration",
     "render_clean_belt_residual",
     "render_belt_view",
+    "require_period_known",
+    "reused_period_state",
     "smooth_phase_estimates",
     "render_expected_clean_belt",
     "score_particle_velocities",
