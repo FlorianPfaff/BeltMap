@@ -37,6 +37,20 @@ _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MORPHOLOGY: Any = _IMPORT_UNCHECKED
 
 
+def map_sampling_strategy_from_env() -> str:
+    """Return the configured map sampling strategy from environment variables.
+
+    ``MAP_SAMPLING_STRATEGY`` is the canonical option. ``MAP_SAMPLE_STRATEGY``
+    remains accepted for older configs and workflows, but it must not override
+    the canonical spelling when both are present.
+    """
+
+    return os.getenv(
+        MAP_SAMPLING_STRATEGY_ENV,
+        os.getenv(MAP_SAMPLE_STRATEGY_ENV, "uniform"),
+    ).strip().lower()
+
+
 @dataclass(frozen=True)
 class PhaseFeedbackConfig:
     """Settings for rebuilding the belt map from registered phase corrections."""
@@ -218,8 +232,7 @@ def build_belt_map_result(
     mask_mode = validate_map_particle_mask_mode(mask_mode)
     aggregation = validate_map_aggregation(aggregation)
     sampling_strategy = validate_map_sampling_strategy(
-        os.getenv(MAP_SAMPLE_STRATEGY_ENV, os.getenv(MAP_SAMPLING_STRATEGY_ENV, "uniform"))
-        if sampling_strategy is None else sampling_strategy
+        map_sampling_strategy_from_env() if sampling_strategy is None else sampling_strategy
     )
     if mask_grow_threshold < 0:
         raise ValueError("mask_grow_threshold must be non-negative")

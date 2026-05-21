@@ -39,6 +39,7 @@ from ._driver_map import (
     PhaseFeedbackConfig,
     build_belt_map_result,
     expanded_detection_mask,
+    map_sampling_strategy_from_env,
     sample_indices,
 )
 from ._driver_motion import (
@@ -1043,10 +1044,7 @@ def main() -> None:
     tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
     tracking_velocity_fit_method = os.getenv("TRACKING_VELOCITY_FIT_METHOD", "linear").strip().lower()
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
-    map_sampling_strategy = os.getenv(
-        "MAP_SAMPLE_STRATEGY",
-        os.getenv("MAP_SAMPLING_STRATEGY", "uniform"),
-    ).strip().lower()
+    map_sampling_strategy = map_sampling_strategy_from_env()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
     map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
     if map_particle_mask_mode_value:

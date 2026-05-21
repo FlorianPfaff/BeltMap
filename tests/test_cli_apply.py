@@ -363,6 +363,56 @@ def test_empty_environment_values_are_ignored():
     assert set(report["options"]) == {"image_dir"}
 
 
+def test_map_sampling_strategy_aliases_prefer_canonical_within_same_layer(tmp_path):
+    config_path = tmp_path / "sampling_aliases.toml"
+    config_path.write_text(
+        """
+[map]
+sampling_strategy = "adaptive_phase_coverage"
+sample_strategy = "uniform"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    env_updates, report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ={},
+    )
+
+    assert env_updates == {"MAP_SAMPLING_STRATEGY": "adaptive_phase_coverage"}
+    assert "MAP_SAMPLE_STRATEGY" not in env_updates
+    assert report["options"]["map_sampling_strategy"] == {
+        "env_var": "MAP_SAMPLING_STRATEGY",
+        "value": "adaptive_phase_coverage",
+        "source": f"config:{config_path}",
+    }
+
+
+def test_map_sampling_strategy_aliases_preserve_layer_precedence(tmp_path):
+    config_path = tmp_path / "sampling_precedence.toml"
+    config_path.write_text(
+        """
+[map]
+sampling_strategy = "uniform"
+""".strip(),
+        encoding="utf-8",
+    )
+    environ = {"MAP_SAMPLE_STRATEGY": "adaptive_phase_coverage"}
+
+    env_updates, report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ=environ,
+    )
+
+    assert env_updates == {"MAP_SAMPLING_STRATEGY": "adaptive_phase_coverage"}
+    assert "MAP_SAMPLE_STRATEGY" not in env_updates
+    assert report["options"]["map_sampling_strategy"] == {
+        "env_var": "MAP_SAMPLING_STRATEGY",
+        "value": "adaptive_phase_coverage",
+        "source": "env:MAP_SAMPLE_STRATEGY",
+    }
+
+
 def test_normalize_value_accepts_expected_shapes_and_rejects_bad_values():
     assert cli.normalize_value("belt_region", [1, 2, 3, 4]) == "1,2,3,4"
     assert cli.normalize_value("belt_region", "1, 2, 3, 4") == "1,2,3,4"
@@ -411,6 +461,16 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["tracking"]["signal_cost_weight_px"] == 0.0
     assert parsed["tracking"]["lateral_cost_weight"] == 0.0
     assert parsed["tracking"]["max_area_ratio"] == 0.0
+
+
+def test_write_config_template_omits_legacy_map_sample_strategy(tmp_path):
+    config_path = tmp_path / "beltmap.toml"
+
+    cli.write_config_template(config_path)
+    parsed = cli.load_config_file(config_path)
+
+    assert parsed["map"]["sampling_strategy"] == "uniform"
+    assert "sample_strategy" not in parsed["map"]
 
 
 def test_main_write_config_template_exits_without_running_driver(tmp_path, monkeypatch):
