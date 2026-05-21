@@ -21,7 +21,9 @@ from .tracking import ParticleComponentConfig, extract_particle_detections
 MAP_PARTICLE_MASK_MODES = {"positive", "absolute", "hysteresis_abs"}
 MAP_AGGREGATION_METHODS = {"mean", "huber"}
 MAP_SAMPLING_STRATEGIES = {"uniform", "adaptive_phase_coverage"}
+MAP_SAMPLE_STRATEGY_ENV = "MAP_SAMPLE_STRATEGY"
 MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
+MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV = "MAP_ADAPTIVE_CANDIDATE_FRAMES"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
@@ -216,7 +218,7 @@ def build_belt_map_result(
     mask_mode = validate_map_particle_mask_mode(mask_mode)
     aggregation = validate_map_aggregation(aggregation)
     sampling_strategy = validate_map_sampling_strategy(
-        os.getenv(MAP_SAMPLING_STRATEGY_ENV, "uniform")
+        os.getenv(MAP_SAMPLE_STRATEGY_ENV, os.getenv(MAP_SAMPLING_STRATEGY_ENV, "uniform"))
         if sampling_strategy is None else sampling_strategy
     )
     if mask_grow_threshold < 0:
@@ -239,6 +241,7 @@ def build_belt_map_result(
     )
     _, _, crop_height, crop_width = region
     max_samples = env_int("MAP_SAMPLE_FRAMES", 120, minimum=1)
+    map_adaptive_candidate_frames = env_int(MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV, 0, minimum=0)
     map_height, reference_phase, model_period = map_geometry(len(paths), crop_height, velocity, supplied_period)
     samples = select_map_sample_indices(
         frame_count=len(paths),
@@ -249,6 +252,7 @@ def build_belt_map_result(
         map_height=map_height,
         crop_height=crop_height,
         sampling_strategy=sampling_strategy,
+        adaptive_candidate_frames=map_adaptive_candidate_frames,
     )
     emit(
         "belt_map",
@@ -271,6 +275,8 @@ def build_belt_map_result(
         robust_huber_delta=robust_huber_delta,
         robust_min_scale=robust_min_scale,
         fractional_splat=fractional_splat,
+        sample_strategy=sampling_strategy,
+        adaptive_candidate_frames=map_adaptive_candidate_frames,
         phase_refinement_iterations=cfg.iterations,
         phase_refinement_smoothing_window_frames=cfg.smoothing_window_frames,
     )
@@ -848,6 +854,7 @@ def select_map_sample_indices(
     map_height: int,
     crop_height: int,
     sampling_strategy: str,
+    adaptive_candidate_frames: int = 0,
 ) -> list[int]:
     """Select source frames for map reconstruction.
 
@@ -867,13 +874,18 @@ def select_map_sample_indices(
         reference_phase=reference_phase,
         model_period=model_period,
     )
+    candidate_indices = list(range(frame_count))
+    if adaptive_candidate_frames > 0:
+        candidate_count = max(sample_count, min(frame_count, adaptive_candidate_frames))
+        candidate_indices = sample_indices(frame_count, candidate_count)
+        phases = phases[np.asarray(candidate_indices, dtype=np.int64)]
     selected = select_adaptive_map_frames(
         phases,
         map_height_px=map_height,
         sample_count=max(1, min(frame_count, sample_count)),
         crop_height_px=max(1, crop_height),
     )
-    return sorted({sample.frame_index for sample in selected})
+    return sorted({candidate_indices[sample.frame_index] for sample in selected})
 
 
 def refine_phase_feedback(

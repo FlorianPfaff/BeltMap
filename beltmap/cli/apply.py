@@ -36,6 +36,9 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("detection_min_bbox_height_px", "DETECTION_MIN_BBOX_HEIGHT_PX", "int", (("detection_min_bbox_height_px",), ("detection", "min_bbox_height_px")), "Optional minimum detection bounding-box height. Use 0 to disable.", "PX"),
     ("detection_max_bbox_aspect_ratio", "DETECTION_MAX_BBOX_ASPECT_RATIO", "float", (("detection_max_bbox_aspect_ratio",), ("detection", "max_bbox_aspect_ratio")), "Optional maximum detection bounding-box aspect ratio. Use 0 to disable.", "RATIO"),
     ("detection_min_bbox_extent", "DETECTION_MIN_BBOX_EXTENT", "float", (("detection_min_bbox_extent",), ("detection", "min_bbox_extent")), "Optional minimum area/bounding-box-area extent. Use 0 to disable.", "FRACTION"),
+    ("detection_split_merged_components", "DETECTION_SPLIT_MERGED_COMPONENTS", "bool", (("detection_split_merged_components",), ("detection", "split_merged_components")), "Split merged connected components at narrow projection valleys.", None),
+    ("detection_split_min_projection_gap_px", "DETECTION_SPLIT_MIN_PROJECTION_GAP_PX", "int", (("detection_split_min_projection_gap_px",), ("detection", "split_min_projection_gap_px")), "Minimum projection-valley width used when splitting merged detections.", "PX"),
+    ("detection_split_min_component_area_px", "DETECTION_SPLIT_MIN_COMPONENT_AREA_PX", "int", (("detection_split_min_component_area_px",), ("detection", "split_min_component_area_px")), "Minimum area for each split detection component. Use 0 to inherit min_area_px.", "PX"),
     ("residual_noise_radius_px", "RESIDUAL_NOISE_RADIUS_PX", "int", (("residual_noise_radius_px",), ("residual", "noise_radius_px")), "Local residual-noise box radius.", "PX"),
     ("residual_clip_sigma", "RESIDUAL_CLIP_SIGMA", "float", (("residual_clip_sigma",), ("residual", "clip_sigma")), "Symmetric residual clipping level for local-noise estimation. Use 0 to disable.", "SIGMA"),
     ("residual_min_noise", "RESIDUAL_MIN_NOISE", "float", (("residual_min_noise",), ("residual", "min_noise")), "Minimum local residual-noise scale.", "GRAY"),
@@ -53,6 +56,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("tracking_signal_cost_weight_px", "TRACKING_SIGNAL_COST_WEIGHT_PX", "float", (("tracking_signal_cost_weight_px",), ("tracking", "signal_cost_weight_px")), "Additional assignment cost for log signal-ratio changes.", "PX"),
     ("tracking_lateral_cost_weight", "TRACKING_LATERAL_COST_WEIGHT", "float", (("tracking_lateral_cost_weight",), ("tracking", "lateral_cost_weight")), "Additional assignment cost per pixel of lateral residual motion.", "WEIGHT"),
     ("tracking_max_area_ratio", "TRACKING_MAX_AREA_RATIO", "float", (("tracking_max_area_ratio",), ("tracking", "max_area_ratio")), "Optional maximum frame-to-frame detection area ratio. Use 0 to disable.", "RATIO"),
+    ("tracking_velocity_fit_method", "TRACKING_VELOCITY_FIT_METHOD", "path", (("tracking_velocity_fit_method",), ("tracking", "velocity_fit_method")), "Velocity fit method: linear or theil_sen.", "METHOD"),
     ("track_filter_min_length", "TRACK_FILTER_MIN_LENGTH", "int", (("track_filter_min_length",), ("track_filter", "min_length")), "Minimum detections per accepted filtered track.", "N"),
     ("track_filter_min_velocity_ratio_y", "TRACK_FILTER_MIN_VELOCITY_RATIO_Y", "float", (("track_filter_min_velocity_ratio_y",), ("track_filter", "min_velocity_ratio_y")), "Minimum accepted particle/belt vertical velocity ratio.", "RATIO"),
     ("track_filter_max_velocity_ratio_y", "TRACK_FILTER_MAX_VELOCITY_RATIO_Y", "float", (("track_filter_max_velocity_ratio_y",), ("track_filter", "max_velocity_ratio_y")), "Maximum accepted particle/belt vertical velocity ratio.", "RATIO"),
@@ -60,6 +64,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
+    ("map_sample_strategy", "MAP_SAMPLE_STRATEGY", "path", (("map_sample_strategy",), ("map", "sample_strategy")), "Alias for map_sampling_strategy: uniform, phase_coverage, or adaptive_phase_coverage.", "STRATEGY"),
+    ("map_adaptive_candidate_frames", "MAP_ADAPTIVE_CANDIDATE_FRAMES", "int", (("map_adaptive_candidate_frames",), ("map", "adaptive_candidate_frames")), "Candidate frame count for adaptive map sampling. Use 0 to consider all frames.", "N"),
     ("map_sampling_strategy", "MAP_SAMPLING_STRATEGY", "path", (("map_sampling_strategy",), ("map", "sampling_strategy")), "Frame sampling strategy for belt-map reconstruction: uniform or adaptive_phase_coverage.", "STRATEGY"),
     ("map_reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION", "float", (("map_reconstruction_trim_fraction",), ("map", "reconstruction_trim_fraction")), "Symmetric per-pixel trim fraction for robust belt-map reconstruction. Use 0 for the arithmetic mean.", "FRACTION"),
     ("map_fractional_splat", "MAP_FRACTIONAL_SPLAT", "bool", (("map_fractional_splat",), ("map", "fractional_splat")), "Use fractional row weights when accumulating belt-map pixels.", None),
@@ -107,6 +113,10 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("phase_drift_min_score", "PHASE_DRIFT_MIN_SCORE", "float", (("phase_drift_min_score",), ("phase_drift", "min_score")), "Minimum registration score accepted by the online phase-drift filter.", "SCORE"),
     ("phase_drift_max_abs_residual_correction_px", "PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX", "float", (("phase_drift_max_abs_residual_correction_px",), ("phase_drift", "max_abs_residual_correction_px")), "Maximum residual registration correction accepted by the online phase-drift filter. Use 0 to disable.", "PX"),
     ("phase_drift_max_abs_px", "PHASE_DRIFT_MAX_ABS_PX", "float", (("phase_drift_max_abs_px",), ("phase_drift", "max_abs_px")), "Maximum accumulated online phase drift. Use 0 to disable.", "PX"),
+    ("phase_smoothing_window_frames", "PHASE_SMOOTHING_WINDOW_FRAMES", "int", (("phase_smoothing_window_frames",), ("phase_smoothing", "window_frames")), "Offline phase-correction smoothing window. Use 0 to disable.", "N"),
+    ("phase_smoothing_min_score", "PHASE_SMOOTHING_MIN_SCORE", "float", (("phase_smoothing_min_score",), ("phase_smoothing", "min_score")), "Minimum registration score used by offline phase smoothing. Use 0 to disable.", "SCORE"),
+    ("phase_smoothing_max_abs_correction_px", "PHASE_SMOOTHING_MAX_ABS_CORRECTION_PX", "float", (("phase_smoothing_max_abs_correction_px",), ("phase_smoothing", "max_abs_correction_px")), "Maximum correction used by offline phase smoothing. Use 0 to disable.", "PX"),
+    ("phase_smoothing_min_support", "PHASE_SMOOTHING_MIN_SUPPORT", "int", (("phase_smoothing_min_support",), ("phase_smoothing", "min_support")), "Minimum neighboring estimates for offline phase smoothing.", "N"),
     ("progress_interval_frames", "PROGRESS_INTERVAL_FRAMES", "int", (("progress_interval_frames",), ("progress", "interval_frames")), "Print progress every N frames during long stages.", "N"),
     ("partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES", "int", (("partial_output_interval_frames",), ("progress", "partial_output_interval_frames")), "Write partial CSV outputs every N processed frames. Use 0 for final only.", "N"),
     ("debug_residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES", "int", (("debug_residual_preview_frames",), ("debug", "residual_preview_frames")), "Save residual PNG previews for the first N frames.", "N"),
@@ -166,6 +176,9 @@ min_bbox_width_px = 0
 min_bbox_height_px = 0
 max_bbox_aspect_ratio = 0.0
 min_bbox_extent = 0.0
+split_merged_components = false
+split_min_projection_gap_px = 2
+split_min_component_area_px = 0
 
 [residual]
 noise_radius_px = 15
@@ -189,6 +202,7 @@ area_cost_weight_px = 0.0
 signal_cost_weight_px = 0.0
 lateral_cost_weight = 0.0
 max_area_ratio = 0.0
+velocity_fit_method = "linear"
 
 [track_filter]
 min_length = 5
@@ -199,6 +213,8 @@ max_abs_x_velocity_px_per_frame = 0.0
 [map]
 sample_frames = 120
 sampling_strategy = "uniform"
+sample_strategy = "uniform"
+adaptive_candidate_frames = 0
 reconstruction_trim_fraction = 0.0
 fractional_splat = true
 mask_iterations = 1
@@ -259,6 +275,12 @@ smoothing_alpha = 0.15
 min_score = 0.05
 max_abs_residual_correction_px = 0.0
 max_abs_px = 0.0
+
+[phase_smoothing]
+window_frames = 0
+min_score = 0.0
+max_abs_correction_px = 0.0
+min_support = 3
 
 [progress]
 interval_frames = 25

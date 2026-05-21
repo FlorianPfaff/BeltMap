@@ -47,7 +47,13 @@ from ._driver_motion import (
     resolve_supplied_velocity,
     validate_auto_velocity_region,
 )
-from .phase import PhaseDriftConfig, PhaseDriftFilter, refine_phase_by_registration
+from .phase import (
+    PhaseDriftConfig,
+    PhaseDriftFilter,
+    PhaseTrajectorySmoothingConfig,
+    refine_phase_by_registration,
+    smooth_phase_estimates,
+)
 from .recurrent_artifacts import (
     RECURRENT_ARTIFACT_MODES,
     belt_revolution_indices,
@@ -569,6 +575,82 @@ def apply_photometric_correction(
     return corrected, row
 
 
+def estimate_smoothed_phase_sequence(
+    *,
+    paths: list[Path],
+    region: tuple[int, int, int, int],
+    belt_map: np.ndarray,
+    motion_model: BeltMotionModel,
+    registration_config: PhaseRegistrationConfig,
+    phase_drift_config: PhaseDriftConfig,
+    window_radius_frames: int,
+    min_score: float | None,
+    max_abs_correction_px: float | None,
+    min_support: int,
+) -> dict[int, PhaseEstimate] | None:
+    """Estimate all phases once and smooth the registration correction trajectory."""
+
+    if window_radius_frames <= 0:
+        return None
+    rt.emit(
+        "phase_smoothing",
+        "estimating all frame phases for offline smoothing",
+        selected_frames=len(paths),
+        window_radius_frames=window_radius_frames,
+        min_score=min_score,
+        max_abs_correction_px=max_abs_correction_px,
+        min_support=min_support,
+    )
+    drift_filter = PhaseDriftFilter(
+        phase_drift_config,
+        period_px=motion_model.period_px,
+    )
+    estimates: list[PhaseEstimate] = []
+    progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
+    start = rt.time.perf_counter()
+    for frame_index, path in enumerate(paths):
+        frame = rt.crop(rt.read_gray(path), region)
+        nominal_phase = motion_model.phase_at(float(frame_index))
+        predicted_phase = (
+            drift_filter.predict(nominal_phase)
+            if phase_drift_config.enabled
+            else nominal_phase
+        )
+        estimate = refine_phase_by_registration(
+            frame=frame,
+            belt_map=belt_map,
+            predicted_phase_px=predicted_phase,
+            frame_index=float(frame_index),
+            period_px=motion_model.period_px,
+            config=registration_config,
+        )
+        if phase_drift_config.enabled:
+            estimate = drift_filter.observe(estimate)
+        estimates.append(estimate)
+        processed = frame_index + 1
+        if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
+            dt = rt.time.perf_counter() - start
+            rt.emit(
+                "phase_smoothing",
+                f"estimated {processed}/{len(paths)} frame phases",
+                processed_frames=processed,
+                frames_per_second=round(processed / dt, 4) if dt > 0 else None,
+            )
+
+    smoothed = smooth_phase_estimates(
+        estimates,
+        period_px=motion_model.period_px,
+        config=PhaseTrajectorySmoothingConfig(
+            window_radius_frames=window_radius_frames,
+            min_score=min_score,
+            max_abs_correction_px=max_abs_correction_px,
+            min_support=min_support,
+        ),
+    )
+    rt.emit("phase_smoothing", "finished offline phase smoothing", phase_estimates=len(smoothed))
+    return {index: estimate for index, estimate in enumerate(smoothed)}
+
+
 def _nanmedian(values: np.ndarray, *, axis: int) -> np.ndarray:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="All-NaN slice encountered")
@@ -912,6 +994,13 @@ def main() -> None:
         0.0,
     )
     detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
+    detection_split_merged_components = env_bool("DETECTION_SPLIT_MERGED_COMPONENTS", False)
+    detection_split_min_projection_gap_px = rt.env_int(
+        "DETECTION_SPLIT_MIN_PROJECTION_GAP_PX", 2, minimum=1
+    )
+    detection_split_min_component_area_px = optional_positive_int(
+        "DETECTION_SPLIT_MIN_COMPONENT_AREA_PX"
+    )
     residual_noise_radius_px = rt.env_int("RESIDUAL_NOISE_RADIUS_PX", 15, minimum=0)
     residual_clip_sigma = optional_positive_float("RESIDUAL_CLIP_SIGMA", 5.0)
     residual_min_noise = rt.env_float("RESIDUAL_MIN_NOISE", 1e-6, minimum=0.0)
@@ -940,8 +1029,12 @@ def main() -> None:
         "TRACKING_LATERAL_COST_WEIGHT", 0.0, minimum=0.0
     )
     tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
+    tracking_velocity_fit_method = os.getenv("TRACKING_VELOCITY_FIT_METHOD", "linear").strip().lower()
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
-    map_sampling_strategy = os.getenv("MAP_SAMPLING_STRATEGY", "uniform").strip().lower()
+    map_sampling_strategy = os.getenv(
+        "MAP_SAMPLE_STRATEGY",
+        os.getenv("MAP_SAMPLING_STRATEGY", "uniform"),
+    ).strip().lower()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
     map_particle_mask_mode = os.getenv("MAP_PARTICLE_MASK_MODE", "positive").strip().lower()
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
@@ -1018,6 +1111,16 @@ def main() -> None:
         ),
         max_abs_drift_px=optional_positive_float("PHASE_DRIFT_MAX_ABS_PX", 0.0),
     )
+    phase_smoothing_window_frames = rt.env_int("PHASE_SMOOTHING_WINDOW_FRAMES", 0, minimum=0)
+    phase_smoothing_min_score = optional_positive_float(
+        "PHASE_SMOOTHING_MIN_SCORE",
+        0.0,
+    )
+    phase_smoothing_max_abs_correction_px = optional_positive_float(
+        "PHASE_SMOOTHING_MAX_ABS_CORRECTION_PX",
+        0.0,
+    )
+    phase_smoothing_min_support = rt.env_int("PHASE_SMOOTHING_MIN_SUPPORT", 3, minimum=1)
     phase_refinement_iterations = rt.env_int("PHASE_REFINEMENT_ITERATIONS", 0, minimum=0)
     phase_refinement_min_score = rt.env_float("PHASE_REFINEMENT_MIN_SCORE", 0.0, minimum=0.0)
     phase_refinement_max_abs_correction_px = optional_positive_float(
@@ -1044,6 +1147,9 @@ def main() -> None:
         detection_min_bbox_height_px=detection_min_bbox_height_px,
         detection_max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         detection_min_bbox_extent=detection_min_bbox_extent,
+        detection_split_merged_components=detection_split_merged_components,
+        detection_split_min_projection_gap_px=detection_split_min_projection_gap_px,
+        detection_split_min_component_area_px=detection_split_min_component_area_px,
         residual_noise_radius_px=residual_noise_radius_px,
         residual_clip_sigma=residual_clip_sigma,
         residual_min_noise=residual_min_noise,
@@ -1060,6 +1166,7 @@ def main() -> None:
         tracking_signal_cost_weight_px=tracking_signal_cost_weight_px,
         tracking_lateral_cost_weight=tracking_lateral_cost_weight,
         tracking_max_area_ratio=tracking_max_area_ratio,
+        tracking_velocity_fit_method=tracking_velocity_fit_method,
         map_mask_iterations=map_mask_iterations,
         map_sampling_strategy=map_sampling_strategy,
         map_particle_mask_threshold=map_particle_mask_threshold,
@@ -1104,6 +1211,10 @@ def main() -> None:
             phase_drift_config.max_abs_residual_correction_px
         ),
         phase_drift_max_abs_px=phase_drift_config.max_abs_drift_px,
+        phase_smoothing_window_frames=phase_smoothing_window_frames,
+        phase_smoothing_min_score=phase_smoothing_min_score,
+        phase_smoothing_max_abs_correction_px=phase_smoothing_max_abs_correction_px,
+        phase_smoothing_min_support=phase_smoothing_min_support,
         phase_refinement_iterations=phase_refinement_iterations,
         phase_refinement_min_score=phase_refinement_min_score,
         phase_refinement_max_abs_correction_px=phase_refinement_max_abs_correction_px,
@@ -1198,6 +1309,9 @@ def main() -> None:
         min_bbox_height_px=detection_min_bbox_height_px,
         max_bbox_aspect_ratio=detection_max_bbox_aspect_ratio,
         min_bbox_extent=detection_min_bbox_extent,
+        split_merged_components=detection_split_merged_components,
+        split_min_projection_gap_px=detection_split_min_projection_gap_px,
+        split_min_component_area_px=detection_split_min_component_area_px,
     )
     residual_config = ResidualConfig(
         noise_radius_px=residual_noise_radius_px,
@@ -1358,6 +1472,22 @@ def main() -> None:
     phase_rows: list[dict] = []
     photometric_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
+    smoothed_phase_estimates = (
+        None
+        if reused_phase_estimates is not None
+        else estimate_smoothed_phase_sequence(
+            paths=paths,
+            region=region,
+            belt_map=belt_map,
+            motion_model=motion_model,
+            registration_config=registration_config,
+            phase_drift_config=phase_drift_config,
+            window_radius_frames=phase_smoothing_window_frames,
+            min_score=phase_smoothing_min_score,
+            max_abs_correction_px=phase_smoothing_max_abs_correction_px,
+            min_support=phase_smoothing_min_support,
+        )
+    )
     phase_drift_filter = PhaseDriftFilter(
         phase_drift_config,
         period_px=float(map_height),
@@ -1368,7 +1498,11 @@ def main() -> None:
         phase_estimate = (
             reused_phase_estimates[frame_index]
             if reused_phase_estimates is not None
-            else None
+            else (
+                smoothed_phase_estimates[frame_index]
+                if smoothed_phase_estimates is not None
+                else None
+            )
         )
         if phase_estimate is None and phase_drift_config.enabled:
             nominal_phase = motion_model.phase_at(float(frame_index))
@@ -1628,7 +1762,12 @@ def main() -> None:
     velocity_objects = []
     if abs(belt_velocity) > 1e-9:
         rt.emit("velocity", "estimating particle velocities relative to belt", min_track_length=min_track_length)
-        for velocity in estimate_particle_velocities_vs_belt(tracks, belt_image_velocity_px_per_frame=belt_velocity, min_track_length=min_track_length):
+        for velocity in estimate_particle_velocities_vs_belt(
+            tracks,
+            belt_image_velocity_px_per_frame=belt_velocity,
+            min_track_length=min_track_length,
+            fit_method=tracking_velocity_fit_method,
+        ):
             velocity_objects.append(velocity)
             velocity_rows.append(asdict(velocity))
     else:
@@ -1698,6 +1837,9 @@ def main() -> None:
         "detection_min_bbox_height_px": detection_min_bbox_height_px,
         "detection_max_bbox_aspect_ratio": detection_max_bbox_aspect_ratio,
         "detection_min_bbox_extent": detection_min_bbox_extent,
+        "detection_split_merged_components": detection_split_merged_components,
+        "detection_split_min_projection_gap_px": detection_split_min_projection_gap_px,
+        "detection_split_min_component_area_px": detection_split_min_component_area_px,
         "photometric_enabled": photometric_enabled,
         "photometric_trim_fraction": photometric_trim_fraction,
         "photometric_max_iterations": photometric_max_iterations,
@@ -1708,8 +1850,10 @@ def main() -> None:
         "tracking_signal_cost_weight_px": tracking_config.signal_cost_weight_px,
         "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
         "tracking_max_area_ratio": tracking_config.max_area_ratio,
+        "tracking_velocity_fit_method": tracking_velocity_fit_method,
         "map_mask_iterations": map_mask_iterations,
         "map_sampling_strategy": map_sampling_strategy,
+        "map_sample_strategy": map_sampling_strategy,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
         "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
@@ -1725,6 +1869,11 @@ def main() -> None:
         "phase_refinement_min_score": phase_refinement_min_score,
         "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,
         "phase_refinement_smoothing_window_frames": phase_refinement_smoothing_window_frames,
+        "phase_smoothing_window_frames": phase_smoothing_window_frames,
+        "phase_smoothing_min_score": phase_smoothing_min_score,
+        "phase_smoothing_max_abs_correction_px": phase_smoothing_max_abs_correction_px,
+        "phase_smoothing_min_support": phase_smoothing_min_support,
+        "phase_smoothing_used": smoothed_phase_estimates is not None,
         "reused_belt_map": reuse_belt_map_path is not None,
         "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
         "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),

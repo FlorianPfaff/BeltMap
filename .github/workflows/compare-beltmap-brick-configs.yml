@@ -58,6 +58,16 @@ on:
         required: true
         type: string
         default: "250"
+      truth_path:
+        description: "Optional checked-out JSON labels path for sparse real-data evaluation. Empty disables labeled metrics."
+        required: false
+        type: string
+        default: ""
+      truth_iou_threshold:
+        description: "IoU threshold for optional sparse real-data evaluation."
+        required: true
+        type: string
+        default: "0.25"
 
 permissions:
   contents: read
@@ -257,6 +267,18 @@ jobs:
       - name: Generate validation report and visual QC
         if: always()
         run: poetry run beltmap-validate --output-dir outputs
+      - name: Evaluate sparse real-data labels
+        if: always()
+        env:
+          TRUTH_PATH: ${{ inputs.truth_path }}
+          TRUTH_IOU_THRESHOLD: ${{ inputs.truth_iou_threshold }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TRUTH_PATH" ] && [ -f "$TRUTH_PATH" ]; then
+            poetry run beltmap-evaluate-real --output-dir outputs --labels "$TRUTH_PATH" --iou-threshold "$TRUTH_IOU_THRESHOLD"
+          else
+            echo "No sparse label file supplied or found; skipping labeled evaluation."
+          fi
       - name: Preserve generated config
         if: always()
         env:
@@ -301,6 +323,8 @@ jobs:
               detections = summary.get("detections", {})
               velocities = summary.get("velocities", {})
               tracks = summary.get("track_lengths", {})
+              label_metrics_path = artifact_dir / "real_label_metrics.json"
+              label_metrics = json.loads(label_metrics_path.read_text(encoding="utf-8")) if label_metrics_path.exists() else {}
               ratio = velocities.get("velocity_ratio_y", {})
               track_len = tracks.get("n_detections", {})
               rows.append({
@@ -311,13 +335,20 @@ jobs:
                   "n_filtered_velocity_estimates": run.get("n_filtered_velocity_estimates"),
                   "tracks_ge_5": tracks.get("tracks_ge_5"),
                   "tracks_ge_10": tracks.get("tracks_ge_10"),
+                  "label_precision": label_metrics.get("precision"),
+                  "label_recall": label_metrics.get("recall"),
+                  "label_f1": label_metrics.get("f1"),
                   "median_velocity_ratio_y": ratio.get("median"),
                   "median_track_length": track_len.get("median"),
                   "zero_detection_frames": detections.get("zero_detection_frames"),
                   "artifact": artifact_dir.name,
               })
 
-          rows.sort(key=lambda row: (-(row["n_filtered_velocity_estimates"] or 0), -(row["tracks_ge_10"] or 0), -(row["n_detections"] or 0)))
+          have_labels = any(row.get("label_f1") is not None for row in rows)
+          if have_labels:
+              rows.sort(key=lambda row: (-(row["label_f1"] or -1), -(row["label_precision"] or -1), -(row["label_recall"] or -1), -(row["n_filtered_velocity_estimates"] or 0)))
+          else:
+              rows.sort(key=lambda row: (-(row["n_filtered_velocity_estimates"] or 0), -(row["tracks_ge_10"] or 0), -(row["n_detections"] or 0)))
 
           def fmt(value):
               if value is None:
@@ -329,13 +360,16 @@ jobs:
           lines = [
               "# BeltMap Brick configuration comparison",
               "",
-              "| rank | variant | detections | tracks | velocity estimates | filtered velocities | tracks >= 5 | tracks >= 10 | median velocity ratio | median track length | zero-detection frames |",
-              "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+              "| rank | variant | label F1 | label precision | label recall | detections | tracks | velocity estimates | filtered velocities | tracks >= 5 | tracks >= 10 | median velocity ratio | median track length | zero-detection frames |",
+              "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
           ]
           for rank, row in enumerate(rows, start=1):
               lines.append("| " + " | ".join([
                   str(rank),
                   row["variant"],
+                  fmt(row["label_f1"]),
+                  fmt(row["label_precision"]),
+                  fmt(row["label_recall"]),
                   fmt(row["n_detections"]),
                   fmt(row["n_tracks"]),
                   fmt(row["n_velocity_estimates"]),
@@ -347,7 +381,8 @@ jobs:
                   fmt(row["zero_detection_frames"]),
               ]) + " |")
           if rows:
-              lines += ["", f"Best by filtered velocity estimates: `{rows[0]['variant']}`.", "", "Use visual QC images in the corresponding artifact before promoting a configuration to the full run."]
+              criterion = "labeled F1" if have_labels else "filtered velocity estimates"
+              lines += ["", f"Best by {criterion}: `{rows[0]['variant']}`.", "", "Use visual QC images in the corresponding artifact before promoting a configuration to the full run."]
           else:
               lines += ["", "No validation summaries were found."]
 
