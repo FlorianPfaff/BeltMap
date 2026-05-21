@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 from beltmap.compare_runs import generate_comparison_report, parse_run_spec
@@ -20,6 +21,22 @@ def parse_frames(value: str) -> list[int]:
             raise argparse.ArgumentTypeError("frame indices must be non-negative")
         frames.append(frame)
     return frames
+
+
+def parse_iou_threshold(value: str) -> float:
+    """Parse and validate a detection-match IoU threshold."""
+
+    try:
+        threshold = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "truth IoU threshold must be a finite number in [0, 1]"
+        ) from exc
+    if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise argparse.ArgumentTypeError(
+            "truth IoU threshold must be a finite number in [0, 1]"
+        )
+    return threshold
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--truth-iou-threshold",
-        type=float,
+        type=parse_iou_threshold,
         default=0.25,
         help="IoU threshold used to match detections to labeled boxes. Default: 0.25",
     )
