@@ -69,6 +69,7 @@ def render_expected_clean_belt(
     registration_config: PhaseRegistrationConfig | None = None,
     registration_mask: ArrayLike | None = None,
     fill_value: float = np.nan,
+    periodic: bool | None = None,
 ) -> CleanBeltRender:
     """Render the expected particle-free belt for one frame.
 
@@ -80,6 +81,11 @@ def render_expected_clean_belt(
     refined by registering the observed belt crop against ``belt_map``.
     Otherwise the constant-speed ``motion_model`` supplies the phase. When a
     ``phase_estimate`` is passed explicitly, ``motion_model`` is not required.
+
+    ``periodic=None`` follows the supplied motion model: a known model period
+    renders cyclically, while ``period_px=None`` renders a finite strip and marks
+    out-of-support rows as invalid via ``nan``. Explicit phase-only calls keep
+    the historical cyclic default unless ``periodic`` is passed explicitly.
     """
 
     belt = _as_float_image(belt_map, name="belt_map")
@@ -126,7 +132,15 @@ def render_expected_clean_belt(
             mask=mask_crop,
         )
 
-    clean_crop = render_belt_view(belt, phase.phase_px, region.height)
+    periodic_render = periodic
+    if periodic_render is None:
+        periodic_render = True if motion_model is None else motion_model.period_px is not None
+    clean_crop = render_belt_view(
+        belt,
+        phase.phase_px,
+        region.height,
+        periodic=periodic_render,
+    )
     clean = np.full(output_shape, fill_value, dtype=np.float64)
     valid = np.zeros(output_shape, dtype=bool)
     clean[region.y_slice, region.x_slice] = clean_crop
