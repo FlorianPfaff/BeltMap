@@ -10,7 +10,12 @@ from beltmap import (
     render_belt_view,
     smooth_phase_estimates,
 )
-from beltmap.phase import _box_blur, _prepare_for_registration, _uniform_filter_axis
+from beltmap.phase import (
+    _box_blur,
+    _prepare_for_registration,
+    _refine_quadratic_offset,
+    _uniform_filter_axis,
+)
 
 
 def make_belt_map(period=96, width=32):
@@ -73,6 +78,36 @@ def test_render_belt_view_uses_fractional_phase():
     rendered = render_belt_view(belt, phase_px=0.5, height=3)
 
     np.testing.assert_allclose(rendered[:, 0], [0.5, 1.5, 2.5])
+
+
+def test_render_belt_view_defaults_to_periodic_wrapping():
+    belt = np.arange(5, dtype=float)[:, None] * np.ones((1, 2))
+
+    rendered = render_belt_view(belt, phase_px=-1.0, height=3)
+
+    np.testing.assert_allclose(rendered[:, 0], [4.0, 0.0, 1.0])
+
+
+def test_render_belt_view_can_mark_nonperiodic_out_of_support_rows():
+    belt = np.arange(5, dtype=float)[:, None] * np.ones((1, 2))
+
+    before_start = render_belt_view(belt, phase_px=-1.0, height=3, periodic=False)
+    after_end = render_belt_view(belt, phase_px=3.5, height=3, periodic=False)
+
+    assert np.isnan(before_start[0, 0])
+    np.testing.assert_allclose(before_start[1:, 0], [0.0, 1.0])
+    assert after_end[0, 0] == pytest.approx(3.5)
+    assert np.isnan(after_end[1, 0])
+    assert np.isnan(after_end[2, 0])
+
+
+def test_quadratic_refinement_returns_consistent_loss_offset_pair():
+    losses = [(1.25, -1.0), (1.0, 0.0), (1.25, 1.0)]
+
+    refined_loss, refined_offset = _refine_quadratic_offset(losses, best_index=1)
+
+    assert refined_offset == pytest.approx(0.0)
+    assert refined_loss == pytest.approx(1.0)
 
 
 def test_registration_config_rejects_negative_search_radius():
