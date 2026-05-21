@@ -133,6 +133,23 @@ CONFIG_KEY_ALIASES = {
     ("detection", "grow_threshold"): "detection_low_threshold",
     ("tracking", "matching_strategy"): "tracking_assignment_method",
 }
+DETECTION_METHOD_MODE_ALIASES = {
+    "threshold": "positive",
+    "hysteresis": "positive",
+    "hysteresis_abs": "absolute",
+    "positive": "positive",
+    "negative": "negative",
+    "absolute": "absolute",
+}
+MAP_SAMPLING_STRATEGY_ALIAS_OPTIONS = (
+    "map_sample_strategy",
+    "map_sampling_strategy",
+)
+OPTION_SOURCE_PRIORITY = {
+    "config": 0,
+    "env": 1,
+    "cli": 2,
+}
 
 CONFIG_TEMPLATE = """# BeltMap image-sequence driver configuration.
 # CLI flags override environment variables, and environment variables override values from this file.
@@ -207,7 +224,6 @@ max_abs_x_velocity_px_per_frame = 0.0
 [map]
 sample_frames = 120
 sampling_strategy = "uniform"
-sample_strategy = "uniform"
 adaptive_candidate_frames = 0
 reconstruction_trim_fraction = 0.0
 fractional_splat = true
@@ -446,6 +462,44 @@ def values_from_args(namespace: argparse.Namespace) -> tuple[dict[str, str], dic
     return values, sources
 
 
+def option_source_priority(source: str) -> int:
+    """Return the precedence layer for a resolved option source."""
+
+    return OPTION_SOURCE_PRIORITY.get(source.split(":", 1)[0], -1)
+
+
+def coalesce_map_sampling_strategy_aliases(
+    values: dict[str, str],
+    sources: dict[str, str],
+) -> None:
+    """Resolve legacy/canonical map-sampling strategy aliases to one option.
+
+    The canonical ``map_sampling_strategy`` spelling wins within one precedence
+    layer, while CLI values still override environment values and environment
+    values still override config values when either alias spelling is used.
+    """
+
+    present = [
+        name for name in MAP_SAMPLING_STRATEGY_ALIAS_OPTIONS if name in values
+    ]
+    if not present:
+        return
+    winner = max(
+        present,
+        key=lambda name: (
+            option_source_priority(sources[name]),
+            name == "map_sampling_strategy",
+        ),
+    )
+    value = values[winner]
+    source = sources[winner]
+    for name in MAP_SAMPLING_STRATEGY_ALIAS_OPTIONS:
+        values.pop(name, None)
+        sources.pop(name, None)
+    values["map_sampling_strategy"] = value
+    sources["map_sampling_strategy"] = source
+
+
 def resolve_driver_env(namespace: argparse.Namespace, environ: Mapping[str, str] | None = None) -> tuple[dict[str, str], dict[str, Any]]:
     current_environ = os.environ if environ is None else environ
     merged: dict[str, str] = {}
@@ -453,6 +507,7 @@ def resolve_driver_env(namespace: argparse.Namespace, environ: Mapping[str, str]
     for layer_values, layer_sources in (values_from_config(namespace.config), values_from_environment(current_environ), values_from_args(namespace)):
         merged.update(layer_values)
         sources.update(layer_sources)
+    coalesce_map_sampling_strategy_aliases(merged, sources)
     env_updates = {OPTION_BY_NAME[name][1]: value for name, value in merged.items() if value != ""}
     report = {
         "precedence": ["config", "environment", "cli"],

@@ -13,7 +13,10 @@ from beltmap import (
     render_belt_view,
 )
 from beltmap import _driver_runtime as rt
-from beltmap._driver_map import build_belt_map
+from beltmap._driver_map import (
+    build_belt_map,
+    map_sampling_strategy_from_env,
+)
 from beltmap._driver_motion import (
     validate_auto_velocity_estimate,
     validate_auto_velocity_region,
@@ -70,6 +73,13 @@ def test_auto_velocity_rejects_search_edge_hits(monkeypatch):
 
     with pytest.raises(ValueError, match="search edge"):
         validate_auto_velocity_estimate(89.0, [89.0, 88.0, 1.0, 87.0], max_shift=90)
+
+
+def test_map_sampling_strategy_env_prefers_canonical_alias(monkeypatch):
+    monkeypatch.setenv("MAP_SAMPLE_STRATEGY", "uniform")
+    monkeypatch.setenv("MAP_SAMPLING_STRATEGY", "adaptive_phase_coverage")
+
+    assert map_sampling_strategy_from_env() == "adaptive_phase_coverage"
 
 
 def test_phase_estimate_row_reports_circular_coordinates():
