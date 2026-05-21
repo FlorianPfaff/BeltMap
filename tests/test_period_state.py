@@ -1,6 +1,6 @@
 import pytest
 
-from beltmap.period_state import (
+from beltmap import (
     BeltPeriodState,
     fresh_period_state,
     metadata_fields,
