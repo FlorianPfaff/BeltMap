@@ -9,6 +9,7 @@ from typing import Any, Sequence
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .detection import DETECTION_MODES, normalize_detection_mode
 from .residual import ResidualImage
 
 
@@ -162,8 +163,16 @@ def extract_particle_detections(
     residual: ArrayLike | ResidualImage | None = None,
     frame_index: float = 0.0,
     config: ParticleComponentConfig | None = None,
+    signal_mode: str | None = None,
 ) -> list[ParticleDetection]:
-    """Extract connected particle detections from a boolean particle mask."""
+    """Extract connected particle detections from a boolean particle mask.
+
+    ``signal_mode`` orients raw residual values before weighted centroid and
+    signal-statistic computation. Pass the same mode that was used to create
+    ``particle_mask`` when ``residual`` is an un-oriented residual image. Leave
+    it as ``None`` when ``residual`` already contains an oriented detection
+    signal, as produced by :func:`beltmap.detection.detection_signal_from_residual`.
+    """
 
     cfg = config or ParticleComponentConfig()
     _validate_component_config(cfg)
@@ -174,7 +183,7 @@ def extract_particle_detections(
     if mask.ndim != 2:
         raise ValueError("particle_mask must be a 2-D array")
 
-    signal = _residual_values(residual, mask.shape)
+    signal = _residual_values(residual, mask.shape, signal_mode=signal_mode)
     components: list[tuple[NDArray[np.integer], NDArray[np.integer]]] = []
     for rows, cols in _connected_components(mask, connectivity=cfg.connectivity):
         components.extend(_split_connected_component(rows, cols, config=cfg))
@@ -538,12 +547,18 @@ def extract_particle_velocities_vs_belt(
     belt_image_velocity_px_per_frame: float,
     frame_indices: Sequence[float] | None = None,
     residuals: Sequence[ArrayLike | ResidualImage | None] | None = None,
+    signal_mode: str | None = None,
     component_config: ParticleComponentConfig | None = None,
     tracking_config: ParticleTrackingConfig | None = None,
     min_track_length: int = 2,
     fit_method: str = "linear",
 ) -> list[ParticleVelocity]:
-    """Extract particle velocities directly from per-frame particle masks."""
+    """Extract particle velocities directly from per-frame particle masks.
+
+    ``signal_mode`` is forwarded to :func:`extract_particle_detections` so
+    residual values can be oriented consistently for negative or absolute
+    particle detections.
+    """
 
     masks = list(particle_masks)
     if not masks:
@@ -568,6 +583,7 @@ def extract_particle_velocities_vs_belt(
             mask,
             residual=residual,
             frame_index=frame_index,
+            signal_mode=signal_mode,
             config=component_config,
         )
         for mask, residual, frame_index in zip(masks, residual_values, frames)
@@ -703,6 +719,8 @@ def _interval_score(value: float, *, lower: float, upper: float) -> float:
 def _residual_values(
     residual: ArrayLike | ResidualImage | None,
     shape: tuple[int, ...],
+    *,
+    signal_mode: str | None = None,
 ) -> FloatArray | None:
     if residual is None:
         return None
@@ -714,7 +732,21 @@ def _residual_values(
     arr = np.asarray(values, dtype=np.float64)
     if arr.shape != shape:
         raise ValueError("residual must have the same shape as particle_mask")
+    if signal_mode is not None:
+        arr = _orient_residual_signal(arr, signal_mode=signal_mode)
     return arr
+
+
+def _orient_residual_signal(values: FloatArray, *, signal_mode: str) -> FloatArray:
+    mode = normalize_detection_mode(signal_mode)
+    if mode == "positive":
+        return values
+    if mode == "negative":
+        return -values
+    if mode == "absolute":
+        return np.abs(values)
+    choices = ", ".join(sorted(DETECTION_MODES))
+    raise ValueError(f"signal_mode must be one of {choices}")
 
 
 def _split_connected_component(
