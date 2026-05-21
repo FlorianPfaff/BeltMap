@@ -218,6 +218,7 @@ adaptive_candidate_frames = 0
 reconstruction_trim_fraction = 0.0
 fractional_splat = true
 mask_iterations = 1
+# Set explicitly in templates; omit or leave empty to follow detection.mode.
 particle_mask_mode = "positive"
 particle_mask_threshold = 5.0
 particle_mask_grow_threshold = 2.0

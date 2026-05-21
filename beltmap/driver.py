@@ -1691,6 +1691,7 @@ def main() -> None:
                     recurrent_result,
                     config=recurrent_artifact_config,
                     detection_threshold=detection_threshold,
+                    frame_shape=(region[2], region[3]),
                 )
             )
         recurrent_artifact_rows = recurrent_artifact_rows_from_scores(
@@ -1907,11 +1908,13 @@ def main() -> None:
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
         "static_noise_mask_threshold": static_noise_mask_threshold,
+        "static_noise_mask_mode": detection_mode,
         "static_noise_mask_margin_px": static_noise_mask_margin_px,
         "static_noise_mask_min_area_px": static_noise_mask_min_area_px,
         "static_noise_map_used": static_noise_map is not None,
         "static_background_sample_frames": static_background_sample_frames,
         "static_background_mask_threshold": static_background_mask_threshold,
+        "static_background_mask_mode": detection_mode,
         "static_background_mask_margin_px": static_background_mask_margin_px,
         "static_background_mask_min_area_px": static_background_mask_min_area_px,
         "static_background_map_used": static_background_map is not None,

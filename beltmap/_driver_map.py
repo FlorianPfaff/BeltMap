@@ -820,7 +820,11 @@ def detect_map_particle_mask(
     valid = np.asarray(residual.mask, dtype=bool) & np.isfinite(values)
     abs_values = np.abs(values)
     if mode == "absolute":
-        raw_mask = valid & (abs_values > threshold)
+        raw_mask = detect_particles_from_residual(
+            residual,
+            threshold=threshold,
+            mode="absolute",
+        )
         return _component_mask_with_optional_dilation(
             raw_mask,
             residual=residual,
