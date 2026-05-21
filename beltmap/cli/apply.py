@@ -28,8 +28,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("belt_velocity_frame_unit", "BELT_VELOCITY_FRAME_UNIT", "path", (("belt_velocity_frame_unit",), ("belt", "velocity_frame_unit")), "Frame unit for a supplied belt velocity: selected_frame or source_frame.", "UNIT"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
     ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for bright particles.", "Z"),
-    ("detection_mode", "DETECTION_MODE", "path", (("detection_mode",), ("detection", "mode")), "Detection residual polarity: positive, negative, or absolute.", "MODE"),
-    ("detection_low_threshold", "DETECTION_LOW_THRESHOLD", "float", (("detection_low_threshold",), ("detection", "low_threshold")), "Optional lower hysteresis threshold for final detection. Use 0 to disable.", "Z"),
+    ("detection_mode", "DETECTION_MODE", "path", (("detection_mode",), ("detection", "mode"), ("detection", "method")), "Detection residual polarity: positive, negative, or absolute. Legacy detector method aliases threshold, hysteresis, and hysteresis_abs are also accepted in config files.", "MODE"),
+    ("detection_low_threshold", "DETECTION_LOW_THRESHOLD", "float", (("detection_low_threshold",), ("detection", "low_threshold"), ("detection", "grow_threshold")), "Optional lower hysteresis threshold for final detection. Use 0 to disable.", "Z"),
     ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
     ("detection_max_area_px", "DETECTION_MAX_AREA_PX", "int", (("detection_max_area_px",), ("detection", "max_area_px")), "Optional maximum connected-component area for detections. Use 0 to disable.", "PX"),
     ("detection_min_bbox_width_px", "DETECTION_MIN_BBOX_WIDTH_PX", "int", (("detection_min_bbox_width_px",), ("detection", "min_bbox_width_px")), "Optional minimum detection bounding-box width. Use 0 to disable.", "PX"),
@@ -41,9 +41,14 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("residual_min_noise", "RESIDUAL_MIN_NOISE", "float", (("residual_min_noise",), ("residual", "min_noise")), "Minimum local residual-noise scale.", "GRAY"),
     ("residual_noise_exclusion_sigma", "RESIDUAL_NOISE_EXCLUSION_SIGMA", "float", (("residual_noise_exclusion_sigma",), ("residual", "noise_exclusion_sigma")), "Positive-residual threshold for excluding particle-like pixels from local-noise estimation. Use 0 to disable.", "SIGMA"),
     ("residual_noise_exclusion_radius_px", "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", "int", (("residual_noise_exclusion_radius_px",), ("residual", "noise_exclusion_radius_px")), "Dilation radius around particle-like pixels excluded from local-noise windows.", "PX"),
+    ("photometric_enabled", "PHOTOMETRIC_ENABLED", "bool", (("photometric_enabled",), ("photometric", "enabled")), "Fit and apply a robust per-frame gain/offset correction before residual detection.", None),
+    ("photometric_trim_fraction", "PHOTOMETRIC_TRIM_FRACTION", "float", (("photometric_trim_fraction",), ("photometric", "trim_fraction")), "Fraction of largest photometric-fit residuals trimmed on each iteration.", "FRACTION"),
+    ("photometric_max_iterations", "PHOTOMETRIC_MAX_ITERATIONS", "int", (("photometric_max_iterations",), ("photometric", "max_iterations")), "Maximum robust photometric gain/offset fitting iterations.", "N"),
+    ("photometric_min_pixels", "PHOTOMETRIC_MIN_PIXELS", "int", (("photometric_min_pixels",), ("photometric", "min_pixels")), "Minimum valid pixels required for a photometric gain/offset fit.", "N"),
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
-    ("tracking_assignment_method", "TRACKING_ASSIGNMENT_METHOD", "path", (("tracking_assignment_method",), ("tracking", "assignment_method")), "Tracking association method: global or greedy.", "METHOD"),
+    ("tracking_max_frame_gap", "TRACKING_MAX_FRAME_GAP", "float", (("tracking_max_frame_gap",), ("tracking", "max_frame_gap")), "Maximum selected-frame gap allowed when linking detections into one track.", "FRAMES"),
+    ("tracking_assignment_method", "TRACKING_ASSIGNMENT_METHOD", "path", (("tracking_assignment_method",), ("tracking", "assignment_method"), ("tracking", "matching_strategy")), "Tracking association method: global or greedy.", "METHOD"),
     ("tracking_area_cost_weight_px", "TRACKING_AREA_COST_WEIGHT_PX", "float", (("tracking_area_cost_weight_px",), ("tracking", "area_cost_weight_px")), "Additional assignment cost for log area-ratio changes.", "PX"),
     ("tracking_signal_cost_weight_px", "TRACKING_SIGNAL_COST_WEIGHT_PX", "float", (("tracking_signal_cost_weight_px",), ("tracking", "signal_cost_weight_px")), "Additional assignment cost for log signal-ratio changes.", "PX"),
     ("tracking_lateral_cost_weight", "TRACKING_LATERAL_COST_WEIGHT", "float", (("tracking_lateral_cost_weight",), ("tracking", "lateral_cost_weight")), "Additional assignment cost per pixel of lateral residual motion.", "WEIGHT"),
@@ -90,10 +95,17 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("allow_full_frame_auto_velocity", "ALLOW_FULL_FRAME_AUTO_VELOCITY", "bool", (("allow_full_frame_auto_velocity",), ("auto_velocity", "allow_full_frame")), "Allow automatic belt-velocity estimation on a full-frame belt region.", None),
     ("registration_search_radius_px", "REGISTRATION_SEARCH_RADIUS_PX", "float", (("registration_search_radius_px",), ("registration", "search_radius_px")), "Phase-registration search radius in pixels.", "PX"),
     ("registration_search_step_px", "REGISTRATION_SEARCH_STEP_PX", "float", (("registration_search_step_px",), ("registration", "search_step_px")), "Phase-registration search step in pixels.", "PX"),
+    ("registration_subpixel_refinement", "REGISTRATION_SUBPIXEL_REFINEMENT", "bool", (("registration_subpixel_refinement",), ("registration", "subpixel_refinement")), "Refine the best phase-registration offset with a local quadratic fit.", None),
+    ("registration_robust_normalization", "REGISTRATION_ROBUST_NORMALIZATION", "bool", (("registration_robust_normalization",), ("registration", "robust_normalization")), "Normalize registration images by a robust MAD scale instead of standard deviation.", None),
     ("phase_refinement_iterations", "PHASE_REFINEMENT_ITERATIONS", "int", (("phase_refinement_iterations",), ("phase_refinement", "iterations")), "Phase-feedback map-refinement iterations. Use 0 to disable.", "N"),
     ("phase_refinement_min_score", "PHASE_REFINEMENT_MIN_SCORE", "float", (("phase_refinement_min_score",), ("phase_refinement", "min_score")), "Minimum registration score accepted for phase-feedback refinement.", "SCORE"),
     ("phase_refinement_max_abs_correction_px", "PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX", "float", (("phase_refinement_max_abs_correction_px",), ("phase_refinement", "max_abs_correction_px")), "Maximum absolute registration correction accepted for phase-feedback refinement. Use 0 to disable this gate.", "PX"),
     ("phase_refinement_smoothing_window_frames", "PHASE_REFINEMENT_SMOOTHING_WINDOW_FRAMES", "int", (("phase_refinement_smoothing_window_frames",), ("phase_refinement", "smoothing_window_frames")), "Rolling-median smoothing window for accepted phase corrections.", "N"),
+    ("phase_drift_enabled", "PHASE_DRIFT_ENABLED", "bool", (("phase_drift_enabled",), ("phase_drift", "enabled")), "Enable online residual phase-drift compensation during detection.", None),
+    ("phase_drift_smoothing_alpha", "PHASE_DRIFT_SMOOTHING_ALPHA", "float", (("phase_drift_smoothing_alpha",), ("phase_drift", "smoothing_alpha")), "Exponential smoothing factor for online phase-drift updates.", "ALPHA"),
+    ("phase_drift_min_score", "PHASE_DRIFT_MIN_SCORE", "float", (("phase_drift_min_score",), ("phase_drift", "min_score")), "Minimum registration score accepted by the online phase-drift filter.", "SCORE"),
+    ("phase_drift_max_abs_residual_correction_px", "PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX", "float", (("phase_drift_max_abs_residual_correction_px",), ("phase_drift", "max_abs_residual_correction_px")), "Maximum residual registration correction accepted by the online phase-drift filter. Use 0 to disable.", "PX"),
+    ("phase_drift_max_abs_px", "PHASE_DRIFT_MAX_ABS_PX", "float", (("phase_drift_max_abs_px",), ("phase_drift", "max_abs_px")), "Maximum accumulated online phase drift. Use 0 to disable.", "PX"),
     ("progress_interval_frames", "PROGRESS_INTERVAL_FRAMES", "int", (("progress_interval_frames",), ("progress", "interval_frames")), "Print progress every N frames during long stages.", "N"),
     ("partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES", "int", (("partial_output_interval_frames",), ("progress", "partial_output_interval_frames")), "Write partial CSV outputs every N processed frames. Use 0 for final only.", "N"),
     ("debug_residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES", "int", (("debug_residual_preview_frames",), ("debug", "residual_preview_frames")), "Save residual PNG previews for the first N frames.", "N"),
@@ -103,6 +115,19 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
 OPTION_BY_NAME = {spec[0]: spec for spec in OPTION_SPECS}
 OPTION_BY_ENV = {spec[1]: spec for spec in OPTION_SPECS}
 CONFIG_KEY_TO_NAME = {key: spec[0] for spec in OPTION_SPECS for key in spec[3]}
+CONFIG_KEY_ALIASES = {
+    # Backwards-compatible aliases used by earlier result-improvement notes.
+    ("detection", "grow_threshold"): "detection_low_threshold",
+    ("tracking", "matching_strategy"): "tracking_assignment_method",
+}
+DETECTION_METHOD_MODE_ALIASES = {
+    "threshold": "positive",
+    "hysteresis": "positive",
+    "hysteresis_abs": "absolute",
+    "positive": "positive",
+    "negative": "negative",
+    "absolute": "absolute",
+}
 
 CONFIG_TEMPLATE = """# BeltMap image-sequence driver configuration.
 # CLI flags override environment variables, and environment variables override values from this file.
@@ -148,9 +173,16 @@ min_noise = 1e-6
 noise_exclusion_sigma = 4.0
 noise_exclusion_radius_px = 2
 
+[photometric]
+enabled = false
+trim_fraction = 0.05
+max_iterations = 3
+min_pixels = 128
+
 [tracking]
 min_track_length = 2
 # max_match_distance_px = 90.0
+max_frame_gap = 1.0
 assignment_method = "global"
 area_cost_weight_px = 0.0
 signal_cost_weight_px = 0.0
@@ -210,12 +242,21 @@ allow_full_frame = false
 [registration]
 search_radius_px = 8.0
 search_step_px = 0.5
+subpixel_refinement = true
+robust_normalization = true
 
 [phase_refinement]
 iterations = 0
 min_score = 0.0
 max_abs_correction_px = 0.0
 smoothing_window_frames = 25
+
+[phase_drift]
+enabled = true
+smoothing_alpha = 0.15
+min_score = 0.05
+max_abs_residual_correction_px = 0.0
+max_abs_px = 0.0
 
 [progress]
 interval_frames = 25
@@ -293,6 +334,14 @@ def normalize_value(name: str, value: Any) -> str | None:
         return f"{parse_float(value, name):.15g}"
     if kind == "region":
         return format_region(value, name)
+    if name == "detection_mode":
+        normalized = str(value).strip().lower()
+        legacy_method_aliases = {
+            "threshold": "positive",
+            "hysteresis": "positive",
+            "hysteresis_abs": "absolute",
+        }
+        return legacy_method_aliases.get(normalized, normalized)
     return str(value)
 
 
@@ -342,9 +391,22 @@ def values_from_config(path: Path | None) -> tuple[dict[str, str], dict[str, str
     sources: dict[str, str] = {}
     for key_path, raw_value in flatten_config(load_config_file(path)).items():
         name = CONFIG_KEY_TO_NAME.get(key_path)
+        value = raw_value
+        if key_path == ("detection", "method"):
+            method = str(raw_value).strip().lower()
+            if method not in DETECTION_METHOD_MODE_ALIASES:
+                choices = ", ".join(sorted(DETECTION_METHOD_MODE_ALIASES))
+                raise ValueError(
+                    f"Legacy config option 'detection.method' must be one of {choices}, "
+                    f"got {raw_value!r}"
+                )
+            name = "detection_mode"
+            value = DETECTION_METHOD_MODE_ALIASES[method]
+        if name is None:
+            name = CONFIG_KEY_ALIASES.get(key_path)
         if name is None:
             raise ValueError(f"Unknown config option {'.'.join(key_path)!r}")
-        normalized = normalize_value(name, raw_value)
+        normalized = normalize_value(name, value)
         if normalized is not None:
             if name in values:
                 raise ValueError(

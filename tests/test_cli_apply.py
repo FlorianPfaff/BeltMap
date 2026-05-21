@@ -90,9 +90,16 @@ min_bbox_height_px = 3
 max_bbox_aspect_ratio = 4.0
 min_bbox_extent = 0.15
 
+[photometric]
+enabled = true
+trim_fraction = 0.1
+max_iterations = 4
+min_pixels = 512
+
 [tracking]
 min_track_length = 2
 max_match_distance_px = 75
+max_frame_gap = 2
 assignment_method = "global"
 area_cost_weight_px = 2.5
 signal_cost_weight_px = 0.5
@@ -140,6 +147,17 @@ soft_penalty_weight = 1.5
 
 [auto_velocity]
 allow_full_frame = true
+
+[registration]
+subpixel_refinement = false
+robust_normalization = true
+
+[phase_drift]
+enabled = true
+smoothing_alpha = 0.2
+min_score = 0.1
+max_abs_residual_correction_px = 3
+max_abs_px = 6
 """.strip(),
         encoding="utf-8",
     )
@@ -162,6 +180,10 @@ allow_full_frame = true
         "DETECTION_MIN_BBOX_EXTENT": "0.15",
         "DETECTION_MIN_BBOX_HEIGHT_PX": "3",
         "DETECTION_MIN_BBOX_WIDTH_PX": "3",
+        "PHOTOMETRIC_ENABLED": "1",
+        "PHOTOMETRIC_MAX_ITERATIONS": "4",
+        "PHOTOMETRIC_MIN_PIXELS": "512",
+        "PHOTOMETRIC_TRIM_FRACTION": "0.1",
         "FRAME_STRIDE": "3",
         "MAP_PARTICLE_MASK_DILATION_PX": "24",
         "MAP_PARTICLE_MASK_GROW_THRESHOLD": "1.5",
@@ -198,6 +220,7 @@ allow_full_frame = true
         "STATIC_NOISE_SAMPLE_FRAMES": "250",
         "TRACKING_AREA_COST_WEIGHT_PX": "2.5",
         "TRACKING_ASSIGNMENT_METHOD": "global",
+        "TRACKING_MAX_FRAME_GAP": "2",
         "TRACKING_LATERAL_COST_WEIGHT": "1",
         "TRACKING_MAX_AREA_RATIO": "3",
         "TRACKING_SIGNAL_COST_WEIGHT_PX": "0.5",
@@ -205,8 +228,41 @@ allow_full_frame = true
         "TRACK_FILTER_MAX_VELOCITY_RATIO_Y": "1.05",
         "TRACK_FILTER_MIN_LENGTH": "5",
         "TRACK_FILTER_MIN_VELOCITY_RATIO_Y": "0.1",
+        "REGISTRATION_ROBUST_NORMALIZATION": "1",
+        "REGISTRATION_SUBPIXEL_REFINEMENT": "0",
+        "PHASE_DRIFT_ENABLED": "1",
+        "PHASE_DRIFT_MAX_ABS_PX": "6",
+        "PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX": "3",
+        "PHASE_DRIFT_MIN_SCORE": "0.1",
+        "PHASE_DRIFT_SMOOTHING_ALPHA": "0.2",
     }
     assert report["driver_environment"] == env_updates
+
+
+def test_legacy_result_improvement_aliases_are_resolved(tmp_path):
+    config_path = tmp_path / "aliases.toml"
+    config_path.write_text(
+        """
+[detection]
+method = "absolute"
+grow_threshold = 2.0
+
+[tracking]
+matching_strategy = "greedy"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    env_updates, _report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ={},
+    )
+
+    assert env_updates == {
+        "DETECTION_LOW_THRESHOLD": "2",
+        "DETECTION_MODE": "absolute",
+        "TRACKING_ASSIGNMENT_METHOD": "greedy",
+    }
 
 
 def test_flat_json_config_is_resolved_to_driver_environment(tmp_path):
@@ -237,6 +293,32 @@ def test_flat_json_config_is_resolved_to_driver_environment(tmp_path):
         "BELT_REGION": "5,6,7,8",
         "BELT_VELOCITY_PX_PER_FRAME": "12.25",
         "DETECTION_THRESHOLD": "3",
+    }
+
+
+def test_legacy_detection_and_tracking_config_aliases_are_resolved(tmp_path):
+    config_path = tmp_path / "legacy.toml"
+    config_path.write_text(
+        """
+[detection]
+method = "hysteresis_abs"
+grow_threshold = 2.0
+
+[tracking]
+matching_strategy = "greedy"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    env_updates, _report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ={},
+    )
+
+    assert env_updates == {
+        "DETECTION_LOW_THRESHOLD": "2",
+        "DETECTION_MODE": "absolute",
+        "TRACKING_ASSIGNMENT_METHOD": "greedy",
     }
 
 

@@ -100,6 +100,8 @@ underscores.
 | `belt.velocity_frame_unit` | `BELT_VELOCITY_FRAME_UNIT` | `--belt-velocity-frame-unit` | contextual | unit | Required when `belt.velocity_px_per_frame` is numeric and `frames.stride > 1`. Use `selected_frame` when the supplied velocity is already per processed/selected frame. Use `source_frame` when it is per adjacent original input frame; the driver multiplies it by `frames.stride`. |
 | `belt.period_px` | `BELT_PERIOD_PX` | `--belt-period-px` | unset | px | Belt circumference/period in belt-map pixels. If unset or non-positive, the driver builds a finite map covering the selected sequence phase range. |
 | `detection.threshold` | `DETECTION_THRESHOLD` | `--detection-threshold` | `5.0` | z | Threshold on normalized residuals for final bright-particle detection. |
+| `detection.mode` | `DETECTION_MODE` | `--detection-mode` | `positive` | mode | Detection residual polarity: `positive`, `negative`, or `absolute`. Legacy config-file values `threshold`, `hysteresis`, and `hysteresis_abs` are accepted as aliases for `positive`, `positive`, and `absolute`; use `detection.low_threshold` to enable hysteresis growth. |
+| `detection.low_threshold` | `DETECTION_LOW_THRESHOLD` | `--detection-low-threshold` | `0` | z | Optional lower hysteresis threshold for final detection. `0` disables hysteresis. |
 | `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. Must be at least 1. |
 | `detection.max_area_px` | `DETECTION_MAX_AREA_PX` | `--detection-max-area-px` | `0` | px | Optional maximum connected-component area. `0` disables this gate. |
 | `detection.min_bbox_width_px` | `DETECTION_MIN_BBOX_WIDTH_PX` | `--detection-min-bbox-width-px` | `0` | px | Optional minimum component bounding-box width. `0` disables this gate. |
@@ -111,13 +113,20 @@ underscores.
 | `residual.min_noise` | `RESIDUAL_MIN_NOISE` | `--residual-min-noise` | `1e-6` | gray | Minimum local residual-noise scale. Must be positive. |
 | `residual.noise_exclusion_sigma` | `RESIDUAL_NOISE_EXCLUSION_SIGMA` | `--residual-noise-exclusion-sigma` | `4.0` | sigma | Positive-residual threshold for excluding particle-like pixels from local-noise estimation. `0` disables this exclusion. |
 | `residual.noise_exclusion_radius_px` | `RESIDUAL_NOISE_EXCLUSION_RADIUS_PX` | `--residual-noise-exclusion-radius-px` | `2` | px | Dilation radius around particle-like pixels excluded from local-noise windows. |
+| `photometric.enabled` | `PHOTOMETRIC_ENABLED` | `--photometric-enabled` / `--no-photometric-enabled` | `false` | bool | Fit a robust per-frame gain/offset correction before residual detection. |
+| `photometric.trim_fraction` | `PHOTOMETRIC_TRIM_FRACTION` | `--photometric-trim-fraction` | `0.05` | fraction | Fraction of largest photometric-fit residuals trimmed on each iteration. Must be in `[0, 0.5)`. |
+| `photometric.max_iterations` | `PHOTOMETRIC_MAX_ITERATIONS` | `--photometric-max-iterations` | `3` | iterations | Maximum robust photometric gain/offset fitting iterations. |
+| `photometric.min_pixels` | `PHOTOMETRIC_MIN_PIXELS` | `--photometric-min-pixels` | `128` | pixels | Minimum valid pixels required for a photometric gain/offset fit. |
 | `tracking.min_track_length` | `MIN_TRACK_LENGTH` | `--min-track-length` | `2` | detections | Minimum number of detections required before a particle track contributes a velocity row. Must be at least 1 at driver parsing and at least 2 for velocity estimation. |
 | `tracking.max_match_distance_px` | `MAX_MATCH_DISTANCE_PX` | `--max-match-distance-px` | `max(5, 1.5 * abs(belt_velocity))` | px | Maximum frame-to-frame nearest-neighbor association distance for tracking. Leave unset to derive it from the belt speed. |
+| `tracking.max_frame_gap` | `TRACKING_MAX_FRAME_GAP` | `--tracking-max-frame-gap` | `1.0` | selected frames | Maximum selected-frame gap allowed when linking detections into one track. Raise this to bridge occasional missed detections. |
 | `track_filter.min_length` | `TRACK_FILTER_MIN_LENGTH` | `--track-filter-min-length` | `max(5, tracking.min_track_length)` | detections | Minimum detections per accepted filtered velocity row. Raw `velocities.csv` is not modified. |
 | `track_filter.min_velocity_ratio_y` | `TRACK_FILTER_MIN_VELOCITY_RATIO_Y` | `--track-filter-min-velocity-ratio-y` | `0.0` | ratio | Minimum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_velocity_ratio_y` | `TRACK_FILTER_MAX_VELOCITY_RATIO_Y` | `--track-filter-max-velocity-ratio-y` | `1.1` | ratio | Maximum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_abs_x_velocity_px_per_frame` | `TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME` | `--track-filter-max-abs-x-velocity-px-per-frame` | `0` | px/frame | Optional lateral-velocity gate. `0` disables this gate. |
 | `map.sample_frames` | `MAP_SAMPLE_FRAMES` | `--map-sample-frames` | `120` | frames | Number of frames sampled across the selected sequence to reconstruct the belt map. Must be at least 1. |
+| `map.reconstruction_trim_fraction` | `MAP_RECONSTRUCTION_TRIM_FRACTION` | `--map-reconstruction-trim-fraction` | `0` | fraction | Symmetric per-pixel trim fraction for robust belt-map reconstruction. Must be in `[0, 0.5)`. |
+| `map.fractional_splat` | `MAP_FRACTIONAL_SPLAT` | `--map-fractional-splat` / `--no-map-fractional-splat` | `true` | bool | Use linear fractional row weights when accumulating belt-map pixels. When false, each image row contributes to its nearest belt-map row. |
 | `map.mask_iterations` | `MAP_MASK_ITERATIONS` | `--map-mask-iterations` | `1` | passes | Number of particle-masked belt-map refinement passes after the initial provisional map. `0` disables particle masking during map reconstruction. |
 | `map.particle_mask_threshold` | `MAP_PARTICLE_MASK_THRESHOLD` | `--map-particle-mask-threshold` | `detection.threshold` | z | Strong residual threshold used to seed particle masks while building the clean belt map. |
 | `map.particle_mask_mode` | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive` | mode | Map-building particle-mask mode. Valid values are `positive`, `absolute`, and `hysteresis_abs`. |
@@ -146,6 +155,13 @@ underscores.
 | `auto_velocity.allow_full_frame` | `ALLOW_FULL_FRAME_AUTO_VELOCITY` | `--allow-full-frame-auto-velocity` / `--no-allow-full-frame-auto-velocity` | `false` | bool | Allow `belt.velocity_px_per_frame = "auto"` when `belt.region` is the full frame. Keep this false unless the full frame really contains only belt texture. |
 | `registration.search_radius_px` | `REGISTRATION_SEARCH_RADIUS_PX` | `--registration-search-radius-px` | `8.0` | px | Local phase-registration search radius around the constant-speed prediction. |
 | `registration.search_step_px` | `REGISTRATION_SEARCH_STEP_PX` | `--registration-search-step-px` | `0.5` | px | Local phase-registration candidate spacing. Must be positive. |
+| `registration.subpixel_refinement` | `REGISTRATION_SUBPIXEL_REFINEMENT` | `--registration-subpixel-refinement` / `--no-registration-subpixel-refinement` | `true` | bool | Refine the best phase-registration offset with a local quadratic fit. |
+| `registration.robust_normalization` | `REGISTRATION_ROBUST_NORMALIZATION` | `--registration-robust-normalization` / `--no-registration-robust-normalization` | `true` | bool | Normalize high-pass registration images by a robust MAD scale. |
+| `phase_drift.enabled` | `PHASE_DRIFT_ENABLED` | `--phase-drift-enabled` / `--no-phase-drift-enabled` | `true` | bool | Enable online residual phase-drift compensation during detection. |
+| `phase_drift.smoothing_alpha` | `PHASE_DRIFT_SMOOTHING_ALPHA` | `--phase-drift-smoothing-alpha` | `0.15` | alpha | Exponential smoothing factor for accepted drift updates. |
+| `phase_drift.min_score` | `PHASE_DRIFT_MIN_SCORE` | `--phase-drift-min-score` | `0.05` | score | Minimum registration score accepted by the online phase-drift filter. |
+| `phase_drift.max_abs_residual_correction_px` | `PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX` | `--phase-drift-max-abs-residual-correction-px` | `0` | px | Optional gate on individual residual corrections accepted by the drift filter. `0` disables the gate. |
+| `phase_drift.max_abs_px` | `PHASE_DRIFT_MAX_ABS_PX` | `--phase-drift-max-abs-px` | `0` | px | Optional cap on accumulated online drift. `0` disables the cap. |
 | `progress.interval_frames` | `PROGRESS_INTERVAL_FRAMES` | `--progress-interval-frames` | `25` | frames | Progress-log interval for long velocity, map-building, and detection stages. Must be at least 1. |
 | `progress.partial_output_interval_frames` | `PARTIAL_OUTPUT_INTERVAL_FRAMES` | `--partial-output-interval-frames` | `250` | frames | Interval for writing partial detection and phase CSV outputs during long runs. `0` means final outputs only. |
 | `debug.residual_preview_frames` | `DEBUG_RESIDUAL_PREVIEW_FRAMES` | `--debug-residual-preview-frames` | `3` | frames | Save normalized residual PNG previews for the first N processed frames. |
@@ -233,6 +249,32 @@ exclusion mask is used only to estimate `local_noise`; the particle pixels remai
 valid output pixels and are still normalized by the surrounding local noise.
 Static noise maps, when enabled, are still applied afterwards as a per-pixel
 floor through `max(local_noise, static_noise)`.
+
+## Photometric gain/offset correction
+
+When `photometric.enabled = true`, the driver fits a robust per-frame line
+
+```text
+observed ~= gain * expected_background + offset
+```
+
+on valid belt pixels before computing the residual. This is useful when the
+clean belt texture is geometrically aligned but brightness changes from exposure,
+illumination drift, or LED flicker leave broad positive/negative residuals.
+The fit trims the largest residuals so ordinary loose particles are less likely
+to dominate the correction.
+
+```toml
+[photometric]
+enabled = true
+trim_fraction = 0.05
+max_iterations = 3
+min_pixels = 10000
+```
+
+The driver writes `photometric_fits.csv` with one row per processed frame. Large
+gain/offset excursions or high `rmse_gray` values are useful diagnostics for
+bad frames, illumination changes, or crop/registration errors.
 
 ## Static residual-noise map
 

@@ -406,7 +406,9 @@ def accumulate_belt_map(
     _, _, crop_height, crop_width = region
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
-    residual_config = ResidualConfig()
+    residual_config = ResidualConfig(
+        noise_exclusion_mode="absolute" if mask_mode in {"absolute", "hysteresis_abs"} else "positive",
+    )
     use_huber_weights = robust_reference_belt_map is not None
     if use_huber_weights and robust_huber_delta <= 0:
         raise ValueError("robust_huber_delta must be positive")
@@ -475,16 +477,28 @@ def accumulate_belt_map(
                 valid &= pixel_weights > 0
         frame_sums = sums if not use_trimmed_mean else np.zeros_like(sums)
         frame_weights = weights if not use_trimmed_mean else np.zeros_like(weights)
-        contributed_pixels += _accumulate_frame_linear(
-            sums=frame_sums,
-            weights=frame_weights,
-            frame=frame,
-            valid=valid,
-            phase=phase,
-            map_height=map_height,
-            model_period=model_period,
-            pixel_weights=pixel_weights,
-        )
+        if fractional_splat:
+            contributed_pixels += _accumulate_frame_linear(
+                sums=frame_sums,
+                weights=frame_weights,
+                frame=frame,
+                valid=valid,
+                phase=phase,
+                map_height=map_height,
+                model_period=model_period,
+                pixel_weights=pixel_weights,
+            )
+        else:
+            contributed_pixels += _accumulate_frame_nearest(
+                sums=frame_sums,
+                weights=frame_weights,
+                frame=frame,
+                valid=valid,
+                phase=phase,
+                map_height=map_height,
+                model_period=model_period,
+                pixel_weights=pixel_weights,
+            )
         if use_trimmed_mean:
             stacked_values.append(frame_sums)
             stacked_weights.append(frame_weights)
@@ -654,6 +668,64 @@ def _accumulate_frame_linear(
         if weight1 > 0.0:
             sums[row1[y], target_cols] += weight1 * sample_weights * values
             weights[row1[y], target_cols] += weight1 * sample_weights
+        contributed_pixels += int(np.count_nonzero(positive))
+    return contributed_pixels
+
+
+def _accumulate_frame_nearest(
+    *,
+    sums: np.ndarray,
+    weights: np.ndarray,
+    frame: np.ndarray,
+    valid: np.ndarray,
+    phase: float,
+    map_height: int,
+    model_period: float | None,
+    pixel_weights: np.ndarray | None = None,
+) -> int:
+    """Accumulate one frame by assigning each image row to the nearest map row."""
+
+    if sums.shape != weights.shape:
+        raise ValueError("sums and weights must have the same shape")
+    if sums.shape[0] != map_height:
+        raise ValueError("map_height must match the accumulator height")
+    if frame.ndim != 2:
+        raise ValueError("frame must be a 2-D array")
+    if valid.shape != frame.shape:
+        raise ValueError("valid must have the same shape as frame")
+    if frame.shape[1] != sums.shape[1]:
+        raise ValueError("frame width must match the accumulator width")
+    if pixel_weights is not None and pixel_weights.shape != frame.shape:
+        raise ValueError("pixel_weights must have the same shape as frame")
+
+    rows = np.arange(frame.shape[0], dtype=np.float64) + float(phase)
+    if model_period:
+        rows = np.mod(rows, map_height)
+    else:
+        rows = np.clip(rows, 0.0, float(map_height - 1))
+    target_rows = np.floor(rows + 0.5).astype(np.int64)
+    if model_period:
+        target_rows %= map_height
+    else:
+        target_rows = np.clip(target_rows, 0, map_height - 1)
+
+    contributed_pixels = 0
+    for y in range(frame.shape[0]):
+        valid_cols = valid[y]
+        if not np.any(valid_cols):
+            continue
+        values = frame[y, valid_cols]
+        sample_weights = (
+            np.ones(values.shape, dtype=np.float64)
+            if pixel_weights is None
+            else pixel_weights[y, valid_cols].astype(np.float64, copy=False)
+        )
+        positive = sample_weights > 0
+        if not np.any(positive):
+            continue
+        target_cols = np.flatnonzero(valid_cols)[positive]
+        sums[target_rows[y], target_cols] += sample_weights[positive] * values[positive]
+        weights[target_rows[y], target_cols] += sample_weights[positive]
         contributed_pixels += int(np.count_nonzero(positive))
     return contributed_pixels
 

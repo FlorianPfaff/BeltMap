@@ -12,6 +12,7 @@ from .rendering import BeltRegion, CleanBeltRender, render_expected_clean_belt
 
 
 FloatArray = NDArray[np.floating]
+NOISE_EXCLUSION_MODES = {"positive", "negative", "absolute"}
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class ResidualConfig:
     noise_exclusion_sigma: float | None = 4.0
     noise_exclusion_radius_px: int = 2
     min_noise: float = 1e-6
+    noise_exclusion_mode: str = "positive"
     fill_value: float = np.nan
 
 
@@ -150,6 +152,7 @@ def estimate_local_noise(
         raise ValueError("noise_exclusion_sigma must be positive when set")
     if cfg.noise_exclusion_radius_px < 0:
         raise ValueError("noise_exclusion_radius_px must be non-negative")
+    noise_exclusion_mode = _validate_noise_exclusion_mode(cfg.noise_exclusion_mode)
 
     values = _as_float_image(residual, name="residual")
     valid = np.isfinite(values)
@@ -171,6 +174,7 @@ def estimate_local_noise(
         center=center,
         global_sigma=global_sigma,
         config=cfg,
+        mode=noise_exclusion_mode,
     )
     if particle_noise_mask.any():
         noise_valid &= ~particle_noise_mask
@@ -208,6 +212,17 @@ def _robust_sigma(values: FloatArray, *, center: float, min_noise: float) -> flo
     return sigma
 
 
+def _validate_noise_exclusion_mode(mode: str) -> str:
+    normalized = mode.strip().lower()
+    if normalized in NOISE_EXCLUSION_MODES:
+        return normalized
+    choices = ", ".join(sorted(NOISE_EXCLUSION_MODES))
+    raise ValueError(
+        "ResidualConfig.noise_exclusion_mode must be one of "
+        f"{choices}; got {mode!r}"
+    )
+
+
 def _particle_noise_exclusion_mask(
     values: FloatArray,
     *,
@@ -215,13 +230,20 @@ def _particle_noise_exclusion_mask(
     center: float,
     global_sigma: float,
     config: ResidualConfig,
+    mode: str,
 ) -> NDArray[np.bool_]:
-    """Return positive residual pixels that should not define local noise."""
+    """Return residual pixels that should not define local noise."""
 
     if config.noise_exclusion_sigma is None:
         return np.zeros(values.shape, dtype=bool)
-    threshold = center + config.noise_exclusion_sigma * global_sigma
-    particle_like = valid & (values > threshold)
+    threshold = config.noise_exclusion_sigma * global_sigma
+    centered = values - center
+    if mode == "positive":
+        particle_like = valid & (centered > threshold)
+    elif mode == "negative":
+        particle_like = valid & (centered < -threshold)
+    else:
+        particle_like = valid & (np.abs(centered) > threshold)
     if not particle_like.any():
         return particle_like
     if config.noise_exclusion_radius_px > 0:

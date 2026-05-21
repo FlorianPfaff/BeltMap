@@ -86,6 +86,35 @@ def test_estimate_local_noise_excludes_particle_pixels_from_local_scale():
     )
 
 
+def test_estimate_local_noise_excludes_negative_particle_pixels_when_requested():
+    rng = np.random.default_rng(14)
+    residual = rng.normal(0.0, 1.0, size=(51, 51))
+    residual[22:29, 22:29] -= 50.0
+
+    without_exclusion = estimate_local_noise(
+        residual,
+        config=ResidualConfig(
+            noise_radius_px=4,
+            clip_sigma=5.0,
+            noise_exclusion_sigma=None,
+            min_noise=0.05,
+        ),
+    )
+    with_exclusion = estimate_local_noise(
+        residual,
+        config=ResidualConfig(
+            noise_radius_px=4,
+            clip_sigma=5.0,
+            noise_exclusion_sigma=4.0,
+            noise_exclusion_radius_px=1,
+            noise_exclusion_mode="negative",
+            min_noise=0.05,
+        ),
+    )
+
+    assert float(with_exclusion[25, 25]) < float(without_exclusion[25, 25]) * 0.7
+
+
 def test_render_clean_belt_residual_returns_standardized_particle_signal():
     period = 64
     width = 16

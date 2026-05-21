@@ -88,13 +88,20 @@ class PhaseRegistrationConfig:
             raise ValueError("search_radius_px must be non-negative")
         if self.search_step_px <= 0:
             raise ValueError("search_step_px must be positive")
-        count = int(np.floor(2 * self.search_radius_px / self.search_step_px)) + 1
-        offsets = -self.search_radius_px + self.search_step_px * np.arange(
-            count, dtype=np.float64
+
+        radius = float(self.search_radius_px)
+        if radius == 0.0:
+            return np.asarray([0.0], dtype=np.float64)
+
+        step = float(self.search_step_px)
+        positive_offsets = step * np.arange(
+            int(np.floor(radius / step)) + 1,
+            dtype=np.float64,
         )
-        if not np.any(np.isclose(offsets, 0.0)):
-            offsets = np.sort(np.append(offsets, 0.0))
-        return offsets
+        if not np.any(np.isclose(positive_offsets, radius)):
+            positive_offsets = np.append(positive_offsets, radius)
+        offsets = np.r_[-positive_offsets[:0:-1], positive_offsets]
+        return offsets.astype(np.float64, copy=False)
 
 
 @dataclass(frozen=True)

@@ -80,6 +80,15 @@ def test_registration_config_rejects_negative_search_radius():
         PhaseRegistrationConfig(search_radius_px=-1).candidate_offsets()
 
 
+def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
+    offsets = PhaseRegistrationConfig(
+        search_radius_px=1.0,
+        search_step_px=0.6,
+    ).candidate_offsets()
+
+    np.testing.assert_allclose(offsets, [-1.0, -0.6, 0.0, 0.6, 1.0])
+
+
 def test_uniform_filter_axis_matches_edge_padded_reference():
     image = np.array(
         [
