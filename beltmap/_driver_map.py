@@ -13,15 +13,21 @@ import numpy as np
 from . import _driver_runtime as rt
 from ._driver_runtime import crop, emit, env_float, env_int, read_gray
 from .detection import detect_particles_from_residual
-from .operational_improvements import select_adaptive_map_frames
+from .operational_improvements import particle_density_score, select_adaptive_map_frames
 from .phase import PhaseEstimate, PhaseRegistrationConfig, refine_phase_by_registration, render_belt_view
 from .residual import ResidualConfig, ResidualImage, generate_residual_image
 from .tracking import ParticleComponentConfig, extract_particle_detections
 
-MAP_PARTICLE_MASK_MODES = {"positive", "absolute", "hysteresis_abs"}
+MAP_PARTICLE_MASK_MODES = {"positive", "negative", "absolute", "hysteresis_abs"}
 MAP_AGGREGATION_METHODS = {"mean", "huber"}
-MAP_SAMPLING_STRATEGIES = {"uniform", "adaptive_phase_coverage"}
+MAP_SAMPLING_STRATEGIES = {
+    "uniform",
+    "adaptive_phase_coverage",
+    "adaptive_phase_coverage_low_density",
+}
 MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
+MAP_SAMPLE_QUALITY_FRAMES_ENV = "MAP_SAMPLE_QUALITY_FRAMES"
+MAP_SAMPLE_QUALITY_THRESHOLD_ENV = "MAP_SAMPLE_QUALITY_THRESHOLD"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
@@ -88,6 +94,10 @@ def validate_map_sampling_strategy(strategy: str) -> str:
         "adaptive": "adaptive_phase_coverage",
         "adaptive_phase": "adaptive_phase_coverage",
         "phase_coverage": "adaptive_phase_coverage",
+        "adaptive_low_density": "adaptive_phase_coverage_low_density",
+        "adaptive_density": "adaptive_phase_coverage_low_density",
+        "phase_coverage_low_density": "adaptive_phase_coverage_low_density",
+        "low_density": "adaptive_phase_coverage_low_density",
     }
     normalized = aliases.get(normalized, normalized)
     if normalized not in MAP_SAMPLING_STRATEGIES:
@@ -293,6 +303,45 @@ def build_belt_map_result(
         fractional_splat=fractional_splat,
         pass_label="initial",
     )
+    if sampling_strategy == "adaptive_phase_coverage_low_density":
+        samples = select_low_density_map_sample_indices(
+            paths=paths,
+            region=region,
+            belt_map=belt_map,
+            frame_count=len(paths),
+            sample_count=max_samples,
+            velocity=velocity,
+            reference_phase=reference_phase,
+            model_period=model_period,
+            map_height=map_height,
+            crop_height=crop_height,
+            mask_threshold=mask_threshold,
+            mask_mode=mask_mode,
+        )
+        emit(
+            "belt_map",
+            "rebuilding initial map from phase-coverage and low-density samples",
+            sampled_frames=len(samples),
+        )
+        belt_map, _coverage = accumulate_belt_map(
+            paths=paths,
+            samples=samples,
+            region=region,
+            velocity=velocity,
+            reference_phase=reference_phase,
+            model_period=model_period,
+            map_height=map_height,
+            previous_belt_map=None,
+            mask_threshold=mask_threshold,
+            mask_mode=mask_mode,
+            mask_grow_threshold=mask_grow_threshold,
+            mask_dilation_px=mask_dilation_px,
+            mask_margin_px=mask_margin_px,
+            mask_min_area_px=mask_min_area_px,
+            map_trim_fraction=map_trim_fraction,
+            fractional_splat=fractional_splat,
+            pass_label="low-density-resampled",
+        )
     phase_by_frame: np.ndarray | None = None
     phase_rows: list[dict] = []
     if cfg.iterations > 0:
@@ -444,7 +493,9 @@ def accumulate_belt_map(
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
     residual_config = ResidualConfig(
-        noise_exclusion_mode="absolute" if mask_mode in {"absolute", "hysteresis_abs"} else "positive",
+        noise_exclusion_mode=(
+            "absolute" if mask_mode in {"absolute", "hysteresis_abs"} else mask_mode
+        ),
     )
     use_huber_weights = robust_reference_belt_map is not None
     if use_huber_weights and robust_huber_delta <= 0:
@@ -795,8 +846,12 @@ def detect_map_particle_mask(
     min_area_px: int,
 ) -> np.ndarray:
     mode = validate_map_particle_mask_mode(mode)
-    if mode == "positive":
-        raw_mask = detect_particles_from_residual(residual, threshold=threshold)
+    if mode in {"positive", "negative"}:
+        raw_mask = detect_particles_from_residual(
+            residual,
+            threshold=threshold,
+            mode=mode,
+        )
         return _component_mask_with_optional_dilation(
             raw_mask,
             residual=residual,
@@ -860,6 +915,8 @@ def select_map_sample_indices(
     strategy = validate_map_sampling_strategy(sampling_strategy)
     if strategy == "uniform":
         return sample_indices(frame_count, sample_count)
+    if strategy == "adaptive_phase_coverage_low_density":
+        strategy = "adaptive_phase_coverage"
 
     phases = _constant_model_phases(
         frame_count=frame_count,
@@ -874,6 +931,94 @@ def select_map_sample_indices(
         crop_height_px=max(1, crop_height),
     )
     return sorted({sample.frame_index for sample in selected})
+
+
+def select_low_density_map_sample_indices(
+    *,
+    paths: list,
+    region: tuple[int, int, int, int],
+    belt_map: np.ndarray,
+    frame_count: int,
+    sample_count: int,
+    velocity: float,
+    reference_phase: float,
+    model_period: float | None,
+    map_height: int,
+    crop_height: int,
+    mask_threshold: float,
+    mask_mode: str,
+) -> list[int]:
+    """Select map samples with phase coverage and low provisional particle density."""
+
+    if len(paths) != frame_count:
+        raise ValueError("frame_count must match paths")
+    candidate_count = env_int(
+        MAP_SAMPLE_QUALITY_FRAMES_ENV,
+        min(frame_count, max(sample_count * 3, sample_count)),
+        minimum=1,
+    )
+    candidates = sample_indices(frame_count, candidate_count)
+    phases = _constant_model_phases(
+        frame_count=frame_count,
+        velocity=velocity,
+        reference_phase=reference_phase,
+        model_period=model_period,
+    )
+    threshold = env_float(
+        MAP_SAMPLE_QUALITY_THRESHOLD_ENV,
+        mask_threshold,
+        minimum=0.0,
+    )
+    polarity = _density_polarity_for_mask_mode(mask_mode)
+    noise_exclusion_mode = (
+        "absolute" if polarity == "absolute" else ("negative" if polarity == "dark" else "positive")
+    )
+    quality_scores: list[float] = []
+    progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
+    for candidate_number, index in enumerate(candidates, start=1):
+        frame = crop(read_gray(paths[index]), region).astype(np.float64, copy=False)
+        phase = belt_phase(index, velocity, reference_phase, model_period)
+        expected = render_belt_view(belt_map, phase, crop_height)
+        residual = generate_residual_image(
+            frame,
+            expected,
+            config=ResidualConfig(noise_exclusion_mode=noise_exclusion_mode),
+        )
+        density = particle_density_score(
+            residual.normalized,
+            threshold=threshold,
+            polarity=polarity,
+            mask=residual.mask,
+        )
+        quality_scores.append(1.0 / (1.0 + max(0.0, density)))
+        if (
+            candidate_number == 1
+            or candidate_number == len(candidates)
+            or candidate_number % progress_interval == 0
+        ):
+            emit(
+                "belt_map",
+                f"scored {candidate_number}/{len(candidates)} map-sample candidates",
+                source_frame_index=index,
+                particle_density_score=density,
+            )
+    selected = select_adaptive_map_frames(
+        [float(phases[index]) for index in candidates],
+        map_height_px=map_height,
+        sample_count=max(1, min(sample_count, len(candidates))),
+        crop_height_px=max(1, crop_height),
+        quality_scores=quality_scores,
+    )
+    return sorted({candidates[sample.frame_index] for sample in selected})
+
+
+def _density_polarity_for_mask_mode(mask_mode: str) -> str:
+    normalized = validate_map_particle_mask_mode(mask_mode)
+    if normalized == "positive":
+        return "bright"
+    if normalized == "negative":
+        return "dark"
+    return "absolute"
 
 
 def refine_phase_feedback(

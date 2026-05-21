@@ -93,6 +93,7 @@ underscores.
 | `reuse.static_noise_path` | `REUSE_STATIC_NOISE_PATH` | `--reuse-static-noise-path` | unset | path | Existing `static_noise.npy` to reuse as a per-pixel residual-noise floor during detection. |
 | `reuse.static_background_path` | `REUSE_STATIC_BACKGROUND_PATH` | `--reuse-static-background-path` | unset | path | Existing `static_background.npy` additive image-fixed residual map to subtract during detection. |
 | `reuse.recurrent_artifact_map_path` | `REUSE_RECURRENT_ARTIFACT_MAP_PATH` | `--reuse-recurrent-artifact-map-path` | unset | path | Existing `recurrent_artifact_map.npy` to reuse for recurrent artifact filtering. This enables the filter without rebuilding the recurrent artifact map. |
+| `masks.ignore_mask_path` | `IGNORE_MASK_PATH` | `--ignore-mask-path` | unset | path | Optional full-frame or crop-local mask image. Nonzero pixels are excluded from residual normalization, detection, static residual learning, and registration masks. |
 | `frames.max_frames` | `MAX_FRAMES` | `--max-frames` | `0` | frames | Maximum number of selected frames to process after sorting and striding. `0` means process all selected frames. |
 | `frames.stride` | `FRAME_STRIDE` | `--frame-stride` | `1` | frames | Process every Nth frame after natural filename sorting. Must be at least 1. |
 | `belt.region` | `BELT_REGION` | `--belt-region` | full frame | px | Belt crop as `top,left,height,width`. Coordinates are full-frame image coordinates. Omit only when the full frame is belt texture. |
@@ -124,14 +125,15 @@ underscores.
 | `track_filter.min_velocity_ratio_y` | `TRACK_FILTER_MIN_VELOCITY_RATIO_Y` | `--track-filter-min-velocity-ratio-y` | `0.0` | ratio | Minimum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_velocity_ratio_y` | `TRACK_FILTER_MAX_VELOCITY_RATIO_Y` | `--track-filter-max-velocity-ratio-y` | `1.1` | ratio | Maximum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_abs_x_velocity_px_per_frame` | `TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME` | `--track-filter-max-abs-x-velocity-px-per-frame` | `0` | px/frame | Optional lateral-velocity gate. `0` disables this gate. |
+| `velocity.fit_method` | `VELOCITY_FIT_METHOD` | `--velocity-fit-method` | `least_squares` | mode | Velocity slope estimator for track summaries. Use `least_squares` for ordinary linear regression or `theil_sen` for a robust median pairwise slope. |
 | `map.sample_frames` | `MAP_SAMPLE_FRAMES` | `--map-sample-frames` | `120` | frames | Number of frames sampled across the selected sequence to reconstruct the belt map. Must be at least 1. |
 | `map.sampling_strategy` | `MAP_SAMPLING_STRATEGY` | `--map-sampling-strategy` | `uniform` | mode | Frame sampling strategy for map reconstruction. `uniform` preserves the original linspace sampling; `adaptive_phase_coverage` spreads samples across nominal belt-coordinate coverage. |
 | `map.reconstruction_trim_fraction` | `MAP_RECONSTRUCTION_TRIM_FRACTION` | `--map-reconstruction-trim-fraction` | `0` | fraction | Symmetric per-pixel trim fraction for robust belt-map reconstruction. Must be in `[0, 0.5)`. |
 | `map.fractional_splat` | `MAP_FRACTIONAL_SPLAT` | `--map-fractional-splat` / `--no-map-fractional-splat` | `true` | bool | Use linear fractional row weights when accumulating belt-map pixels. When false, each image row contributes to its nearest belt-map row. |
 | `map.mask_iterations` | `MAP_MASK_ITERATIONS` | `--map-mask-iterations` | `1` | passes | Number of particle-masked belt-map refinement passes after the initial provisional map. `0` disables particle masking during map reconstruction. |
 | `map.particle_mask_threshold` | `MAP_PARTICLE_MASK_THRESHOLD` | `--map-particle-mask-threshold` | `detection.threshold` | z | Strong residual threshold used to seed particle masks while building the clean belt map. |
-| `map.particle_mask_mode` | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive` | mode | Map-building particle-mask mode. Valid values are `positive`, `absolute`, and `hysteresis_abs`. |
-| `map.particle_mask_grow_threshold` | `MAP_PARTICLE_MASK_GROW_THRESHOLD` | `--map-particle-mask-grow-threshold` | `2.0` | z | Lower absolute-residual threshold used to grow `hysteresis_abs` map masks from strong seeds. Ignored by `positive` and `absolute`. |
+| `map.particle_mask_mode` | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive`; follows `detection.mode` for `negative`/`absolute` when unset | mode | Map-building particle-mask mode. Valid values are `positive`, `negative`, `absolute`, and `hysteresis_abs`. |
+| `map.particle_mask_grow_threshold` | `MAP_PARTICLE_MASK_GROW_THRESHOLD` | `--map-particle-mask-grow-threshold` | `2.0` | z | Lower absolute-residual threshold used to grow `hysteresis_abs` map masks from strong seeds. Ignored by `positive`, `negative`, and `absolute`. |
 | `map.particle_mask_dilation_px` | `MAP_PARTICLE_MASK_DILATION_PX` | `--map-particle-mask-dilation-px` | `0` | px | Morphological dilation radius for `hysteresis_abs` map masks before applying the rectangular safety margin. `0` disables dilation. |
 | `map.particle_mask_margin_px` | `MAP_PARTICLE_MASK_MARGIN_PX` | `--map-particle-mask-margin-px` | `8` | px | Safety margin added around detected or grown particle regions during map reconstruction. |
 | `map.particle_mask_min_area_px` | `MAP_PARTICLE_MASK_MIN_AREA_PX` | `--map-particle-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area used for particle masking during map reconstruction. Must be at least 1. |
@@ -165,6 +167,7 @@ underscores.
 | `phase_drift.max_abs_px` | `PHASE_DRIFT_MAX_ABS_PX` | `--phase-drift-max-abs-px` | `0` | px | Optional cap on accumulated online drift. `0` disables the cap. |
 | `progress.interval_frames` | `PROGRESS_INTERVAL_FRAMES` | `--progress-interval-frames` | `25` | frames | Progress-log interval for long velocity, map-building, and detection stages. Must be at least 1. |
 | `progress.partial_output_interval_frames` | `PARTIAL_OUTPUT_INTERVAL_FRAMES` | `--partial-output-interval-frames` | `250` | frames | Interval for writing partial detection and phase CSV outputs during long runs. `0` means final outputs only. |
+| `diagnostics.xy_registration_interval_frames` | `XY_REGISTRATION_DIAGNOSTIC_INTERVAL_FRAMES` | `--xy-registration-diagnostic-interval-frames` | `0` | frames | Save sparse integer 2-D registration diagnostics in `xy_registration_diagnostics.csv`. Use this to detect crop drift, lateral shifts, or perspective errors before tuning thresholds. |
 | `debug.residual_preview_frames` | `DEBUG_RESIDUAL_PREVIEW_FRAMES` | `--debug-residual-preview-frames` | `3` | frames | Save normalized residual PNG previews for the first N processed frames. |
 | `debug.residual_preview_interval_frames` | `DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES` | `--debug-residual-preview-interval-frames` | `0` | frames | Also save residual previews every N processed frames. `0` disables interval previews. |
 
@@ -188,6 +191,7 @@ excluded while reconstructing `belt_map.npy`.
 | Mode | Behavior | Best use |
 |---|---|---|
 | `positive` | Threshold positive normalized residuals, extract connected components, and expand their bounding boxes. | Bright particles on a darker belt. This is the default and preserves the original behavior. |
+| `negative` | Threshold negative normalized residuals, extract connected components, and expand their bounding boxes. | Dark particles on a brighter belt. |
 | `absolute` | Threshold `abs(normalized_residual)`, extract connected components, and expand their bounding boxes. | Particles that create both dark and bright residuals, but do not need hysteresis growing. |
 | `hysteresis_abs` | Find strong absolute-residual seed pixels, grow them through connected lower-threshold absolute-residual regions, remove small regions, optionally dilate, then apply the rectangular margin. | Larger or structured particle artifacts where a strong core should pull in weaker surrounding residuals. |
 

@@ -23,6 +23,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("reuse_static_noise_path", "REUSE_STATIC_NOISE_PATH", "path", (("reuse_static_noise_path",), ("reuse", "static_noise_path")), "Optional existing static_noise.npy to reuse for residual normalization.", "NPY"),
     ("reuse_static_background_path", "REUSE_STATIC_BACKGROUND_PATH", "path", (("reuse_static_background_path",), ("reuse", "static_background_path")), "Optional existing static_background.npy additive residual map to subtract during detection.", "NPY"),
     ("reuse_recurrent_artifact_map_path", "REUSE_RECURRENT_ARTIFACT_MAP_PATH", "path", (("reuse_recurrent_artifact_map_path",), ("reuse", "recurrent_artifact_map_path")), "Optional existing recurrent_artifact_map.npy to reuse for recurrent artifact filtering.", "NPY"),
+    ("ignore_mask_path", "IGNORE_MASK_PATH", "path", (("ignore_mask_path",), ("masks", "ignore_mask_path"), ("detection", "ignore_mask_path")), "Optional mask image whose nonzero pixels are excluded from residuals, detection, and static residual learning.", "PNG"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
     ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity, or 'auto'. Numeric values use --belt-velocity-frame-unit when frames are strided.", "PX_PER_FRAME|auto"),
     ("belt_velocity_frame_unit", "BELT_VELOCITY_FRAME_UNIT", "path", (("belt_velocity_frame_unit",), ("belt", "velocity_frame_unit")), "Frame unit for a supplied belt velocity: selected_frame or source_frame.", "UNIT"),
@@ -57,6 +58,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("track_filter_min_velocity_ratio_y", "TRACK_FILTER_MIN_VELOCITY_RATIO_Y", "float", (("track_filter_min_velocity_ratio_y",), ("track_filter", "min_velocity_ratio_y")), "Minimum accepted particle/belt vertical velocity ratio.", "RATIO"),
     ("track_filter_max_velocity_ratio_y", "TRACK_FILTER_MAX_VELOCITY_RATIO_Y", "float", (("track_filter_max_velocity_ratio_y",), ("track_filter", "max_velocity_ratio_y")), "Maximum accepted particle/belt vertical velocity ratio.", "RATIO"),
     ("track_filter_max_abs_x_velocity_px_per_frame", "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME", "float", (("track_filter_max_abs_x_velocity_px_per_frame",), ("track_filter", "max_abs_x_velocity_px_per_frame")), "Optional maximum accepted absolute lateral velocity. Use 0 to disable.", "PX_PER_FRAME"),
+    ("velocity_fit_method", "VELOCITY_FIT_METHOD", "path", (("velocity_fit_method",), ("velocity", "fit_method"), ("tracking", "velocity_fit_method")), "Velocity slope estimator for track summaries: least_squares or theil_sen.", "METHOD"),
     ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
@@ -65,7 +67,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("map_fractional_splat", "MAP_FRACTIONAL_SPLAT", "bool", (("map_fractional_splat",), ("map", "fractional_splat")), "Use fractional row weights when accumulating belt-map pixels.", None),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
     ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
-    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, absolute, or hysteresis_abs.", "MODE"),
+    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, negative, absolute, or hysteresis_abs.", "MODE"),
     ("map_particle_mask_grow_threshold", "MAP_PARTICLE_MASK_GROW_THRESHOLD", "float", (("map_particle_mask_grow_threshold",), ("map", "particle_mask_grow_threshold")), "Lower absolute-residual threshold used to grow hysteresis map masks.", "Z"),
     ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
     ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
@@ -109,6 +111,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("phase_drift_max_abs_px", "PHASE_DRIFT_MAX_ABS_PX", "float", (("phase_drift_max_abs_px",), ("phase_drift", "max_abs_px")), "Maximum accumulated online phase drift. Use 0 to disable.", "PX"),
     ("progress_interval_frames", "PROGRESS_INTERVAL_FRAMES", "int", (("progress_interval_frames",), ("progress", "interval_frames")), "Print progress every N frames during long stages.", "N"),
     ("partial_output_interval_frames", "PARTIAL_OUTPUT_INTERVAL_FRAMES", "int", (("partial_output_interval_frames",), ("progress", "partial_output_interval_frames")), "Write partial CSV outputs every N processed frames. Use 0 for final only.", "N"),
+    ("xy_registration_diagnostic_interval_frames", "XY_REGISTRATION_DIAGNOSTIC_INTERVAL_FRAMES", "int", (("xy_registration_diagnostic_interval_frames",), ("diagnostics", "xy_registration_interval_frames")), "Save sparse integer 2-D registration diagnostics every N selected frames. Use 0 to disable.", "N"),
     ("debug_residual_preview_frames", "DEBUG_RESIDUAL_PREVIEW_FRAMES", "int", (("debug_residual_preview_frames",), ("debug", "residual_preview_frames")), "Save residual PNG previews for the first N frames.", "N"),
     ("debug_residual_preview_interval_frames", "DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", "int", (("debug_residual_preview_interval_frames",), ("debug", "residual_preview_interval_frames")), "Also save residual previews every N frames. Use 0 to disable.", "N"),
 )
@@ -143,6 +146,9 @@ output_dir = "outputs"
 # static_noise_path = "outputs/static_noise.npy"
 # static_background_path = "outputs/static_background.npy"
 # recurrent_artifact_map_path = "outputs/recurrent_artifact_map.npy"
+
+[masks]
+# ignore_mask_path = "masks/belt_ignore.png"
 
 [frames]
 max_frames = 0
@@ -195,6 +201,9 @@ min_length = 5
 min_velocity_ratio_y = 0.0
 max_velocity_ratio_y = 1.1
 max_abs_x_velocity_px_per_frame = 0.0
+
+[velocity]
+fit_method = "least_squares"
 
 [map]
 sample_frames = 120
@@ -263,6 +272,9 @@ max_abs_px = 0.0
 [progress]
 interval_frames = 25
 partial_output_interval_frames = 250
+
+[diagnostics]
+xy_registration_interval_frames = 0
 
 [debug]
 residual_preview_frames = 3
