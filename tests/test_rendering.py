@@ -100,3 +100,45 @@ def test_render_expected_clean_belt_can_refine_phase_from_observed_frame():
     assert circular_error <= 0.25
     assert render.phase_estimate.method == "registration"
     np.testing.assert_allclose(render.belt_crop, clean_crop, atol=0.25)
+
+
+def test_render_expected_clean_belt_follows_finite_strip_motion_model():
+    belt = np.arange(5, dtype=float)[:, None] * np.ones((1, 3))
+    model = BeltMotionModel(
+        image_velocity_px_per_frame=0.0,
+        period_px=None,
+        reference_phase_px=-1.0,
+    )
+
+    render = render_expected_clean_belt(
+        belt_map=belt,
+        frame_index=0,
+        motion_model=model,
+        output_shape=(3, 3),
+    )
+
+    assert np.isnan(render.image[0, 0])
+    np.testing.assert_allclose(render.image[1:, 0], [0.0, 1.0])
+
+
+def test_render_expected_clean_belt_can_force_periodic_phase_only_rendering():
+    belt = np.arange(5, dtype=float)[:, None] * np.ones((1, 3))
+    phase = PhaseEstimate(phase_px=-1.0, frame_index=0, predicted_phase_px=-1.0)
+
+    finite = render_expected_clean_belt(
+        belt_map=belt,
+        frame_index=0,
+        phase_estimate=phase,
+        output_shape=(3, 3),
+        periodic=False,
+    )
+    cyclic = render_expected_clean_belt(
+        belt_map=belt,
+        frame_index=0,
+        phase_estimate=phase,
+        output_shape=(3, 3),
+        periodic=True,
+    )
+
+    assert np.isnan(finite.image[0, 0])
+    np.testing.assert_allclose(cyclic.image[:, 0], [4.0, 0.0, 1.0])
