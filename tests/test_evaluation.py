@@ -116,6 +116,22 @@ def test_write_evaluation_writes_json_csv_and_markdown(tmp_path: Path) -> None:
     assert "baseline" in artifacts.markdown_path.read_text(encoding="utf-8")
 
 
+def test_evaluation_markdown_treats_higher_registration_scores_as_better(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "baseline"
+    eval_dir = tmp_path / "eval"
+    write_run(output_dir)
+
+    artifacts = write_evaluation(
+        [RunSpec(name="baseline", output_dir=output_dir)],
+        output_dir=eval_dir,
+    )
+
+    report = artifacts.markdown_path.read_text(encoding="utf-8")
+    assert "higher registration scores" in report
+
+
 def test_cli_evaluate_accepts_named_runs(tmp_path: Path) -> None:
     output_dir = tmp_path / "candidate"
     eval_dir = tmp_path / "eval"
