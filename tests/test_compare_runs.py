@@ -2,6 +2,7 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from beltmap.cli import compare as cli_compare
@@ -205,6 +206,23 @@ def test_compare_main_prints_artifact_paths(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert Path(payload["report"]).is_file()
     assert Path(payload["summary_csv"]).is_file()
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-0.1", "1.1"])
+def test_compare_cli_rejects_invalid_truth_iou_threshold(value):
+    with pytest.raises(SystemExit) as exc_info:
+        cli_compare.build_parser().parse_args(
+            [
+                "--run",
+                "a=outputs/a",
+                "--run",
+                "b=outputs/b",
+                "--truth-iou-threshold",
+                value,
+            ]
+        )
+
+    assert exc_info.value.code == 2
 
 
 def test_compare_rejects_existing_csv_with_missing_required_columns(tmp_path):
