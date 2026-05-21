@@ -14,7 +14,7 @@ import json
 import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -304,7 +304,6 @@ def seam_discontinuity_profile(
         raise ValueError("belt_map must be 2-D")
     if window_px < 1:
         raise ValueError("window_px must be positive")
-    height = belt.shape[0]
     jumps = np.mean(np.abs(belt - np.roll(belt, 1, axis=0)), axis=1)
     best_row = int(np.argmin(jumps))
     current_jump = float(jumps[0])
