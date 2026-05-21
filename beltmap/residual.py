@@ -10,7 +10,6 @@ from numpy.typing import ArrayLike, NDArray
 from .phase import BeltMotionModel, PhaseEstimate, PhaseRegistrationConfig
 from .rendering import BeltRegion, CleanBeltRender, render_expected_clean_belt
 
-
 FloatArray = NDArray[np.floating]
 NOISE_EXCLUSION_MODES = {"positive", "negative", "absolute"}
 
@@ -47,17 +46,15 @@ def generate_residual_image(
     mask: ArrayLike | None = None,
     config: ResidualConfig | None = None,
 ) -> ResidualImage:
-    """Return ``(image - expected_background) / local_noise``.
-
-    ``expected_background`` may be a plain image or a ``CleanBeltRender``. When
-    a clean render is provided, its validity mask is used automatically so the
-    camera background outside the belt does not influence noise normalization.
-    """
+    """Return ``(image - expected_background) / local_noise``."""
 
     cfg = config or ResidualConfig()
     observed = _as_float_image(image, name="image")
-
-    clean_render = expected_background if isinstance(expected_background, CleanBeltRender) else None
+    clean_render = (
+        expected_background
+        if isinstance(expected_background, CleanBeltRender)
+        else None
+    )
     expected = (
         clean_render.image
         if clean_render is not None
@@ -77,12 +74,10 @@ def generate_residual_image(
 
     raw_values = observed - expected
     local_noise = estimate_local_noise(raw_values, mask=valid, config=cfg)
-
     raw = np.full(observed.shape, cfg.fill_value, dtype=np.float64)
     normalized = np.full(observed.shape, cfg.fill_value, dtype=np.float64)
     raw[valid] = raw_values[valid]
     normalized[valid] = raw_values[valid] / local_noise[valid]
-
     return ResidualImage(
         raw=raw,
         local_noise=local_noise,
@@ -105,6 +100,7 @@ def render_clean_belt_residual(
     registration_mask: ArrayLike | None = None,
     residual_mask: ArrayLike | None = None,
     residual_config: ResidualConfig | None = None,
+    periodic: bool | None = None,
 ) -> ResidualImage:
     """Render the clean belt for ``image`` and return its normalized residual."""
 
@@ -119,6 +115,7 @@ def render_clean_belt_residual(
         phase_estimate=phase_estimate,
         registration_config=registration_config,
         registration_mask=registration_mask,
+        periodic=periodic,
     )
     residual_mask = _expand_mask_to_image(
         residual_mask,
@@ -183,15 +180,22 @@ def estimate_local_noise(
     centered = np.zeros(values.shape, dtype=np.float64)
     centered[valid] = values[valid] - center
     if cfg.clip_sigma is not None:
-        limit = cfg.clip_sigma * global_sigma
-        centered = np.clip(centered, -limit, limit)
+        centered = np.clip(
+            centered,
+            -cfg.clip_sigma * global_sigma,
+            cfg.clip_sigma * global_sigma,
+        )
 
     local_var = _masked_box_mean(
         np.square(centered),
         noise_valid,
         radius=cfg.noise_radius_px,
     )
-    local_var = np.where(np.isfinite(local_var), local_var, global_sigma * global_sigma)
+    local_var = np.where(
+        np.isfinite(local_var),
+        local_var,
+        global_sigma * global_sigma,
+    )
     local_noise = np.sqrt(np.maximum(local_var, cfg.min_noise * cfg.min_noise))
     local_noise[~valid] = cfg.fill_value
     return local_noise
@@ -232,8 +236,6 @@ def _particle_noise_exclusion_mask(
     config: ResidualConfig,
     mode: str,
 ) -> NDArray[np.bool_]:
-    """Return residual pixels that should not define local noise."""
-
     if config.noise_exclusion_sigma is None:
         return np.zeros(values.shape, dtype=bool)
     threshold = config.noise_exclusion_sigma * global_sigma
@@ -297,7 +299,11 @@ def _box_sum(image: FloatArray, *, radius: int) -> FloatArray:
         return image.astype(np.float64, copy=True)
     padded = np.pad(image, ((radius, radius), (radius, radius)), mode="constant")
     integral = np.pad(
-        np.cumsum(np.cumsum(padded, axis=0, dtype=np.float64), axis=1, dtype=np.float64),
+        np.cumsum(
+            np.cumsum(padded, axis=0, dtype=np.float64),
+            axis=1,
+            dtype=np.float64,
+        ),
         ((1, 0), (1, 0)),
         mode="constant",
     )
