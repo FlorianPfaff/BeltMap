@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from dataclasses import asdict
 from pathlib import Path
 
@@ -59,6 +60,7 @@ TRACK_DETECTION_FIELDS = [
     "mean_signal",
     "peak_signal",
     "recurrent_artifact_overlap_fraction",
+    "recurrent_artifact_probability",
     "recurrent_artifact_required_peak_signal",
 ]
 
@@ -111,6 +113,8 @@ def optional_nonnegative_float(value: float | None, *, name: str) -> float | Non
 
     if value is None:
         return None
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite")
     if value < 0:
         raise ValueError(f"{name} must be non-negative")
     return None if value == 0 else value
@@ -138,7 +142,7 @@ def read_json(path: Path) -> dict:
 
 def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -177,6 +181,11 @@ def parse_detection(row: dict[str, str]) -> ParticleDetection:
             None
             if row.get("recurrent_artifact_overlap_fraction", "") == ""
             else float(row["recurrent_artifact_overlap_fraction"])
+        ),
+        recurrent_artifact_probability=(
+            None
+            if row.get("recurrent_artifact_probability", "") == ""
+            else float(row["recurrent_artifact_probability"])
         ),
         recurrent_artifact_required_peak_signal=(
             None
@@ -256,6 +265,11 @@ def reconstruct_track_rows(output_dir: Path) -> list[dict[str, str]]:
                         ""
                         if detection.recurrent_artifact_overlap_fraction is None
                         else detection.recurrent_artifact_overlap_fraction
+                    ),
+                    "recurrent_artifact_probability": (
+                        ""
+                        if detection.recurrent_artifact_probability is None
+                        else detection.recurrent_artifact_probability
                     ),
                     "recurrent_artifact_required_peak_signal": (
                         ""
