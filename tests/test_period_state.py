@@ -35,12 +35,21 @@ def test_reused_period_state_trusts_explicit_metadata_period():
     state = reused_period_state(
         map_height_px=120,
         supplied_period_px=None,
-        metadata={"model_period_px": 96.0, "belt_period_known": True},
+        metadata={"model_period_px": 120.0, "belt_period_known": True},
     )
 
-    assert state.model_period_px == 96.0
+    assert state.model_period_px == 120.0
     assert state.period_known
     assert state.source == "metadata"
+
+
+def test_reused_period_state_rejects_incompatible_metadata_period():
+    with pytest.raises(ValueError, match="must match reused belt-map height"):
+        reused_period_state(
+            map_height_px=120,
+            supplied_period_px=None,
+            metadata={"model_period_px": 96.0, "belt_period_known": True},
+        )
 
 
 def test_reused_period_state_preserves_metadata_finite_strip():
