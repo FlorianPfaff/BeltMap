@@ -256,12 +256,17 @@ def render_belt_view(
     height: int,
     *,
     x_slice: slice | None = None,
+    periodic: bool = True,
 ) -> FloatArray:
     """Render the clean belt background expected in an image crop.
 
     ``belt_map`` is indexed by belt-coordinate row and image x coordinate.
     Fractional phases are rendered with linear interpolation along the belt
-    coordinate axis and cyclic wrapping.
+    coordinate axis.
+
+    When ``periodic`` is true, rows wrap cyclically. When ``periodic`` is false,
+    pixels whose belt-coordinate row falls outside the finite map support are
+    returned as ``nan`` instead of wrapping to the opposite edge.
     """
 
     belt = _as_float_image(belt_map, name="belt_map")
@@ -274,11 +279,22 @@ def render_belt_view(
         belt = belt[:, x_slice]
 
     period = belt.shape[0]
-    rows = (np.arange(height, dtype=np.float64) + phase_px) % period
-    row0 = np.floor(rows).astype(np.int64)
-    row1 = (row0 + 1) % period
-    weight = (rows - row0)[:, None]
-    return (1.0 - weight) * belt[row0] + weight * belt[row1]
+    rows = np.arange(height, dtype=np.float64) + float(phase_px)
+    if periodic:
+        rows = rows % period
+        row0 = np.floor(rows).astype(np.int64)
+        row1 = (row0 + 1) % period
+        weight = (rows - row0)[:, None]
+        return (1.0 - weight) * belt[row0] + weight * belt[row1]
+
+    valid = (rows >= 0.0) & (rows <= float(period - 1))
+    clipped_rows = np.clip(rows, 0.0, float(period - 1))
+    row0 = np.floor(clipped_rows).astype(np.int64)
+    row1 = np.minimum(row0 + 1, period - 1)
+    weight = (clipped_rows - row0)[:, None]
+    rendered = (1.0 - weight) * belt[row0] + weight * belt[row1]
+    rendered[~valid, :] = np.nan
+    return rendered
 
 
 def estimate_phase(
@@ -348,9 +364,15 @@ def refine_phase_by_registration(
     )
 
     losses: list[tuple[float, float]] = []
+    periodic = period_px is not None
     for offset in cfg.candidate_offsets():
         phase = wrap_phase(predicted_phase_px + float(offset), period_px)
-        expected = render_belt_view(belt, phase, observed.shape[0])
+        expected = render_belt_view(
+            belt,
+            phase,
+            observed.shape[0],
+            periodic=periodic,
+        )
         candidate_mask = valid_mask & np.isfinite(expected)
         expected_prepared = _prepare_for_registration(
             expected,
@@ -719,7 +741,9 @@ def _refine_quadratic_offset(
     best_loss, best_offset = losses[best_index]
     if not np.isfinite(refined_loss):
         return best_loss, best_offset
-    return min(best_loss, refined_loss), refined_offset
+    if refined_loss <= best_loss:
+        return refined_loss, refined_offset
+    return best_loss, best_offset
 
 
 def _box_blur(image: FloatArray, radius: int) -> FloatArray:
