@@ -297,7 +297,7 @@ def build_markdown(summaries: list[dict[str, Any]]) -> str:
             "",
             "## Interpreting ablations",
             "",
-            "- Lower absolute phase corrections and registration scores usually indicate a cleaner phase model and belt map.",
+            "- Lower absolute phase corrections and higher registration scores usually indicate a cleaner phase model and belt map.",
             "- Large detection-count changes should be checked against residual previews before interpreting them as improvements.",
             "- Velocity-ratio outliers outside the plausible physical range are a useful proxy for fragmented or mismatched tracks.",
             "- Low observed-map or contributed-map fractions indicate that map quality may be limited by insufficient belt coverage or excessive masking.",

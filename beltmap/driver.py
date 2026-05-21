@@ -307,7 +307,7 @@ def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> di
     phase_fraction = estimate.phase_px / period_px
     return {
         "frame_index": frame_index,
-        "image": str(path.relative_to(rt.DATA)),
+        "image": _relative_image_name(path, data_dir=rt.DATA),
         "phase_px": estimate.phase_px,
         "phase_fraction": phase_fraction,
         "phase_rad": phase_fraction * 2.0 * np.pi,
@@ -350,7 +350,7 @@ def detection_rows_for_frame(detections: list, path: Path, frame_index: int) -> 
             if field != "image"
         }
         row["frame_index"] = frame_index
-        row["image"] = str(path.relative_to(rt.DATA))
+        row["image"] = _relative_image_name(path, data_dir=rt.DATA)
         rows.append(row)
     return rows
 
@@ -392,7 +392,7 @@ def track_detection_rows(tracks: list, paths: list[Path]) -> list[dict]:
             row["track_id"] = track.track_id
             row["track_detection_index"] = detection_index
             row["frame_index"] = frame_index
-            row["image"] = str(paths[frame_index].relative_to(rt.DATA))
+            row["image"] = _relative_image_name(paths[frame_index], data_dir=rt.DATA)
             rows.append(row)
     return rows
 
@@ -953,6 +953,7 @@ def main() -> None:
     )
     tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
+    map_sampling_strategy = os.getenv("MAP_SAMPLING_STRATEGY", "uniform").strip().lower()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
     map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
     if map_particle_mask_mode_value:
@@ -1078,6 +1079,7 @@ def main() -> None:
         tracking_lateral_cost_weight=tracking_lateral_cost_weight,
         tracking_max_area_ratio=tracking_max_area_ratio,
         map_mask_iterations=map_mask_iterations,
+        map_sampling_strategy=map_sampling_strategy,
         map_particle_mask_threshold=map_particle_mask_threshold,
         map_particle_mask_mode=map_particle_mask_mode,
         map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
@@ -1172,6 +1174,7 @@ def main() -> None:
             mask_min_area_px=map_particle_mask_min_area_px,
             aggregation=map_aggregation,
             robust_iterations=map_robust_iterations,
+            sampling_strategy=map_sampling_strategy,
             robust_huber_delta=map_robust_huber_delta,
             robust_min_scale=map_robust_min_scale,
             fractional_splat=map_fractional_splat,
@@ -1726,6 +1729,7 @@ def main() -> None:
         "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
         "tracking_max_area_ratio": tracking_config.max_area_ratio,
         "map_mask_iterations": map_mask_iterations,
+        "map_sampling_strategy": map_sampling_strategy,
         "map_particle_mask_threshold": map_particle_mask_threshold,
         "map_particle_mask_mode": map_particle_mask_mode,
         "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
