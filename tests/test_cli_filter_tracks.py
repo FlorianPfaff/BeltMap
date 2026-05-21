@@ -133,6 +133,48 @@ def test_filter_tracks_cli_treats_zero_lateral_gate_as_disabled(tmp_path, capsys
     assert payload["track_filter"]["max_abs_x_velocity_px_per_frame"] is None
 
 
+def test_filter_tracks_cli_rejects_nonfinite_lateral_gate(tmp_path):
+    make_velocities(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_filter_tracks.main(
+            [
+                "--output-dir",
+                str(tmp_path),
+                "--max-abs-x-velocity-px-per-frame",
+                "nan",
+                "--quiet",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+
+
+def test_filter_tracks_preserves_recurrent_artifact_probability(tmp_path):
+    make_velocities(tmp_path)
+    track_rows = list(csv.DictReader((tmp_path / "tracks.csv").open()))
+    for row in track_rows:
+        row["recurrent_artifact_overlap_fraction"] = "0.125"
+        row["recurrent_artifact_probability"] = "0.25"
+        row["recurrent_artifact_required_peak_signal"] = "6.5"
+    write_csv(tmp_path / "tracks.csv", track_rows)
+
+    payload = cli_filter_tracks.filter_tracks(
+        tmp_path,
+        config=cli_filter_tracks.TrackFilterConfig(
+            min_track_length=5,
+            max_velocity_ratio_y=1.1,
+        ),
+    )
+
+    assert payload["accepted_track_detection_rows"] == 1
+    with (tmp_path / "filtered_tracks.csv").open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        filtered_track_rows = list(reader)
+    assert "recurrent_artifact_probability" in (reader.fieldnames or [])
+    assert filtered_track_rows[0]["recurrent_artifact_probability"] == "0.25"
+
+
 def test_filter_tracks_cli_reports_missing_velocities_without_traceback(tmp_path):
     tmp_path.mkdir(parents=True, exist_ok=True)
 
