@@ -135,6 +135,7 @@ def test_metadata_fields_round_trip_period_state():
     fields = metadata_fields(state)
 
     assert fields == {
+        "belt_map_height_px": 120,
         "model_period_px": None,
         "belt_period_known": False,
         "belt_map_periodic": False,

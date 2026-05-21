@@ -133,10 +133,11 @@ def require_period_known(state: BeltPeriodState, *, feature: str) -> None:
         )
 
 
-def metadata_fields(state: BeltPeriodState) -> dict[str, float | bool | str | None]:
+def metadata_fields(state: BeltPeriodState) -> dict[str, float | bool | str | int | None]:
     """Return stable metadata fields preserving finite-vs-periodic semantics."""
 
     return {
+        "belt_map_height_px": state.map_height_px,
         "model_period_px": state.model_period_px,
         "belt_period_known": state.period_known,
         "belt_map_periodic": state.periodic,
