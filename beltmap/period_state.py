@@ -59,6 +59,7 @@ def reused_period_state(
     height = _positive_int(map_height_px, name="map_height_px")
     supplied = _positive_float_or_none(supplied_period_px, name="supplied_period_px")
     meta = dict(metadata or {})
+    _validate_metadata_map_height(meta, height)
 
     metadata_period = _metadata_period(meta)
     if metadata_period is not None:
@@ -155,6 +156,18 @@ def _metadata_declares_finite(metadata: Mapping[str, Any]) -> bool:
         return True
     value = metadata.get("model_period_px")
     return value in (None, "") and "model_period_px" in metadata
+
+
+def _validate_metadata_map_height(metadata: Mapping[str, Any], height: int) -> None:
+    value = metadata.get("belt_map_height_px")
+    if value in (None, ""):
+        return
+    recorded_height = _positive_int(value, name="metadata belt_map_height_px")
+    if recorded_height != height:
+        raise ValueError(
+            "metadata belt_map_height_px must match reused belt-map height; "
+            f"got metadata height {recorded_height} for loaded height {height}"
+        )
 
 
 def _validate_reused_period_matches_height(period: float, height: int, *, source: str) -> None:
