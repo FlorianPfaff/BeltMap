@@ -7,6 +7,7 @@ from beltmap._driver_map import (
     accumulate_belt_map,
     build_belt_map,
     build_belt_map_result,
+    select_map_sample_indices,
     smooth_phase_corrections,
 )
 
@@ -54,6 +55,24 @@ def test_accumulate_belt_map_splats_fractional_phase_linearly(tmp_path, monkeypa
     assert coverage["contributed_pixels"] == 2
     assert coverage["observed_pixels"] == 3
     assert np.allclose(belt_map[:, 0], [10.0, 85.0, 110.0, 60.0])
+
+
+def test_adaptive_map_sampling_returns_unique_phase_coverage_indices():
+    samples = select_map_sample_indices(
+        frame_count=30,
+        sample_count=8,
+        velocity=7.0,
+        reference_phase=0.0,
+        model_period=31.0,
+        map_height=31,
+        crop_height=5,
+        sampling_strategy="adaptive_phase_coverage",
+    )
+
+    assert len(samples) == 8
+    assert samples == sorted(samples)
+    assert len(set(samples)) == len(samples)
+    assert all(0 <= index < 30 for index in samples)
 
 
 def test_phase_feedback_map_refinement_reduces_speed_jitter_blur(tmp_path, monkeypatch):

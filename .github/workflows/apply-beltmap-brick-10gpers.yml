@@ -34,7 +34,7 @@ on:
         description: "Threshold on normalized residual for bright brick particles"
         required: true
         type: string
-        default: "5.0"
+        default: "4.5"
       min_area_px:
         description: "Minimum connected-component particle area"
         required: true
@@ -44,12 +44,12 @@ on:
         description: "Detection gates as max_area,min_width,min_height,max_aspect,min_extent. 0 disables a gate."
         required: true
         type: string
-        default: "0,0,0,0,0"
+        default: "0,3,3,4.0,0.15"
       min_track_length:
         description: "Minimum detections per track for velocity output"
         required: true
         type: string
-        default: "2"
+        default: "3"
       max_frames:
         description: "Optional limit on processed frames. 0 = all selected frames."
         required: true
@@ -64,7 +64,7 @@ on:
         description: "Number of frames sampled to build the belt map"
         required: true
         type: string
-        default: "120"
+        default: "500"
       map_mask_iterations:
         description: "Particle-mask refinement iterations while building the belt map"
         required: true
@@ -93,7 +93,7 @@ on:
         description: "Morphological dilation radius for map-building particle masks"
         required: true
         type: string
-        default: "24"
+        default: "8"
       map_particle_mask_margin_px:
         description: "Safety margin around detected particle boxes during map building"
         required: true
@@ -103,22 +103,22 @@ on:
         description: "Static options as noise_sample,min_scale,noise_mask_threshold,noise_mask_margin,noise_min_area[,background_sample,background_mask_threshold,background_mask_margin,background_min_area]."
         required: true
         type: string
-        default: "0,0,0,8,4"
+        default: "0,0,4.0,16,4,500,4.0,16,4"
       recurrent_artifact_options:
         description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,reuse_map_path]]. 0,2,0.3 disables."
         required: true
         type: string
-        default: "0,2,0.3"
+        default: "3,4,0.3,soft,1.0"
       registration_search:
         description: "Local phase-registration search as radius,step in pixels"
         required: true
         type: string
-        default: "8.0,0.5"
+        default: "12.0,0.5"
       phase_refinement_iterations:
         description: "Phase-feedback map-refinement iterations. 0 = disabled."
         required: true
         type: string
-        default: "0"
+        default: "1"
       phase_refinement_min_score:
         description: "Minimum registration score accepted for phase-feedback refinement"
         required: true
@@ -128,7 +128,7 @@ on:
         description: "Maximum absolute phase correction accepted for phase-feedback refinement. 0 = disabled."
         required: true
         type: string
-        default: "0"
+        default: "4"
       phase_refinement_smoothing_window_frames:
         description: "Rolling-median smoothing window for accepted phase corrections"
         required: true
@@ -626,10 +626,21 @@ jobs:
           lines.append("[tracking]")
           append_value(lines, "min_track_length", "MIN_TRACK_LENGTH")
           append_value(lines, "max_match_distance_px", "MAX_MATCH_DISTANCE_PX", optional=True)
+          lines.append('max_frame_gap = "2"')
+          lines.append('area_cost_weight_px = "1.0"')
+          lines.append('signal_cost_weight_px = "0.5"')
+          lines.append('lateral_cost_weight = "0.25"')
+          lines.append('max_area_ratio = "3.0"')
           lines.append("")
 
           lines.append("[map]")
           append_value(lines, "sample_frames", "MAP_SAMPLE_FRAMES")
+          lines.append('sampling_strategy = "adaptive_phase_coverage"')
+          lines.append('reconstruction_trim_fraction = "0.05"')
+          lines.append('aggregation = "mean"')
+          lines.append('robust_iterations = "1"')
+          lines.append('robust_huber_delta = "3.0"')
+          lines.append('robust_min_scale = "1.0"')
           append_value(lines, "mask_iterations", "MAP_MASK_ITERATIONS")
           append_value(lines, "particle_mask_mode", "MAP_PARTICLE_MASK_MODE")
           append_value(lines, "particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD")
@@ -665,6 +676,13 @@ jobs:
               static_background,
           ):
               lines.append(f"{key} = {json.dumps(value)}")
+          lines.append("")
+
+          lines.append("[photometric]")
+          lines.append('enabled = "false"')
+          lines.append('trim_fraction = "0.05"')
+          lines.append('max_iterations = "3"')
+          lines.append('min_pixels = "10000"')
           lines.append("")
 
           lines.append("[recurrent_artifact]")

@@ -28,6 +28,9 @@ def test_nested_toml_config_maps_to_driver_environment(tmp_path):
         noise_exclusion_sigma = 3.5
         noise_exclusion_radius_px = 1
 
+        [map]
+        sampling_strategy = "adaptive_phase_coverage"
+
         [auto_velocity]
         allow_full_frame = true
         """,
@@ -45,6 +48,7 @@ def test_nested_toml_config_maps_to_driver_environment(tmp_path):
     assert env["MIN_AREA_PX"] == "6"
     assert env["RESIDUAL_NOISE_EXCLUSION_SIGMA"] == "3.5"
     assert env["RESIDUAL_NOISE_EXCLUSION_RADIUS_PX"] == "1"
+    assert env["MAP_SAMPLING_STRATEGY"] == "adaptive_phase_coverage"
     assert env["ALLOW_FULL_FRAME_AUTO_VELOCITY"] == "1"
     assert report["options"]["belt_region"]["source"].startswith("config:")
 
@@ -122,5 +126,6 @@ def test_config_template_writer(tmp_path):
     assert "velocity_px_per_frame" in text
     assert "max_bbox_aspect_ratio" in text
     assert "reconstruction_trim_fraction" in text
+    assert "sampling_strategy" in text
     assert "particle_mask_margin_px" in text
     assert "noise_exclusion_sigma" in text

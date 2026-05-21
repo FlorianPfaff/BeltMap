@@ -125,6 +125,7 @@ underscores.
 | `track_filter.max_velocity_ratio_y` | `TRACK_FILTER_MAX_VELOCITY_RATIO_Y` | `--track-filter-max-velocity-ratio-y` | `1.1` | ratio | Maximum accepted `velocity_ratio_y` for `filtered_velocities.csv`. |
 | `track_filter.max_abs_x_velocity_px_per_frame` | `TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME` | `--track-filter-max-abs-x-velocity-px-per-frame` | `0` | px/frame | Optional lateral-velocity gate. `0` disables this gate. |
 | `map.sample_frames` | `MAP_SAMPLE_FRAMES` | `--map-sample-frames` | `120` | frames | Number of frames sampled across the selected sequence to reconstruct the belt map. Must be at least 1. |
+| `map.sampling_strategy` | `MAP_SAMPLING_STRATEGY` | `--map-sampling-strategy` | `uniform` | mode | Frame sampling strategy for map reconstruction. `uniform` preserves the original linspace sampling; `adaptive_phase_coverage` spreads samples across nominal belt-coordinate coverage. |
 | `map.reconstruction_trim_fraction` | `MAP_RECONSTRUCTION_TRIM_FRACTION` | `--map-reconstruction-trim-fraction` | `0` | fraction | Symmetric per-pixel trim fraction for robust belt-map reconstruction. Must be in `[0, 0.5)`. |
 | `map.fractional_splat` | `MAP_FRACTIONAL_SPLAT` | `--map-fractional-splat` / `--no-map-fractional-splat` | `true` | bool | Use linear fractional row weights when accumulating belt-map pixels. When false, each image row contributes to its nearest belt-map row. |
 | `map.mask_iterations` | `MAP_MASK_ITERATIONS` | `--map-mask-iterations` | `1` | passes | Number of particle-masked belt-map refinement passes after the initial provisional map. `0` disables particle masking during map reconstruction. |
@@ -200,6 +201,24 @@ particle_mask_grow_threshold = 2.0
 particle_mask_dilation_px = 2
 particle_mask_margin_px = 8
 ```
+
+## Map-frame sampling
+
+By default, map reconstruction samples frames uniformly across the selected
+sequence. For periodic belt data, a small sample budget can still overrepresent
+some belt phases. Set `map.sampling_strategy = "adaptive_phase_coverage"` to
+select frames that cover more nominal belt-coordinate bins before filling the
+remaining budget:
+
+```toml
+[map]
+sample_frames = 500
+sampling_strategy = "adaptive_phase_coverage"
+```
+
+Use this with stable velocity/period settings. If phase registration diagnostics
+show large corrections or boundary hits, fix velocity, crop, or phase-refinement
+settings before trusting adaptive coverage.
 
 ## Detection-only reuse mode
 

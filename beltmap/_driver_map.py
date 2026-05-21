@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
@@ -12,12 +13,15 @@ import numpy as np
 from . import _driver_runtime as rt
 from ._driver_runtime import crop, emit, env_float, env_int, read_gray
 from .detection import detect_particles_from_residual
+from .operational_improvements import select_adaptive_map_frames
 from .phase import PhaseEstimate, PhaseRegistrationConfig, refine_phase_by_registration, render_belt_view
 from .residual import ResidualConfig, ResidualImage, generate_residual_image
 from .tracking import ParticleComponentConfig, extract_particle_detections
 
 MAP_PARTICLE_MASK_MODES = {"positive", "absolute", "hysteresis_abs"}
 MAP_AGGREGATION_METHODS = {"mean", "huber"}
+MAP_SAMPLING_STRATEGIES = {"uniform", "adaptive_phase_coverage"}
+MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
@@ -76,6 +80,22 @@ def sample_indices(frame_count: int, sample_count: int) -> list[int]:
     return sorted(set(int(i) for i in np.linspace(0, frame_count - 1, sample_count)))
 
 
+def validate_map_sampling_strategy(strategy: str) -> str:
+    """Return a normalized map-frame sampling strategy."""
+
+    normalized = strategy.strip().lower().replace("-", "_")
+    aliases = {
+        "adaptive": "adaptive_phase_coverage",
+        "adaptive_phase": "adaptive_phase_coverage",
+        "phase_coverage": "adaptive_phase_coverage",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in MAP_SAMPLING_STRATEGIES:
+        choices = ", ".join(sorted(MAP_SAMPLING_STRATEGIES))
+        raise ValueError(f"{MAP_SAMPLING_STRATEGY_ENV} must be one of {choices}, got {strategy!r}")
+    return normalized
+
+
 def validate_map_particle_mask_mode(mode: str) -> str:
     normalized = mode.strip().lower()
     if normalized not in MAP_PARTICLE_MASK_MODES:
@@ -132,6 +152,7 @@ def build_belt_map(
     robust_iterations: int = 1,
     robust_huber_delta: float = 3.0,
     robust_min_scale: float = 1.0,
+    sampling_strategy: str = "uniform",
     map_trim_fraction: float | None = None,
     fractional_splat: bool = True,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
@@ -152,6 +173,7 @@ def build_belt_map(
         robust_iterations=robust_iterations,
         robust_huber_delta=robust_huber_delta,
         robust_min_scale=robust_min_scale,
+        sampling_strategy=sampling_strategy,
         map_trim_fraction=map_trim_fraction,
         fractional_splat=fractional_splat,
         phase_feedback_config=phase_feedback_config,
@@ -184,6 +206,7 @@ def build_belt_map_result(
     robust_iterations: int = 1,
     robust_huber_delta: float = 3.0,
     robust_min_scale: float = 1.0,
+    sampling_strategy: str | None = None,
     map_trim_fraction: float | None = None,
     fractional_splat: bool = True,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
@@ -192,6 +215,10 @@ def build_belt_map_result(
         raise ValueError("paths must contain at least one image")
     mask_mode = validate_map_particle_mask_mode(mask_mode)
     aggregation = validate_map_aggregation(aggregation)
+    sampling_strategy = validate_map_sampling_strategy(
+        os.getenv(MAP_SAMPLING_STRATEGY_ENV, "uniform")
+        if sampling_strategy is None else sampling_strategy
+    )
     if mask_grow_threshold < 0:
         raise ValueError("mask_grow_threshold must be non-negative")
     if mask_dilation_px < 0:
@@ -213,7 +240,16 @@ def build_belt_map_result(
     _, _, crop_height, crop_width = region
     max_samples = env_int("MAP_SAMPLE_FRAMES", 120, minimum=1)
     map_height, reference_phase, model_period = map_geometry(len(paths), crop_height, velocity, supplied_period)
-    samples = sample_indices(len(paths), max_samples)
+    samples = select_map_sample_indices(
+        frame_count=len(paths),
+        sample_count=max_samples,
+        velocity=velocity,
+        reference_phase=reference_phase,
+        model_period=model_period,
+        map_height=map_height,
+        crop_height=crop_height,
+        sampling_strategy=sampling_strategy,
+    )
     emit(
         "belt_map",
         "building clean belt map",
@@ -221,6 +257,7 @@ def build_belt_map_result(
         selected_frames=len(paths),
         crop_height=crop_height,
         crop_width=crop_width,
+        sampling_strategy=sampling_strategy,
         map_height=map_height,
         mask_iterations=mask_iterations,
         mask_threshold=mask_threshold,
@@ -799,6 +836,44 @@ def detect_map_particle_mask(
     if margin_px > 0:
         particle_mask = _component_bbox_mask(particle_mask, residual=residual, min_area_px=1, margin_px=margin_px)
     return particle_mask
+
+
+def select_map_sample_indices(
+    *,
+    frame_count: int,
+    sample_count: int,
+    velocity: float,
+    reference_phase: float,
+    model_period: float | None,
+    map_height: int,
+    crop_height: int,
+    sampling_strategy: str,
+) -> list[int]:
+    """Select source frames for map reconstruction.
+
+    ``uniform`` preserves the original linspace sampling.  The adaptive strategy
+    uses nominal belt phases to spread samples across belt-coordinate coverage,
+    which is useful when a periodic run overrepresents some belt phases or when
+    the requested sample budget is smaller than the available sequence.
+    """
+
+    strategy = validate_map_sampling_strategy(sampling_strategy)
+    if strategy == "uniform":
+        return sample_indices(frame_count, sample_count)
+
+    phases = _constant_model_phases(
+        frame_count=frame_count,
+        velocity=velocity,
+        reference_phase=reference_phase,
+        model_period=model_period,
+    )
+    selected = select_adaptive_map_frames(
+        phases,
+        map_height_px=map_height,
+        sample_count=max(1, min(frame_count, sample_count)),
+        crop_height_px=max(1, crop_height),
+    )
+    return sorted({sample.frame_index for sample in selected})
 
 
 def refine_phase_feedback(

@@ -60,6 +60,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("max_frames", "MAX_FRAMES", "int", (("max_frames",), ("frames", "max_frames")), "Maximum number of selected frames to process. Use 0 for all frames.", "N"),
     ("frame_stride", "FRAME_STRIDE", "int", (("frame_stride",), ("frames", "stride")), "Process every Nth frame after natural sorting.", "N"),
     ("map_sample_frames", "MAP_SAMPLE_FRAMES", "int", (("map_sample_frames",), ("map", "sample_frames")), "Number of frames sampled to build the belt map.", "N"),
+    ("map_sampling_strategy", "MAP_SAMPLING_STRATEGY", "path", (("map_sampling_strategy",), ("map", "sampling_strategy")), "Frame sampling strategy for belt-map reconstruction: uniform or adaptive_phase_coverage.", "STRATEGY"),
     ("map_reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION", "float", (("map_reconstruction_trim_fraction",), ("map", "reconstruction_trim_fraction")), "Symmetric per-pixel trim fraction for robust belt-map reconstruction. Use 0 for the arithmetic mean.", "FRACTION"),
     ("map_fractional_splat", "MAP_FRACTIONAL_SPLAT", "bool", (("map_fractional_splat",), ("map", "fractional_splat")), "Use fractional row weights when accumulating belt-map pixels.", None),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
@@ -197,6 +198,7 @@ max_abs_x_velocity_px_per_frame = 0.0
 
 [map]
 sample_frames = 120
+sampling_strategy = "uniform"
 reconstruction_trim_fraction = 0.0
 fractional_splat = true
 mask_iterations = 1
