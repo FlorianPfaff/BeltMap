@@ -75,6 +75,12 @@ def reused_period_state(
             source="metadata",
         )
 
+    if _metadata_requires_missing_period(meta):
+        raise ValueError(
+            "metadata declares a periodic belt map but does not provide a "
+            "model_period_px or belt_period_px_input"
+        )
+
     if _metadata_declares_finite(meta):
         return BeltPeriodState(
             map_height_px=height,
@@ -147,6 +153,10 @@ def _metadata_period(metadata: Mapping[str, Any]) -> float | None:
         if value not in (None, ""):
             return _positive_float_or_none(value, name="belt_period_px_input")
     return None
+
+
+def _metadata_requires_missing_period(metadata: Mapping[str, Any]) -> bool:
+    return metadata.get("belt_period_known") is True or metadata.get("belt_map_periodic") is True
 
 
 def _metadata_declares_finite(metadata: Mapping[str, Any]) -> bool:
