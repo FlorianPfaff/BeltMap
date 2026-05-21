@@ -5,6 +5,7 @@ from .detection import (
     detect_particles_from_residual,
     detect_particles_from_residual_hysteresis,
     detection_signal_from_residual,
+    normalize_detection_mode,
 )
 from .phase import (
     BeltMotionModel,
@@ -79,6 +80,7 @@ __all__ = [
     "detect_particles_from_residual",
     "detect_particles_from_residual_hysteresis",
     "detection_signal_from_residual",
+    "normalize_detection_mode",
     "estimate_particle_velocities_vs_belt",
     "estimate_local_noise",
     "estimate_phase",

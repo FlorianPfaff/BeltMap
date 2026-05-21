@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from beltmap.detection import normalize_detection_mode
+
 try:  # Python 3.11+
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
@@ -130,14 +132,6 @@ CONFIG_KEY_ALIASES = {
     # Backwards-compatible aliases used by earlier result-improvement notes.
     ("detection", "grow_threshold"): "detection_low_threshold",
     ("tracking", "matching_strategy"): "tracking_assignment_method",
-}
-DETECTION_METHOD_MODE_ALIASES = {
-    "threshold": "positive",
-    "hysteresis": "positive",
-    "hysteresis_abs": "absolute",
-    "positive": "positive",
-    "negative": "negative",
-    "absolute": "absolute",
 }
 
 CONFIG_TEMPLATE = """# BeltMap image-sequence driver configuration.
@@ -360,13 +354,7 @@ def normalize_value(name: str, value: Any) -> str | None:
     if kind == "region":
         return format_region(value, name)
     if name == "detection_mode":
-        normalized = str(value).strip().lower()
-        legacy_method_aliases = {
-            "threshold": "positive",
-            "hysteresis": "positive",
-            "hysteresis_abs": "absolute",
-        }
-        return legacy_method_aliases.get(normalized, normalized)
+        return normalize_detection_mode(str(value))
     return str(value)
 
 
@@ -418,15 +406,7 @@ def values_from_config(path: Path | None) -> tuple[dict[str, str], dict[str, str
         name = CONFIG_KEY_TO_NAME.get(key_path)
         value = raw_value
         if key_path == ("detection", "method"):
-            method = str(raw_value).strip().lower()
-            if method not in DETECTION_METHOD_MODE_ALIASES:
-                choices = ", ".join(sorted(DETECTION_METHOD_MODE_ALIASES))
-                raise ValueError(
-                    f"Legacy config option 'detection.method' must be one of {choices}, "
-                    f"got {raw_value!r}"
-                )
             name = "detection_mode"
-            value = DETECTION_METHOD_MODE_ALIASES[method]
         if name is None:
             name = CONFIG_KEY_ALIASES.get(key_path)
         if name is None:

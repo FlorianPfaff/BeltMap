@@ -454,6 +454,7 @@ def smooth_phase_estimates(
                 loss=estimate.loss,
                 score=estimate.score,
                 method=_smoothed_method_name(estimate.method),
+                drift_px=estimate.drift_px,
             )
         )
     return smoothed
