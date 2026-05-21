@@ -17,6 +17,7 @@ def test_render_clean_belt_residual_marks_finite_strip_out_of_support_invalid():
         belt_map=belt,
         frame_index=0.0,
         phase_estimate=phase,
+        periodic=False,
     )
 
     assert not residual.mask[0].any()
