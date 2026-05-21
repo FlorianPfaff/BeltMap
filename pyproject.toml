@@ -63,6 +63,10 @@ beltmap-flux-summary = "beltmap.cli.flux_summary:main"
 beltmap-review = "beltmap.cli.review:main"
 beltmap-write-templates = "beltmap.cli.write_templates:main"
 beltmap-stream-snapshot = "beltmap.cli.stream_snapshot:main"
+beltmap-postrun-audit = "beltmap.cli.postrun_audit:main"
+beltmap-map-uncertainty = "beltmap.cli.map_uncertainty:main"
+beltmap-suggest-label-frames = "beltmap.cli.suggest_label_frames:main"
+beltmap-quality-contract = "beltmap.cli.quality_contract:main"
 
 [project.optional-dependencies]
 test = [

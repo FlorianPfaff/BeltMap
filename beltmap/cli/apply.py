@@ -197,7 +197,7 @@ max_abs_x_velocity_px_per_frame = 0.0
 
 [map]
 sample_frames = 120
-reconstruction_trim_fraction = 0.1
+reconstruction_trim_fraction = 0.0
 fractional_splat = true
 mask_iterations = 1
 particle_mask_mode = "positive"
