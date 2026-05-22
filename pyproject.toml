@@ -72,7 +72,7 @@ test = [
     "pytest>=7",
 ]
 speed = [
-    "scikit-image>=0.21",
+    "scikit-image>=0.26.0",
 ]
 
 [tool.poetry]
