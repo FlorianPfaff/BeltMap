@@ -6,6 +6,8 @@ BeltMap can handle cyclic belt coordinates when the physical belt period is supp
 
 The lower-level rendering and residual APIs support finite-support rendering. The period-state helper layer also distinguishes physical model periods from finite map support and validates reused metadata for obvious incompatibilities, such as stale `belt_map_height_px`, missing periodic period values, or period values that disagree with the loaded map height.
 
+New period-state metadata should include `belt_map_height_px`, `model_period_px`, `belt_period_known`, `belt_map_periodic`, and `belt_period_state_source` together. The height field is intentionally redundant with the array shape so reuse paths can detect stale metadata that belongs to a different `belt_map.npy`.
+
 The full image driver still has remaining period-metadata propagation work tracked in issue #28. In particular, driver orchestration must still be updated to construct its motion model from the resolved physical period state rather than treating every loaded map height as a physical cyclic period.
 
 Until that driver work is complete:
