@@ -395,11 +395,7 @@ def test_track_particle_detections_can_use_pyrecest_gnn_assignment(monkeypatch):
             assert kwargs["warn_on_no_meas_for_track"] is False
             return np.asarray([0], dtype=int)
 
-    monkeypatch.setattr(
-        tracking_module,
-        "_load_pyrecest_global_nearest_neighbor",
-        lambda: FakeGlobalNearestNeighbor,
-    )
+    monkeypatch.setattr(tracking_module, "GlobalNearestNeighbor", FakeGlobalNearestNeighbor)
     detections_by_frame = [
         [
             ParticleDetection(
@@ -426,6 +422,8 @@ def test_track_particle_detections_can_use_pyrecest_gnn_assignment(monkeypatch):
 
     assert [track.n_detections for track in tracks] == [2]
     assert calls["association_param"]["gating_distance_threshold"] == 5.0
+    assert calls["association_param"]["square_dist"] is False
+    assert calls["association_param"]["maximize_cardinality"] is True
     assert calls["log_prior_estimates"] is False
     assert calls["log_posterior_estimates"] is False
 
