@@ -7,7 +7,7 @@ name = "beltmap"
 version = "0.1.0"
 description = "Conveyor-belt map reconstruction and phase estimation tools"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.15"
 license = "MIT"
 authors = [
     { name = "Florian Pfaff" },
@@ -26,16 +26,15 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
-    "numpy>=1.23",
+    "numpy>=2.0",
     "pillow>=10",
-    "tomli>=2; python_version < '3.11'",
+    "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git@main",
 ]
 
 [project.urls]
@@ -73,7 +72,6 @@ test = [
     "pytest>=7",
 ]
 speed = [
-    "scipy>=1.10",
     "scikit-image>=0.21",
 ]
 

@@ -8,6 +8,8 @@ from typing import Any, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from pyrecest.filters import GlobalNearestNeighbor
+from pyrecest.utils import min_cost_max_cardinality_assignment
 
 from .detection import DETECTION_MODES, normalize_detection_mode
 from .residual import ResidualImage
@@ -19,7 +21,6 @@ _IMPORT_UNCHECKED = object()
 _IMPORT_MISSING = object()
 _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
-_SCIPY_OPTIMIZE: Any = _IMPORT_UNCHECKED
 _TRACKING_ASSIGNMENT_METHODS = {"global", "greedy", "pyrecest_gnn"}
 _VELOCITY_FIT_METHODS = {"linear", "theil_sen"}
 
@@ -147,14 +148,6 @@ class _AssociationCandidate:
     distance_px: float
     track_id: int
     detection_index: int
-
-
-@dataclass
-class _FlowEdge:
-    to: int
-    rev: int
-    capacity: int
-    cost: float
 
 
 def extract_particle_detections(
@@ -379,12 +372,13 @@ def _associate_pyrecest_gnn(
     if not candidate_track_ids:
         return []
 
-    GlobalNearestNeighbor = _load_pyrecest_global_nearest_neighbor()
     tracker = GlobalNearestNeighbor(
         initial_prior=initial_priors,
         association_param={
             "distance_metric_pos": "Euclidean",
+            "square_dist": False,
             "gating_distance_threshold": config.max_match_distance_px,
+            "maximize_cardinality": True,
             "max_new_tracks": max(len(current), len(candidate_track_ids), 1),
         },
         log_prior_estimates=False,
@@ -408,18 +402,6 @@ def _associate_pyrecest_gnn(
         for track_index, detection_index in enumerate(association)
         if 0 <= detection_index < len(current)
     ]
-
-
-def _load_pyrecest_global_nearest_neighbor() -> Any:
-    try:
-        from pyrecest.filters import GlobalNearestNeighbor
-    except ImportError as exc:  # pragma: no cover - exercised without optional extra
-        raise ImportError(
-            "ParticleTrackingConfig(assignment_method='pyrecest_gnn') requires "
-            "PyRecEst. Install it with `python -m pip install pyrecest` "
-            "or use assignment_method='greedy'."
-        ) from exc
-    return GlobalNearestNeighbor
 
 
 def estimate_particle_velocities_vs_belt(
@@ -961,18 +943,6 @@ def _load_skimage_measure() -> Any | None:
     return None if _SKIMAGE_MEASURE is _IMPORT_MISSING else _SKIMAGE_MEASURE
 
 
-def _load_scipy_optimize() -> Any | None:
-    global _SCIPY_OPTIMIZE
-    if _SCIPY_OPTIMIZE is _IMPORT_UNCHECKED:
-        try:
-            from scipy import optimize
-        except ImportError:
-            _SCIPY_OPTIMIZE = _IMPORT_MISSING
-        else:
-            _SCIPY_OPTIMIZE = optimize
-    return None if _SCIPY_OPTIMIZE is _IMPORT_MISSING else _SCIPY_OPTIMIZE
-
-
 def _component_structure(connectivity: int) -> NDArray[np.bool_]:
     if connectivity == 4:
         return np.array(
@@ -1228,103 +1198,22 @@ def _select_global_associations(
     candidate_track_ids = {candidate.track_id for candidate in candidates}
     track_ids = [track_id for track_id in active_track_ids if track_id in candidate_track_ids]
     track_index = {track_id: index for index, track_id in enumerate(track_ids)}
-    edges = [
-        (track_index[candidate.track_id], candidate.detection_index, candidate.cost)
-        for candidate in candidates
-    ]
-    return [
-        (track_ids[left_index], detection_index)
-        for left_index, detection_index in _min_cost_max_cardinality_matching(
-            len(track_ids),
-            detection_count,
-            edges,
+    cost_matrix = np.full((len(track_ids), detection_count), np.inf, dtype=np.float64)
+    for candidate in candidates:
+        cost_matrix[
+            track_index[candidate.track_id],
+            candidate.detection_index,
+        ] = min(
+            cost_matrix[track_index[candidate.track_id], candidate.detection_index],
+            candidate.cost,
         )
+
+    assignment = min_cost_max_cardinality_assignment(cost_matrix)["assignment"]
+    return [
+        (track_ids[track_index], int(detection_index))
+        for track_index, detection_index in enumerate(assignment)
+        if detection_index >= 0
     ]
-
-
-def _min_cost_max_cardinality_matching(
-    num_left: int,
-    num_right: int,
-    edges: Sequence[tuple[int, int, float]],
-) -> list[tuple[int, int]]:
-    """Return min-cost matching among all maximum-cardinality bipartite matchings."""
-
-    if num_left <= 0 or num_right <= 0 or not edges:
-        return []
-    source = 0
-    left_offset = 1
-    right_offset = left_offset + num_left
-    sink = right_offset + num_right
-    graph: list[list[_FlowEdge]] = [[] for _ in range(sink + 1)]
-
-    for left_index in range(num_left):
-        _add_flow_edge(graph, source, left_offset + left_index, 1, 0.0)
-    for right_index in range(num_right):
-        _add_flow_edge(graph, right_offset + right_index, sink, 1, 0.0)
-    for left_index, right_index, cost in sorted(edges, key=lambda item: (item[2], item[0], item[1])):
-        if 0 <= left_index < num_left and 0 <= right_index < num_right and np.isfinite(cost):
-            _add_flow_edge(graph, left_offset + left_index, right_offset + right_index, 1, float(cost))
-
-    while _augment_shortest_path(graph, source, sink):
-        pass
-
-    assignments: list[tuple[int, int]] = []
-    for left_index in range(num_left):
-        node = left_offset + left_index
-        for edge in graph[node]:
-            right_index = edge.to - right_offset
-            if 0 <= right_index < num_right and edge.capacity == 0:
-                assignments.append((left_index, right_index))
-                break
-    return assignments
-
-
-def _add_flow_edge(
-    graph: list[list[_FlowEdge]],
-    source: int,
-    target: int,
-    capacity: int,
-    cost: float,
-) -> None:
-    graph[source].append(_FlowEdge(to=target, rev=len(graph[target]), capacity=capacity, cost=cost))
-    graph[target].append(_FlowEdge(to=source, rev=len(graph[source]) - 1, capacity=0, cost=-cost))
-
-
-def _augment_shortest_path(graph: list[list[_FlowEdge]], source: int, sink: int) -> bool:
-    distances = [float("inf")] * len(graph)
-    parent_node = [-1] * len(graph)
-    parent_edge = [-1] * len(graph)
-    distances[source] = 0.0
-    queue = [source]
-    in_queue = [False] * len(graph)
-    in_queue[source] = True
-    head = 0
-    while head < len(queue):
-        node = queue[head]
-        head += 1
-        in_queue[node] = False
-        for edge_index, edge in enumerate(graph[node]):
-            if edge.capacity <= 0:
-                continue
-            next_distance = distances[node] + edge.cost
-            if next_distance + 1e-12 < distances[edge.to]:
-                distances[edge.to] = next_distance
-                parent_node[edge.to] = node
-                parent_edge[edge.to] = edge_index
-                if not in_queue[edge.to]:
-                    queue.append(edge.to)
-                    in_queue[edge.to] = True
-    if parent_node[sink] < 0:
-        return False
-
-    node = sink
-    while node != source:
-        previous = parent_node[node]
-        edge = graph[previous][parent_edge[node]]
-        edge.capacity -= 1
-        graph[node][edge.rev].capacity += 1
-        node = previous
-    return True
 
 
 def _with_frame_index(
