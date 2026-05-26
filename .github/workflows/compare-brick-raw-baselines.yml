@@ -1,0 +1,280 @@
+name: Compare Brick raw-image baselines
+
+run-name: >-
+  Brick raw baselines max_frames=${{ inputs.max_frames || '1000' }}
+  stride=${{ inputs.frame_stride || '1' }}
+  velocity=${{ inputs.belt_velocity_px_per_frame || '59.16' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_frames:
+        description: "Frames to process. 0 processes all selected frames."
+        required: true
+        type: string
+        default: "1000"
+      frame_stride:
+        description: "Process every Nth frame after natural sorting."
+        required: true
+        type: string
+        default: "1"
+      belt_region:
+        description: "Crop: top,left,height,width. Default matches recent Brick comparison runs."
+        required: true
+        type: string
+        default: "0,220,1180,1800"
+      belt_velocity_px_per_frame:
+        description: "Belt image velocity in px/frame, used for track velocity ratios."
+        required: true
+        type: string
+        default: "59.16"
+      detection_threshold:
+        description: "Threshold on normalized residual / raw robust z-score."
+        required: true
+        type: string
+        default: "5.0"
+      low_threshold:
+        description: "Optional hysteresis low threshold. 0 disables hysteresis."
+        required: true
+        type: string
+        default: "0"
+      detection_shape_gates:
+        description: "Detection gates as max_area,min_width,min_height,max_aspect,min_extent. 0 disables a gate."
+        required: true
+        type: string
+        default: "0,3,3,4.0,0.15"
+      min_area_px:
+        description: "Minimum connected-component particle area."
+        required: true
+        type: string
+        default: "4"
+      average_sample_frames:
+        description: "Frames sampled across the selected source to estimate the average image."
+        required: true
+        type: string
+        default: "400"
+      average_source:
+        description: "Use all discovered frames or only selected frames for the average image."
+        required: true
+        type: choice
+        options:
+          - all
+          - selected
+        default: all
+      methods:
+        description: "Comma-separated methods: raw_zscore,raw_minus_average."
+        required: true
+        type: string
+        default: "raw_zscore,raw_minus_average"
+      preview_frames:
+        description: "Comma-separated processed frame indices for residual previews/contact sheets."
+        required: true
+        type: string
+        default: "0,250,500,750"
+      beltmap_run_id:
+        description: "Optional prior run ID whose BeltMap artifact should be included in the report."
+        required: false
+        type: string
+        default: ""
+      beltmap_artifact_name:
+        description: "Artifact name to download from beltmap_run_id."
+        required: true
+        type: string
+        default: "beltmap-brick-10gpers-scikit-image-results"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  POETRY_NO_INTERACTION: "1"
+  POETRY_VERSION: "2.2.1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+
+jobs:
+  compare-raw-baselines:
+    name: Compare raw baselines
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: |
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
+
+      - name: Install BeltMap and speed dependencies
+        run: |
+          rm -rf .venv
+          poetry install --with test --extras speed
+          poetry run python -m py_compile scripts/compare_raw_baselines.py
+
+      - name: Prepare Zenodo dataset from local runner dataset cache
+        env:
+          DATASET_URL: "https://zenodo.org/records/7802579/files/images_Brick_10gpers.zip?download=1"
+        run: |
+          set -euo pipefail
+
+          DATASET_CACHE_ROOT="$HOME/.cache/datasets"
+          DATASET_NAME="images_Brick_10gpers"
+          CACHE_IMAGES="$DATASET_CACHE_ROOT/$DATASET_NAME"
+          CACHE_ZIP="$DATASET_CACHE_ROOT/$DATASET_NAME.zip"
+          CACHE_TMP="$DATASET_CACHE_ROOT/$DATASET_NAME.tmp"
+
+          mkdir -p "$DATASET_CACHE_ROOT" data outputs
+
+          if find -L "$CACHE_IMAGES" -type f 2>/dev/null | grep -q .; then
+            echo "Local extracted dataset cache hit: $CACHE_IMAGES"
+          else
+            echo "Local extracted dataset cache miss or empty: $CACHE_IMAGES"
+            rm -rf "$CACHE_TMP"
+            mkdir -p "$CACHE_TMP"
+            if [ ! -s "$CACHE_ZIP" ]; then
+              echo "Local dataset zip cache miss; downloading Zenodo zip to $CACHE_ZIP"
+              rm -f "$CACHE_ZIP.tmp"
+              curl -L --fail --retry 5 --retry-delay 10 --connect-timeout 30 \
+                -o "$CACHE_ZIP.tmp" "$DATASET_URL"
+              mv "$CACHE_ZIP.tmp" "$CACHE_ZIP"
+            else
+              echo "Local dataset zip cache hit: $CACHE_ZIP"
+            fi
+            poetry run python -c \
+              'import sys; from zipfile import ZipFile; ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$CACHE_ZIP" "$CACHE_TMP"
+            rm -rf "$CACHE_IMAGES"
+            mv "$CACHE_TMP" "$CACHE_IMAGES"
+          fi
+
+          rm -rf data/images data/images_Brick_10gpers.zip
+          ln -s "$CACHE_IMAGES" data/images
+          [ ! -s "$CACHE_ZIP" ] || ln -s "$CACHE_ZIP" data/images_Brick_10gpers.zip
+
+          echo "Dataset size summary:"
+          du -shL data/images data/images_Brick_10gpers.zip 2>/dev/null || true
+          echo "Number of extracted image files:"
+          find -L data/images -type f | wc -l
+          printf 'data/images -> %s\n' "$(readlink -f data/images)"
+
+      - name: Download optional BeltMap artifact
+        if: ${{ inputs.beltmap_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BELTMAP_RUN_ID: ${{ inputs.beltmap_run_id }}
+          BELTMAP_ARTIFACT_NAME: ${{ inputs.beltmap_artifact_name }}
+        run: |
+          set -euo pipefail
+          rm -rf outputs/beltmap-artifact
+          mkdir -p outputs/beltmap-artifact
+          gh run download "$BELTMAP_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$BELTMAP_ARTIFACT_NAME" \
+            --dir outputs/beltmap-artifact
+          test -f outputs/beltmap-artifact/detections.csv
+
+      - name: Run raw baseline comparison
+        env:
+          MAX_FRAMES: ${{ inputs.max_frames }}
+          FRAME_STRIDE: ${{ inputs.frame_stride }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
+          DETECTION_THRESHOLD: ${{ inputs.detection_threshold }}
+          LOW_THRESHOLD: ${{ inputs.low_threshold }}
+          DETECTION_SHAPE_GATES: ${{ inputs.detection_shape_gates }}
+          MIN_AREA_PX: ${{ inputs.min_area_px }}
+          AVERAGE_SAMPLE_FRAMES: ${{ inputs.average_sample_frames }}
+          AVERAGE_SOURCE: ${{ inputs.average_source }}
+          METHODS: ${{ inputs.methods }}
+          PREVIEW_FRAMES: ${{ inputs.preview_frames }}
+          BELTMAP_RUN_ID: ${{ inputs.beltmap_run_id }}
+        run: |
+          set -euo pipefail
+
+          IFS=',' read -r MAX_AREA MIN_WIDTH MIN_HEIGHT MAX_ASPECT MIN_EXTENT <<< "$DETECTION_SHAPE_GATES"
+          method_args=()
+          IFS=',' read -ra requested_methods <<< "$METHODS"
+          for method in "${requested_methods[@]}"; do
+            method="$(echo "$method" | xargs)"
+            if [ -n "$method" ]; then
+              method_args+=(--method "$method")
+            fi
+          done
+
+          low_args=()
+          if [ -n "$LOW_THRESHOLD" ]; then
+            low_args+=(--low-threshold "$LOW_THRESHOLD")
+          fi
+
+          beltmap_args=()
+          if [ -n "$BELTMAP_RUN_ID" ]; then
+            beltmap_args+=(--beltmap-run outputs/beltmap-artifact)
+          fi
+
+          poetry run python scripts/compare_raw_baselines.py \
+            --image-dir data/images \
+            --output-dir outputs/raw-baseline-comparison \
+            --max-frames "$MAX_FRAMES" \
+            --frame-stride "$FRAME_STRIDE" \
+            --belt-region "$BELT_REGION" \
+            --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
+            --average-sample-frames "$AVERAGE_SAMPLE_FRAMES" \
+            --average-source "$AVERAGE_SOURCE" \
+            --threshold "$DETECTION_THRESHOLD" \
+            "${low_args[@]}" \
+            --min-area-px "$MIN_AREA_PX" \
+            --max-area-px "$MAX_AREA" \
+            --min-bbox-width-px "$MIN_WIDTH" \
+            --min-bbox-height-px "$MIN_HEIGHT" \
+            --max-bbox-aspect-ratio "$MAX_ASPECT" \
+            --min-bbox-extent "$MIN_EXTENT" \
+            --split-merged-components \
+            --split-min-projection-gap-px 1 \
+            --split-min-component-area-px 4 \
+            --min-track-length 2 \
+            --tracking-assignment-method global \
+            --tracking-max-frame-gap 2 \
+            --tracking-area-cost-weight-px 1.0 \
+            --tracking-signal-cost-weight-px 0.5 \
+            --tracking-lateral-cost-weight 0.25 \
+            --tracking-max-area-ratio 3.0 \
+            --velocity-fit-method theil_sen \
+            --track-filter-min-length 5 \
+            --track-filter-min-velocity-ratio-y 0.0 \
+            --track-filter-max-velocity-ratio-y 1.1 \
+            --preview-frames "$PREVIEW_FRAMES" \
+            "${method_args[@]}" \
+            "${beltmap_args[@]}"
+
+      - name: Publish job summary
+        if: always()
+        run: |
+          if [ -f outputs/raw-baseline-comparison/raw_baseline_summary.md ]; then
+            cat outputs/raw-baseline-comparison/raw_baseline_summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/raw-baseline-comparison/comparison_report/comparison_report.md ]; then
+            {
+              echo
+              echo "## Full comparison report"
+              cat outputs/raw-baseline-comparison/comparison_report/comparison_report.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload raw baseline comparison outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: beltmap-brick-raw-baseline-comparison
+          path: outputs/raw-baseline-comparison/**
+          if-no-files-found: warn
+          retention-days: 14
