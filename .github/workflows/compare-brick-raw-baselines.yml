@@ -100,10 +100,10 @@ jobs:
 
     steps:
       - name: Check out BeltMap
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -272,7 +272,7 @@ jobs:
 
       - name: Upload raw baseline comparison outputs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: beltmap-brick-raw-baseline-comparison
           path: outputs/raw-baseline-comparison/**
