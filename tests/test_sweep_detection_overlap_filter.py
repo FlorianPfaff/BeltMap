@@ -78,6 +78,8 @@ def test_sweep_detection_overlap_filter_writes_summary(tmp_path):
             str(output_root),
             "--spec",
             "tight:0.1:0:0.5",
+            "--track-rescue-max-frame-distance",
+            "1",
             "--quiet",
         ]
     )
@@ -86,5 +88,6 @@ def test_sweep_detection_overlap_filter_writes_summary(tmp_path):
     rows = list(csv.DictReader((output_root / "sweep_summary.csv").open(newline="", encoding="utf-8")))
     assert rows[0]["label"] == "tight"
     assert rows[0]["n_detections"] == "1"
+    assert rows[0]["track_rescue_max_frame_distance"] == "1.0"
     assert (output_root / "sweep_summary.md").is_file()
     assert (output_root / "tight" / "detections.csv").is_file()

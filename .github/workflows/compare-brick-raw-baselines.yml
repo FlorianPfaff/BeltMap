@@ -100,7 +100,12 @@ on:
         description: "Track rescue gates as min_detections,min_confirmed,min_confirmed_fraction."
         required: true
         type: string
-        default: "3,2,0.3"
+        default: "3,1,0.1"
+      raw_confirmation_track_rescue_max_frame_distance:
+        description: "Maximum selected-frame distance from a directly raw-confirmed detection for track rescue. Empty rescues whole qualifying tracks."
+        required: false
+        type: string
+        default: "3"
       raw_confirmation_dedupe:
         description: "Duplicate suppression as dedupe_iou,dedupe_containment,dedupe_center_distance,dedupe_margin. 0 disables a gate."
         required: true
@@ -291,6 +296,7 @@ jobs:
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
           RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
           RAW_CONFIRMATION_TRACK_RESCUE: ${{ inputs.raw_confirmation_track_rescue }}
+          RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE: ${{ inputs.raw_confirmation_track_rescue_max_frame_distance }}
           RAW_CONFIRMATION_DEDUPE: ${{ inputs.raw_confirmation_dedupe }}
         run: |
           set -euo pipefail
@@ -301,6 +307,10 @@ jobs:
           IFS=',' read -r MIN_IOU MAX_CENTER CANDIDATE_MARGIN CONFIRMING_MARGIN <<< "$RAW_CONFIRMATION_OVERLAP"
           IFS=',' read -r RESCUE_MIN_DETECTIONS RESCUE_MIN_CONFIRMED RESCUE_MIN_FRACTION <<< "$RAW_CONFIRMATION_TRACK_RESCUE"
           IFS=',' read -r DEDUPE_IOU DEDUPE_CONTAINMENT DEDUPE_CENTER DEDUPE_MARGIN <<< "$RAW_CONFIRMATION_DEDUPE"
+          rescue_frame_distance_args=()
+          if [ -n "${RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE:-}" ]; then
+            rescue_frame_distance_args+=(--track-rescue-max-frame-distance "$RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE")
+          fi
           poetry run python scripts/filter_run_by_detection_overlap.py \
             --candidate-run outputs/beltmap-artifact \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
@@ -313,6 +323,7 @@ jobs:
             --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
             --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
             --track-rescue-min-confirmed-fraction "$RESCUE_MIN_FRACTION" \
+            "${rescue_frame_distance_args[@]}" \
             --dedupe-iou-threshold "$DEDUPE_IOU" \
             --dedupe-containment-threshold "$DEDUPE_CONTAINMENT" \
             --dedupe-center-distance-px "$DEDUPE_CENTER" \
@@ -351,6 +362,9 @@ jobs:
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
             --output-root outputs/raw-baseline-comparison/raw_confirmation_sweep \
             --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
+            --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
+            --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
+            "${rescue_frame_distance_args[@]}" \
             --dedupe-iou-threshold "$DEDUPE_IOU" \
             --dedupe-containment-threshold "$DEDUPE_CONTAINMENT" \
             --dedupe-center-distance-px "$DEDUPE_CENTER" \

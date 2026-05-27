@@ -114,6 +114,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-rescue-min-confirmed", type=int, default=2)
     parser.add_argument("--track-rescue-min-confirmed-fraction", type=float, default=0.3)
     parser.add_argument(
+        "--track-rescue-max-frame-distance",
+        type=float,
+        default=None,
+        help=(
+            "Only rescue unconfirmed detections this many selected frames from a directly confirmed detection "
+            "in the same original track. Omit to rescue the whole qualifying track."
+        ),
+    )
+    parser.add_argument(
         "--dedupe-iou-threshold",
         type=float,
         default=0.0,
@@ -167,6 +176,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("track rescue count thresholds must be positive")
     if not 0.0 <= args.track_rescue_min_confirmed_fraction <= 1.0:
         raise ValueError("--track-rescue-min-confirmed-fraction must be in [0, 1]")
+    if args.track_rescue_max_frame_distance is not None and (
+        args.track_rescue_max_frame_distance < 0 or not math.isfinite(args.track_rescue_max_frame_distance)
+    ):
+        raise ValueError("--track-rescue-max-frame-distance must be finite and non-negative")
     for name in ("dedupe_iou_threshold", "dedupe_containment_threshold"):
         value = getattr(args, name)
         if not 0.0 <= value <= 1.0:
@@ -291,17 +304,28 @@ def rescued_detection_keys(
     min_detections: int,
     min_confirmed: int,
     min_confirmed_fraction: float,
+    max_frame_distance: float | None,
 ) -> set[tuple[int, int]]:
     rescued: set[tuple[int, int]] = set()
     for track_id, keys in track_to_keys.items():
         if len(keys) < min_detections:
             continue
-        confirmed = len(keys & confirmed_keys)
+        track_confirmed_keys = keys & confirmed_keys
+        confirmed = len(track_confirmed_keys)
         if confirmed < min_confirmed:
             continue
         if confirmed / len(keys) < min_confirmed_fraction:
             continue
-        rescued.update(key for key in keys if key_to_track.get(key) == track_id)
+        if max_frame_distance is None:
+            rescued.update(key for key in keys if key_to_track.get(key) == track_id)
+            continue
+        confirmed_frames = [frame_index for frame_index, _label in track_confirmed_keys]
+        rescued.update(
+            key
+            for key in keys
+            if key_to_track.get(key) == track_id
+            and any(abs(key[0] - frame_index) <= max_frame_distance for frame_index in confirmed_frames)
+        )
     return rescued
 
 
@@ -603,6 +627,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             min_detections=args.track_rescue_min_detections,
             min_confirmed=args.track_rescue_min_confirmed,
             min_confirmed_fraction=args.track_rescue_min_confirmed_fraction,
+            max_frame_distance=args.track_rescue_max_frame_distance,
         )
 
     kept_rows: list[dict[str, Any]] = []
@@ -718,6 +743,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "track_rescue_min_detections": args.track_rescue_min_detections,
             "track_rescue_min_confirmed": args.track_rescue_min_confirmed,
             "track_rescue_min_confirmed_fraction": args.track_rescue_min_confirmed_fraction,
+            "track_rescue_max_frame_distance": args.track_rescue_max_frame_distance,
             "track_rescued_detections": sum(1 for row in kept_rows if row["confirmation_rescued_by_track"]),
             "dedupe_iou_threshold": args.dedupe_iou_threshold,
             "dedupe_containment_threshold": args.dedupe_containment_threshold,

@@ -169,6 +169,62 @@ def test_filter_run_can_rescue_unmatched_detections_from_confirmed_tracks(tmp_pa
     assert metadata["confirmation"]["track_rescued_detections"] == 1
 
 
+def test_filter_run_can_limit_track_rescue_to_nearby_confirmed_detections(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    candidate_detections = [
+        detection(1, x=10, y=10, frame_index=0),
+        detection(1, x=15, y=10, frame_index=1),
+        detection(1, x=20, y=10, frame_index=2),
+        detection(1, x=25, y=10, frame_index=3),
+    ]
+    make_run(candidate, candidate_detections)
+    make_run(confirming, [detection(1, x=10, y=10, frame_index=0)])
+    write_csv(
+        candidate / "tracks.csv",
+        [
+            {"track_id": 7, "track_detection_index": index, **row}
+            for index, row in enumerate(candidate_detections)
+        ],
+        ["track_id", "track_detection_index", *overlap_filter.DETECTION_FIELDS],
+    )
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.1",
+            "--max-center-distance-px",
+            "0",
+            "--track-rescue-min-detections",
+            "3",
+            "--track-rescue-min-confirmed",
+            "1",
+            "--track-rescue-min-confirmed-fraction",
+            "0.1",
+            "--track-rescue-max-frame-distance",
+            "1",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    assert [row["frame_index"] for row in kept] == ["0", "1"]
+    assert [row["frame_index"] for row in rejected] == ["2", "3"]
+    assert kept[-1]["confirmation_rescued_by_track"] == "True"
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["confirmation"]["track_rescue_max_frame_distance"] == 1.0
+    assert metadata["confirmation"]["track_rescued_detections"] == 1
+
+
 def test_filter_run_can_use_one_to_one_confirmation(tmp_path):
     candidate = tmp_path / "candidate"
     confirming = tmp_path / "confirming"
