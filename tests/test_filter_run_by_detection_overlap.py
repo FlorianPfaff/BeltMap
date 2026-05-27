@@ -167,3 +167,64 @@ def test_filter_run_can_rescue_unmatched_detections_from_confirmed_tracks(tmp_pa
     assert kept[-1]["confirmation_rescued_by_track"] == "True"
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["confirmation"]["track_rescued_detections"] == 1
+
+
+def test_filter_run_can_use_one_to_one_confirmation(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    make_run(candidate, [detection(1, x=10, y=10), detection(2, x=12, y=10)])
+    make_run(confirming, [detection(1, x=10, y=10)])
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.01",
+            "--max-center-distance-px",
+            "10",
+            "--one-to-one-confirmation",
+            "--disable-track-rescue",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    assert [row["label"] for row in kept] == ["1"]
+    assert [row["label"] for row in rejected] == ["2"]
+
+
+def test_filter_run_allows_many_to_one_confirmation_by_default(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    make_run(candidate, [detection(1, x=10, y=10), detection(2, x=12, y=10)])
+    make_run(confirming, [detection(1, x=10, y=10)])
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.01",
+            "--max-center-distance-px",
+            "10",
+            "--disable-track-rescue",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    assert [row["label"] for row in kept] == ["1", "2"]

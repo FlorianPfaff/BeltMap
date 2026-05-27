@@ -335,6 +335,13 @@ jobs:
             --frames "$PREVIEW_FRAMES" \
             --quiet
 
+          poetry run python scripts/sweep_detection_overlap_filter.py \
+            --candidate-run outputs/beltmap-artifact \
+            --confirming-run outputs/raw-baseline-comparison/raw_zscore \
+            --output-root outputs/raw-baseline-comparison/raw_confirmation_sweep \
+            --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
+            --quiet
+
       - name: Publish job summary
         if: always()
         run: |
@@ -346,6 +353,13 @@ jobs:
               echo
               echo "## Full comparison report"
               cat outputs/raw-baseline-comparison/comparison_report/comparison_report.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/raw-baseline-comparison/raw_confirmation_sweep/sweep_summary.md ]; then
+            {
+              echo
+              echo "## Raw-confirmation sweep"
+              cat outputs/raw-baseline-comparison/raw_confirmation_sweep/sweep_summary.md
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

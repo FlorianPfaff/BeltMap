@@ -96,6 +96,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-center-distance-px", type=float, default=35.0)
     parser.add_argument("--candidate-margin-px", type=float, default=2.0)
     parser.add_argument("--confirming-margin-px", type=float, default=2.0)
+    parser.add_argument(
+        "--one-to-one-confirmation",
+        action="store_true",
+        help="Allow each confirming detection to confirm at most one candidate detection per frame.",
+    )
+    parser.add_argument(
+        "--allow-many-to-one-confirmation",
+        dest="one_to_one_confirmation",
+        action="store_false",
+        help="Compatibility no-op; many-to-one confirmation is the default.",
+    )
     parser.add_argument("--disable-track-rescue", action="store_true")
     parser.add_argument("--track-rescue-min-detections", type=int, default=3)
     parser.add_argument("--track-rescue-min-confirmed", type=int, default=2)
@@ -312,6 +323,52 @@ def best_confirmation(
     return None, best_iou, best_distance
 
 
+def confirmation_matches(
+    candidates: list[dict[str, str]],
+    confirmers: list[dict[str, str]],
+    *,
+    min_iou: float,
+    max_center_distance_px: float,
+    candidate_margin_px: float,
+    confirming_margin_px: float,
+    one_to_one: bool,
+) -> dict[int, tuple[dict[str, str], float, float]]:
+    """Match candidates to confirming detections within one frame."""
+
+    pairs: list[tuple[float, float, int, int, float, float]] = []
+    best_by_candidate: dict[int, tuple[int, float, float]] = {}
+    for candidate_index, candidate in enumerate(candidates):
+        candidate_bbox = expanded_bbox(candidate, margin=candidate_margin_px)
+        for confirmer_index, confirmer in enumerate(confirmers):
+            iou = bbox_iou(candidate_bbox, expanded_bbox(confirmer, margin=confirming_margin_px))
+            distance = center_distance(candidate, confirmer)
+            is_match = iou >= min_iou or distance <= max_center_distance_px
+            if not is_match:
+                continue
+            # IoU dominates the match score; distance breaks ties and handles
+            # center-distance-only matches.
+            score = iou if iou > 0 else max(0.0, 1.0 - distance / max(max_center_distance_px, 1.0)) * 1e-3
+            pairs.append((score, -distance, candidate_index, confirmer_index, iou, distance))
+            current = best_by_candidate.get(candidate_index)
+            if current is None or iou > current[1] or (iou == current[1] and distance < current[2]):
+                best_by_candidate[candidate_index] = (confirmer_index, iou, distance)
+
+    if not one_to_one:
+        return {
+            candidate_index: (confirmers[confirmer_index], iou, distance)
+            for candidate_index, (confirmer_index, iou, distance) in best_by_candidate.items()
+        }
+
+    matches: dict[int, tuple[dict[str, str], float, float]] = {}
+    used_confirmers: set[int] = set()
+    for _score, _negative_distance, candidate_index, confirmer_index, iou, distance in sorted(pairs, reverse=True):
+        if candidate_index in matches or confirmer_index in used_confirmers:
+            continue
+        matches[candidate_index] = (confirmers[confirmer_index], iou, distance)
+        used_confirmers.add(confirmer_index)
+    return matches
+
+
 def infer_n_images(candidate_run: Path, candidate_rows: list[dict[str, str]]) -> int:
     metadata = read_json(candidate_run / "metadata.json")
     n_images = metadata.get("n_images")
@@ -349,16 +406,27 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
 
     annotated_rows: list[dict[str, Any]] = []
     confirmed_keys: set[tuple[int, int]] = set()
-    for row in candidate_rows:
-        frame_index = int(float(row["frame_index"]))
-        match, iou, distance = best_confirmation(
-            row,
+    candidate_by_frame = group_by_frame(candidate_rows)
+    matches_by_key: dict[tuple[int, int], tuple[dict[str, str], float, float]] = {}
+    for frame_index, frame_candidates in candidate_by_frame.items():
+        frame_matches = confirmation_matches(
+            frame_candidates,
             confirming_by_frame.get(frame_index, []),
             min_iou=args.min_iou,
             max_center_distance_px=args.max_center_distance_px,
             candidate_margin_px=args.candidate_margin_px,
             confirming_margin_px=args.confirming_margin_px,
+            one_to_one=args.one_to_one_confirmation,
         )
+        for candidate_index, match in frame_matches.items():
+            matches_by_key[detection_key(frame_candidates[candidate_index])] = match
+
+    for row in candidate_rows:
+        key = detection_key(row)
+        match_tuple = matches_by_key.get(key)
+        match = None if match_tuple is None else match_tuple[0]
+        iou = 0.0 if match_tuple is None else match_tuple[1]
+        distance = math.inf if match_tuple is None else match_tuple[2]
         annotated = dict(row)
         annotated["confirmation_iou"] = iou
         annotated["confirmation_center_distance_px"] = "" if not math.isfinite(distance) else distance
@@ -368,7 +436,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         if match is None:
             annotated_rows.append(annotated)
         else:
-            confirmed_keys.add(detection_key(row))
+            confirmed_keys.add(key)
             annotated_rows.append(annotated)
 
     rescued_keys: set[tuple[int, int]] = set()
@@ -486,6 +554,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "max_center_distance_px": args.max_center_distance_px,
             "candidate_margin_px": args.candidate_margin_px,
             "confirming_margin_px": args.confirming_margin_px,
+            "one_to_one": args.one_to_one_confirmation,
             "track_rescue_enabled": not args.disable_track_rescue,
             "track_rescue_min_detections": args.track_rescue_min_detections,
             "track_rescue_min_confirmed": args.track_rescue_min_confirmed,
