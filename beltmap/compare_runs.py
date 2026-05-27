@@ -134,6 +134,8 @@ class RunData:
     filtered_velocities: list[dict[str, str]]
     filtered_tracks: list[dict[str, str]]
     preview_paths: dict[int, Path]
+    fixed_preview_paths: dict[int, Path]
+    raw_preview_paths: dict[int, Path]
     detections_by_frame: dict[int, list[DetectionRecord]]
     filtered_detections_by_frame: dict[int, list[DetectionRecord]]
 
@@ -154,6 +156,23 @@ def read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def find_named_preview_paths(output_dir: Path, prefix: str) -> dict[int, Path]:
+    """Return saved preview images keyed by frame index for ``<prefix>_frame_*.png``."""
+
+    result: dict[int, Path] = {}
+    marker = f"{prefix}_frame_"
+    for path in sorted(output_dir.glob(f"{prefix}_frame_*.png")):
+        stem = path.stem
+        if not stem.startswith(marker):
+            continue
+        try:
+            frame_index = int(stem[len(marker) :])
+        except ValueError:
+            continue
+        result[frame_index] = path
+    return result
 
 
 def validate_csv_columns(
@@ -486,6 +505,8 @@ def load_run_data(spec: RunSpec) -> RunData:
         ),
         filtered_tracks=filtered_tracks,
         preview_paths=find_preview_paths(spec.output_dir),
+        fixed_preview_paths=find_named_preview_paths(spec.output_dir, "residual_fixed"),
+        raw_preview_paths=find_named_preview_paths(spec.output_dir, "raw"),
         detections_by_frame=group_detections_by_frame(records),
         filtered_detections_by_frame=group_detections_by_frame(filtered_records),
     )
@@ -758,6 +779,27 @@ def detection_count_for_frame(data: RunData, frame_index: int, *, filtered: bool
     return len(detections.get(frame_index, []))
 
 
+def preview_paths_for_kind(data: RunData, preview_kind: str) -> dict[int, Path]:
+    """Return the requested preview map, falling back to residual previews if needed."""
+
+    if preview_kind == "raw":
+        return data.raw_preview_paths or data.preview_paths
+    if preview_kind == "residual_fixed":
+        return data.fixed_preview_paths or data.preview_paths
+    if preview_kind == "residual":
+        return data.preview_paths
+    raise ValueError(f"unknown preview kind: {preview_kind}")
+
+
+def preview_kind_label(preview_kind: str) -> str:
+    labels = {
+        "raw": "raw",
+        "residual_fixed": "fixed residual",
+        "residual": "residual",
+    }
+    return labels.get(preview_kind, preview_kind)
+
+
 def draw_detection_overlay_tile(
     data: RunData,
     frame_index: int,
@@ -765,6 +807,7 @@ def draw_detection_overlay_tile(
     width: int,
     header_height: int,
     filtered: bool = False,
+    preview_kind: str = "residual",
 ) -> Image.Image:
     """Create a resized residual-preview tile with detection boxes."""
 
@@ -773,12 +816,13 @@ def draw_detection_overlay_tile(
         if filtered
         else data.detections_by_frame
     )
-    preview = data.preview_paths.get(frame_index)
+    preview = preview_paths_for_kind(data, preview_kind).get(frame_index)
     if preview is None:
         tile = Image.new("RGB", (width, header_height + 220), (248, 248, 248))
         draw = ImageDraw.Draw(tile)
         prefix = "filtered " if filtered else ""
-        draw.text((10, 10), f"{data.spec.label} {prefix}frame {frame_index}", fill="black")
+        kind = preview_kind_label(preview_kind)
+        draw.text((10, 10), f"{data.spec.label} | {prefix}{kind} frame {frame_index}", fill="black")
         draw.text((10, header_height + 82), "preview missing", fill=(90, 90, 90))
         return tile
 
@@ -801,8 +845,9 @@ def draw_detection_overlay_tile(
     draw = ImageDraw.Draw(tile)
     draw.rectangle((0, 0, width - 1, header_height - 1), fill=(245, 245, 245), outline=(180, 180, 180))
     prefix = "filtered | " if filtered else ""
+    kind = preview_kind_label(preview_kind)
     label = (
-        f"{data.spec.label} | {prefix}frame {frame_index} | "
+        f"{data.spec.label} | {prefix}{kind} frame {frame_index} | "
         f"n={detection_count_for_frame(data, frame_index, filtered=filtered)}"
     )
     draw.text((8, 8), label, fill="black")
@@ -816,11 +861,14 @@ def draw_detection_contact_sheet(
     frames: list[int],
     tile_width: int = 420,
     filtered: bool = False,
+    preview_kind: str = "residual",
 ) -> None:
     """Write a side-by-side residual-preview contact sheet with detection boxes."""
 
     if not frames:
-        frames = sorted({frame for run in runs for frame in run.preview_paths})[:5]
+        frames = sorted(
+            {frame for run in runs for frame in preview_paths_for_kind(run, preview_kind)}
+        )[:5]
     if not frames:
         frames = [0]
     header_height = 30
@@ -835,6 +883,7 @@ def draw_detection_contact_sheet(
                     width=tile_width,
                     header_height=header_height,
                     filtered=filtered,
+                    preview_kind=preview_kind,
                 )
                 for run in runs
             ]
@@ -864,6 +913,20 @@ def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path],
         "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
         "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
     }
+    if any(run.fixed_preview_paths for run in runs):
+        images.update(
+            {
+                "fixed_scale_detection_contact_sheet": report_dir / "fixed_scale_detection_contact_sheet.png",
+                "fixed_scale_filtered_detection_contact_sheet": report_dir / "fixed_scale_filtered_detection_contact_sheet.png",
+            }
+        )
+    if any(run.raw_preview_paths for run in runs):
+        images.update(
+            {
+                "raw_detection_contact_sheet": report_dir / "raw_detection_contact_sheet.png",
+                "raw_filtered_detection_contact_sheet": report_dir / "raw_filtered_detection_contact_sheet.png",
+            }
+        )
     series = []
     for run in runs:
         xs, ys = paired_values(
@@ -985,15 +1048,51 @@ def build_markdown_report(
                 + " | ".join(format_value(row.get(field)) for field, _label in labeled_fields)
                 + " |"
             )
+    lines.extend(["", "## Visual comparison", ""])
+    if "raw_detection_contact_sheet" in images:
+        lines.extend(
+            [
+                "Raw crops use one shared display scale across the sampled frames, so frame-to-frame brightness is comparable.",
+                "",
+                f"![Raw detection contact sheet]({markdown_link(images['raw_detection_contact_sheet'], relative_to=report_dir)})",
+                "",
+            ]
+        )
+    if "fixed_scale_detection_contact_sheet" in images:
+        lines.extend(
+            [
+                "Fixed residual previews use a fixed normalized-residual display range instead of per-frame percentile stretching.",
+                "",
+                f"![Fixed-scale detection contact sheet]({markdown_link(images['fixed_scale_detection_contact_sheet'], relative_to=report_dir)})",
+                "",
+            ]
+        )
     lines.extend(
         [
-            "",
-            "## Visual comparison",
+            "Autoscaled residual previews are kept for compatibility with older runs.",
             "",
             f"![Detection contact sheet]({markdown_link(images['detection_contact_sheet'], relative_to=report_dir)})",
             "",
             "## Filtered-track visual comparison",
             "",
+        ]
+    )
+    if "raw_filtered_detection_contact_sheet" in images:
+        lines.extend(
+            [
+                f"![Raw filtered detection contact sheet]({markdown_link(images['raw_filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                "",
+            ]
+        )
+    if "fixed_scale_filtered_detection_contact_sheet" in images:
+        lines.extend(
+            [
+                f"![Fixed-scale filtered detection contact sheet]({markdown_link(images['fixed_scale_filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                "",
+            ]
+        )
+    lines.extend(
+        [
             f"![Filtered detection contact sheet]({markdown_link(images['filtered_detection_contact_sheet'], relative_to=report_dir)})",
             "",
             "## Detection counts",
@@ -1048,17 +1147,24 @@ def generate_comparison_report(
     summary_csv = report_dir / "summary.csv"
     write_summary_csv(summary_csv, rows)
     plots, images = write_plots(report_dir, runs)
-    draw_detection_contact_sheet(
-        images["detection_contact_sheet"],
-        runs,
-        frames=[] if frames is None else frames,
-    )
-    draw_detection_contact_sheet(
-        images["filtered_detection_contact_sheet"],
-        runs,
-        frames=[] if frames is None else frames,
-        filtered=True,
-    )
+    contact_sheet_specs = [
+        ("detection_contact_sheet", "residual", False),
+        ("filtered_detection_contact_sheet", "residual", True),
+        ("fixed_scale_detection_contact_sheet", "residual_fixed", False),
+        ("fixed_scale_filtered_detection_contact_sheet", "residual_fixed", True),
+        ("raw_detection_contact_sheet", "raw", False),
+        ("raw_filtered_detection_contact_sheet", "raw", True),
+    ]
+    for key, preview_kind, filtered in contact_sheet_specs:
+        if key not in images:
+            continue
+        draw_detection_contact_sheet(
+            images[key],
+            runs,
+            frames=[] if frames is None else frames,
+            filtered=filtered,
+            preview_kind=preview_kind,
+        )
     report = report_dir / "comparison_report.md"
     report.write_text(
         build_markdown_report(

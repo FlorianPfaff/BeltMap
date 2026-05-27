@@ -141,6 +141,35 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     assert rows[0]["detection_threshold"] == "4.0"
 
 
+def test_generate_comparison_report_includes_fixed_and_raw_preview_sheets(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=2)
+    for output_dir in [run_a, run_b]:
+        for frame_index in [0, 2]:
+            Image.new("L", (8, 8), 64 + 10 * frame_index).save(
+                output_dir / f"raw_frame_{frame_index:06d}.png"
+            )
+            Image.new("L", (8, 8), 96 + 10 * frame_index).save(
+                output_dir / f"residual_fixed_frame_{frame_index:06d}.png"
+            )
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+        frames=[0, 2],
+    )
+
+    assert "raw_detection_contact_sheet" in artifacts.images
+    assert "fixed_scale_detection_contact_sheet" in artifacts.images
+    assert artifacts.images["raw_detection_contact_sheet"].is_file()
+    assert artifacts.images["fixed_scale_detection_contact_sheet"].is_file()
+    report = artifacts.report.read_text(encoding="utf-8")
+    assert "Raw crops use one shared display scale" in report
+    assert "Fixed residual previews use a fixed normalized-residual display range" in report
+
+
 def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"

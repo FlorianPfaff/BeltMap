@@ -146,16 +146,64 @@ def learn_average_background(
     return (total / len(samples)).astype(np.float32)
 
 
-def save_png(array: np.ndarray | ResidualImage, path: Path) -> None:
+def display_values(array: np.ndarray | ResidualImage) -> np.ndarray:
     values = array.normalized if isinstance(array, ResidualImage) else array
-    arr = np.asarray(values, dtype=np.float64)
-    finite = np.isfinite(arr)
-    low, high = np.percentile(arr[finite], [1, 99]) if finite.any() else (0.0, 1.0)
+    return np.asarray(values, dtype=np.float64)
+
+
+def robust_display_scale(
+    arrays: list[np.ndarray | ResidualImage],
+    *,
+    percentiles: tuple[float, float] = (1.0, 99.0),
+) -> tuple[float, float]:
+    values = []
+    for array in arrays:
+        arr = display_values(array)
+        finite = arr[np.isfinite(arr)]
+        if finite.size:
+            values.append(finite.ravel())
+    if not values:
+        return 0.0, 1.0
+    joined = np.concatenate(values)
+    low, high = np.percentile(joined, percentiles)
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        return 0.0, 1.0
+    return float(low), float(high)
+
+
+def save_scaled_png(
+    array: np.ndarray | ResidualImage,
+    path: Path,
+    *,
+    scale: tuple[float, float],
+) -> None:
+    arr = display_values(array)
+    low, high = scale
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
         low, high = 0.0, 1.0
     image = np.clip((arr - low) / (high - low) * 255.0, 0, 255).astype(np.uint8)
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(image).save(path)
+
+
+def save_png(array: np.ndarray | ResidualImage, path: Path) -> None:
+    arr = display_values(array)
+    finite = np.isfinite(arr)
+    low, high = np.percentile(arr[finite], [1, 99]) if finite.any() else (0.0, 1.0)
+    save_scaled_png(array, path, scale=(float(low), float(high)))
+
+
+def save_preview_set(
+    arrays_by_frame: dict[int, np.ndarray | ResidualImage],
+    output_dir: Path,
+    *,
+    prefix: str,
+    scale: tuple[float, float] | None = None,
+) -> tuple[float, float]:
+    display_scale = scale or robust_display_scale(list(arrays_by_frame.values()))
+    for frame_index, array in sorted(arrays_by_frame.items()):
+        save_scaled_png(array, output_dir / f"{prefix}_frame_{frame_index:06d}.png", scale=display_scale)
+    return display_scale
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -260,16 +308,21 @@ def run_method(
     min_track_length: int,
     track_filter_config: TrackFilterConfig,
     preview_frames: set[int],
+    residual_preview_range: tuple[float, float],
     progress_interval: int,
 ) -> dict[str, Any]:
     start = time.perf_counter()
     method_dir = output_dir / label
     method_dir.mkdir(parents=True, exist_ok=True)
     detections_by_frame: list[list[Any]] = []
+    raw_previews: dict[int, np.ndarray] = {}
+    residual_previews: dict[int, np.ndarray] = {}
     for frame_index, path in enumerate(paths):
         frame = crop(read_gray(path), region)
         residual = residual_factory(frame, average_background, residual_config)
         if frame_index in preview_frames:
+            raw_previews[frame_index] = frame.copy()
+            residual_previews[frame_index] = np.asarray(residual.normalized, dtype=np.float32)
             save_png(residual, method_dir / f"residual_frame_{frame_index:06d}.png")
         mask = detect_particles_from_residual(
             residual,
@@ -292,6 +345,28 @@ def run_method(
                 f"detections={sum(len(items) for items in detections_by_frame)}",
                 flush=True,
             )
+
+    preview_scales = {}
+    if raw_previews:
+        raw_scale = save_preview_set(raw_previews, method_dir, prefix="raw")
+        fixed_residual_scale = save_preview_set(
+            residual_previews,
+            method_dir,
+            prefix="residual_fixed",
+            scale=residual_preview_range,
+        )
+        preview_scales = {
+            "raw": {"low": raw_scale[0], "high": raw_scale[1], "mode": "shared_preview_percentile_1_99"},
+            "residual_fixed": {
+                "low": fixed_residual_scale[0],
+                "high": fixed_residual_scale[1],
+                "mode": "fixed_normalized_residual",
+            },
+        }
+        (method_dir / "preview_scales.json").write_text(
+            json.dumps(preview_scales, indent=2),
+            encoding="utf-8",
+        )
 
     detection_rows = detections_to_rows(detections_by_frame, paths, image_dir=image_dir)
     write_csv(method_dir / "detections.csv", detection_rows, DETECTION_FIELDS)
@@ -351,6 +426,7 @@ def run_method(
         "min_area_px": component_config.min_area_px,
         "detection_area_median_px": None if areas.size == 0 else float(np.median(areas)),
         "detections_per_frame": None if not paths else len(detection_rows) / len(paths),
+        "preview_scales": preview_scales,
         "elapsed_s": elapsed_s,
     }
     (method_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -362,6 +438,16 @@ def parse_optional_float(value: str) -> float | None:
     if parsed <= 0:
         return None
     return parsed
+
+
+def parse_range(value: str) -> tuple[float, float]:
+    parts = [float(part.strip()) for part in value.split(",")]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("range must be low,high")
+    low, high = parts
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        raise argparse.ArgumentTypeError("range must contain finite values with high > low")
+    return low, high
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -403,6 +489,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-filter-max-velocity-ratio-y", type=float, default=1.1)
     parser.add_argument("--track-filter-max-abs-x-velocity-px-per-frame", type=parse_optional_float, default=None)
     parser.add_argument("--preview-frames", default="0,248,496,744,992")
+    parser.add_argument(
+        "--residual-preview-range",
+        type=parse_range,
+        default=parse_range("-3,8"),
+        help="Fixed low,high display range for residual_fixed_frame previews.",
+    )
     parser.add_argument("--progress-interval", type=int, default=25)
     return parser
 
@@ -558,6 +650,7 @@ def main(argv: list[str] | None = None) -> int:
                 min_track_length=args.min_track_length,
                 track_filter_config=track_filter_config,
                 preview_frames=preview_frames,
+                residual_preview_range=args.residual_preview_range,
                 progress_interval=args.progress_interval,
             )
         )

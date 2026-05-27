@@ -71,6 +71,11 @@ on:
         required: true
         type: string
         default: "0,250,500,750"
+      residual_preview_range:
+        description: "Fixed display range for residual_fixed previews, as low,high normalized residual."
+        required: true
+        type: string
+        default: "-3,8"
       beltmap_run_id:
         description: "Optional prior run ID whose BeltMap artifact should be included in the report."
         required: false
@@ -197,6 +202,7 @@ jobs:
           AVERAGE_SOURCE: ${{ inputs.average_source }}
           METHODS: ${{ inputs.methods }}
           PREVIEW_FRAMES: ${{ inputs.preview_frames }}
+          RESIDUAL_PREVIEW_RANGE: ${{ inputs.residual_preview_range }}
           BELTMAP_RUN_ID: ${{ inputs.beltmap_run_id }}
         run: |
           set -euo pipefail
@@ -253,6 +259,7 @@ jobs:
             --track-filter-min-velocity-ratio-y 0.0 \
             --track-filter-max-velocity-ratio-y 1.1 \
             --preview-frames "$PREVIEW_FRAMES" \
+            --residual-preview-range "$RESIDUAL_PREVIEW_RANGE" \
             "${method_args[@]}" \
             "${beltmap_args[@]}"
 
