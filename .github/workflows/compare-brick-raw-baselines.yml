@@ -279,7 +279,7 @@ jobs:
             --track-filter-min-velocity-ratio-y 0.0 \
             --track-filter-max-velocity-ratio-y 1.1 \
             --preview-frames "$PREVIEW_FRAMES" \
-            --residual-preview-range "$RESIDUAL_PREVIEW_RANGE" \
+            --residual-preview-range="$RESIDUAL_PREVIEW_RANGE" \
             "${method_args[@]}" \
             "${beltmap_args[@]}"
 
