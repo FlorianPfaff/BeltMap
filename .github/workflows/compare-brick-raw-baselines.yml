@@ -96,6 +96,11 @@ on:
         required: true
         type: string
         default: "0.01,25,2,2"
+      raw_confirmation_track_rescue:
+        description: "Track rescue gates as min_detections,min_confirmed,min_confirmed_fraction."
+        required: true
+        type: string
+        default: "3,2,0.4"
 
 permissions:
   contents: read
@@ -280,6 +285,7 @@ jobs:
           PREVIEW_FRAMES: ${{ inputs.preview_frames }}
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
           RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
+          RAW_CONFIRMATION_TRACK_RESCUE: ${{ inputs.raw_confirmation_track_rescue }}
         run: |
           set -euo pipefail
 
@@ -287,6 +293,7 @@ jobs:
           test -f outputs/raw-baseline-comparison/raw_zscore/detections.csv
 
           IFS=',' read -r MIN_IOU MAX_CENTER CANDIDATE_MARGIN CONFIRMING_MARGIN <<< "$RAW_CONFIRMATION_OVERLAP"
+          IFS=',' read -r RESCUE_MIN_DETECTIONS RESCUE_MIN_CONFIRMED RESCUE_MIN_FRACTION <<< "$RAW_CONFIRMATION_TRACK_RESCUE"
           poetry run python scripts/filter_run_by_detection_overlap.py \
             --candidate-run outputs/beltmap-artifact \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
@@ -296,6 +303,9 @@ jobs:
             --max-center-distance-px "$MAX_CENTER" \
             --candidate-margin-px "$CANDIDATE_MARGIN" \
             --confirming-margin-px "$CONFIRMING_MARGIN" \
+            --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
+            --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
+            --track-rescue-min-confirmed-fraction "$RESCUE_MIN_FRACTION" \
             --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
             --min-track-length 2 \
             --tracking-assignment-method global \

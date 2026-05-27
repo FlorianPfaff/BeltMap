@@ -18,10 +18,11 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str] |
 
 def make_run(output_dir: Path, detections: list[dict[str, object]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    n_images = max(int(row["frame_index"]) for row in detections) + 1 if detections else 0
     (output_dir / "metadata.json").write_text(
         json.dumps(
             {
-                "n_images": 2,
+                "n_images": n_images,
                 "belt_velocity_px_per_frame": 5.0,
                 "n_detections": len(detections),
             }
@@ -46,17 +47,21 @@ def make_run(output_dir: Path, detections: list[dict[str, object]]) -> None:
         "recurrent_artifact_required_peak_signal",
     ]
     write_csv(output_dir / "detections.csv", detections, fields)
+    counts = {
+        index: sum(1 for row in detections if int(row["frame_index"]) == index)
+        for index in range(n_images)
+    }
     write_csv(
         output_dir / "detections_per_frame.csv",
-        [{"frame_index": 0, "n_detections": len(detections)}, {"frame_index": 1, "n_detections": 0}],
+        [{"frame_index": index, "n_detections": counts[index]} for index in range(n_images)],
     )
     Image.new("L", (16, 16), 96).save(output_dir / "residual_frame_000000.png")
 
 
-def detection(label: int, *, x: float, y: float) -> dict[str, object]:
+def detection(label: int, *, x: float, y: float, frame_index: int = 0) -> dict[str, object]:
     return {
-        "frame_index": 0,
-        "image": "frame0.bmp",
+        "frame_index": frame_index,
+        "image": f"frame{frame_index}.bmp",
         "label": label,
         "y": y,
         "x": x,
@@ -106,3 +111,59 @@ def test_filter_run_keeps_only_detections_confirmed_by_overlap(tmp_path):
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["n_detections"] == 1
     assert metadata["confirmation"]["rejected_detections"] == 1
+
+
+def test_filter_run_can_rescue_unmatched_detections_from_confirmed_tracks(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    candidate_detections = [
+        detection(1, x=10, y=10, frame_index=0),
+        detection(1, x=15, y=10, frame_index=1),
+        detection(1, x=20, y=10, frame_index=2),
+    ]
+    make_run(candidate, candidate_detections)
+    make_run(
+        confirming,
+        [
+            detection(1, x=10, y=10, frame_index=0),
+            detection(1, x=15, y=10, frame_index=1),
+        ],
+    )
+    write_csv(
+        candidate / "tracks.csv",
+        [
+            {"track_id": 7, "track_detection_index": index, **row}
+            for index, row in enumerate(candidate_detections)
+        ],
+        ["track_id", "track_detection_index", *overlap_filter.DETECTION_FIELDS],
+    )
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.1",
+            "--max-center-distance-px",
+            "0",
+            "--track-rescue-min-detections",
+            "3",
+            "--track-rescue-min-confirmed",
+            "2",
+            "--track-rescue-min-confirmed-fraction",
+            "0.5",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    assert len(kept) == 3
+    assert kept[-1]["confirmation_rescued_by_track"] == "True"
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["confirmation"]["track_rescued_detections"] == 1

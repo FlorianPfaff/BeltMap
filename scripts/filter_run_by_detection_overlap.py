@@ -42,6 +42,8 @@ CONFIRMATION_FIELDS = [
     "confirmation_iou",
     "confirmation_center_distance_px",
     "confirmation_label",
+    "confirmation_track_id",
+    "confirmation_rescued_by_track",
 ]
 TRACK_DETECTION_FIELDS = [
     "track_id",
@@ -94,6 +96,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-center-distance-px", type=float, default=25.0)
     parser.add_argument("--candidate-margin-px", type=float, default=2.0)
     parser.add_argument("--confirming-margin-px", type=float, default=2.0)
+    parser.add_argument("--disable-track-rescue", action="store_true")
+    parser.add_argument("--track-rescue-min-detections", type=int, default=3)
+    parser.add_argument("--track-rescue-min-confirmed", type=int, default=2)
+    parser.add_argument("--track-rescue-min-confirmed-fraction", type=float, default=0.4)
     parser.add_argument("--belt-velocity-px-per-frame", type=float, default=None)
     parser.add_argument("--min-track-length", type=int, default=2)
     parser.add_argument("--tracking-assignment-method", choices=("global", "greedy", "pyrecest_gnn"), default="global")
@@ -120,6 +126,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
     if args.min_track_length < 1 or args.track_filter_min_length < 1:
         raise ValueError("track length thresholds must be positive")
+    if args.track_rescue_min_detections < 1 or args.track_rescue_min_confirmed < 1:
+        raise ValueError("track rescue count thresholds must be positive")
+    if not 0.0 <= args.track_rescue_min_confirmed_fraction <= 1.0:
+        raise ValueError("--track-rescue-min-confirmed-fraction must be in [0, 1]")
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -207,6 +217,49 @@ def group_by_frame(rows: list[dict[str, str]]) -> dict[int, list[dict[str, str]]
     return grouped
 
 
+def detection_key(row: dict[str, Any]) -> tuple[int, int]:
+    """Return a stable per-frame detection key used by detections.csv and tracks.csv."""
+
+    return int(float(row["frame_index"])), int(float(row["label"]))
+
+
+def track_memberships(candidate_run: Path) -> tuple[dict[tuple[int, int], int], dict[int, set[tuple[int, int]]]]:
+    path = candidate_run / "tracks.csv"
+    if not path.is_file():
+        return {}, {}
+    rows = read_csv_rows(path)
+    key_to_track: dict[tuple[int, int], int] = {}
+    track_to_keys: dict[int, set[tuple[int, int]]] = {}
+    for row in rows:
+        track_id = int(float(row["track_id"]))
+        key = detection_key(row)
+        key_to_track[key] = track_id
+        track_to_keys.setdefault(track_id, set()).add(key)
+    return key_to_track, track_to_keys
+
+
+def rescued_detection_keys(
+    *,
+    key_to_track: dict[tuple[int, int], int],
+    track_to_keys: dict[int, set[tuple[int, int]]],
+    confirmed_keys: set[tuple[int, int]],
+    min_detections: int,
+    min_confirmed: int,
+    min_confirmed_fraction: float,
+) -> set[tuple[int, int]]:
+    rescued: set[tuple[int, int]] = set()
+    for track_id, keys in track_to_keys.items():
+        if len(keys) < min_detections:
+            continue
+        confirmed = len(keys & confirmed_keys)
+        if confirmed < min_confirmed:
+            continue
+        if confirmed / len(keys) < min_confirmed_fraction:
+            continue
+        rescued.update(key for key in keys if key_to_track.get(key) == track_id)
+    return rescued
+
+
 def expanded_bbox(row: dict[str, str], *, margin: float) -> tuple[float, float, float, float]:
     return (
         float(row["bbox_top"]) - margin,
@@ -290,11 +343,12 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
     candidate_rows = read_csv_rows(args.candidate_run / "detections.csv")
     confirming_rows = read_csv_rows(args.confirming_run / "detections.csv")
     confirming_by_frame = group_by_frame(confirming_rows)
+    key_to_track, track_to_keys = track_memberships(args.candidate_run)
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    kept_rows: list[dict[str, Any]] = []
-    rejected_rows: list[dict[str, Any]] = []
+    annotated_rows: list[dict[str, Any]] = []
+    confirmed_keys: set[tuple[int, int]] = set()
     for row in candidate_rows:
         frame_index = int(float(row["frame_index"]))
         match, iou, distance = best_confirmation(
@@ -309,10 +363,34 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         annotated["confirmation_iou"] = iou
         annotated["confirmation_center_distance_px"] = "" if not math.isfinite(distance) else distance
         annotated["confirmation_label"] = "" if match is None else match.get("label", "")
+        annotated["confirmation_track_id"] = key_to_track.get(detection_key(row), "")
+        annotated["confirmation_rescued_by_track"] = False
         if match is None:
-            rejected_rows.append(annotated)
+            annotated_rows.append(annotated)
         else:
-            kept_rows.append(annotated)
+            confirmed_keys.add(detection_key(row))
+            annotated_rows.append(annotated)
+
+    rescued_keys: set[tuple[int, int]] = set()
+    if not args.disable_track_rescue and key_to_track:
+        rescued_keys = rescued_detection_keys(
+            key_to_track=key_to_track,
+            track_to_keys=track_to_keys,
+            confirmed_keys=confirmed_keys,
+            min_detections=args.track_rescue_min_detections,
+            min_confirmed=args.track_rescue_min_confirmed,
+            min_confirmed_fraction=args.track_rescue_min_confirmed_fraction,
+        )
+
+    kept_rows: list[dict[str, Any]] = []
+    rejected_rows: list[dict[str, Any]] = []
+    for row in annotated_rows:
+        key = detection_key(row)
+        if key in confirmed_keys or key in rescued_keys:
+            row["confirmation_rescued_by_track"] = key not in confirmed_keys
+            kept_rows.append(row)
+        else:
+            rejected_rows.append(row)
 
     n_images = infer_n_images(args.candidate_run, candidate_rows)
     image_by_frame = {
@@ -408,6 +486,11 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "max_center_distance_px": args.max_center_distance_px,
             "candidate_margin_px": args.candidate_margin_px,
             "confirming_margin_px": args.confirming_margin_px,
+            "track_rescue_enabled": not args.disable_track_rescue,
+            "track_rescue_min_detections": args.track_rescue_min_detections,
+            "track_rescue_min_confirmed": args.track_rescue_min_confirmed,
+            "track_rescue_min_confirmed_fraction": args.track_rescue_min_confirmed_fraction,
+            "track_rescued_detections": sum(1 for row in kept_rows if row["confirmation_rescued_by_track"]),
             "rejected_detections": len(rejected_rows),
             "kept_fraction": None if not candidate_rows else len(kept_rows) / len(candidate_rows),
         },
