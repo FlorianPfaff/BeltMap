@@ -44,6 +44,8 @@ CONFIRMATION_FIELDS = [
     "confirmation_label",
     "confirmation_track_id",
     "confirmation_rescued_by_track",
+    "confirmation_duplicate_suppressed",
+    "confirmation_duplicate_kept_label",
 ]
 TRACK_DETECTION_FIELDS = [
     "track_id",
@@ -111,6 +113,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-rescue-min-detections", type=int, default=3)
     parser.add_argument("--track-rescue-min-confirmed", type=int, default=2)
     parser.add_argument("--track-rescue-min-confirmed-fraction", type=float, default=0.3)
+    parser.add_argument(
+        "--dedupe-iou-threshold",
+        type=float,
+        default=0.0,
+        help="Suppress lower-priority same-frame detections whose expanded boxes overlap this much. 0 disables.",
+    )
+    parser.add_argument(
+        "--dedupe-containment-threshold",
+        type=float,
+        default=0.0,
+        help="Suppress lower-priority same-frame detections whose smaller expanded box is contained this much. 0 disables.",
+    )
+    parser.add_argument(
+        "--dedupe-center-distance-px",
+        type=float,
+        default=0.0,
+        help="Suppress lower-priority same-frame detections within this center distance. 0 disables.",
+    )
+    parser.add_argument(
+        "--dedupe-margin-px",
+        type=float,
+        default=0.0,
+        help="Expand candidate boxes by this many pixels before duplicate checks.",
+    )
     parser.add_argument("--belt-velocity-px-per-frame", type=float, default=None)
     parser.add_argument("--min-track-length", type=int, default=2)
     parser.add_argument("--tracking-assignment-method", choices=("global", "greedy", "pyrecest_gnn"), default="global")
@@ -141,6 +167,14 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("track rescue count thresholds must be positive")
     if not 0.0 <= args.track_rescue_min_confirmed_fraction <= 1.0:
         raise ValueError("--track-rescue-min-confirmed-fraction must be in [0, 1]")
+    for name in ("dedupe_iou_threshold", "dedupe_containment_threshold"):
+        value = getattr(args, name)
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"--{name.replace('_', '-')} must be in [0, 1]")
+    for name in ("dedupe_center_distance_px", "dedupe_margin_px"):
+        value = getattr(args, name)
+        if value < 0 or not math.isfinite(value):
+            raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -292,8 +326,127 @@ def bbox_iou(first: tuple[float, float, float, float], second: tuple[float, floa
     return 0.0 if union <= 0.0 else intersection / union
 
 
-def center_distance(first: dict[str, str], second: dict[str, str]) -> float:
-    return float(np.hypot(float(first["y"]) - float(second["y"]), float(first["x"]) - float(second["x"])))
+def bbox_area(bbox: tuple[float, float, float, float]) -> float:
+    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+
+def bbox_intersection_area(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    top = max(first[0], second[0])
+    left = max(first[1], second[1])
+    bottom = min(first[2], second[2])
+    right = min(first[3], second[3])
+    return max(0.0, bottom - top) * max(0.0, right - left)
+
+
+def bbox_containment(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> float:
+    smaller_area = min(bbox_area(first), bbox_area(second))
+    if smaller_area <= 0.0:
+        return 0.0
+    return bbox_intersection_area(first, second) / smaller_area
+
+
+def center_distance(first: dict[str, Any], second: dict[str, Any]) -> float:
+    return float(
+        np.hypot(
+            float(first["y"]) - float(second["y"]),
+            float(first["x"]) - float(second["x"]),
+        )
+    )
+
+
+def row_float(row: dict[str, Any], field: str, default: float = 0.0) -> float:
+    value = row.get(field, "")
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def row_bool(row: dict[str, Any], field: str) -> bool:
+    value = row.get(field, False)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def duplicate_priority(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    """Rank same-frame duplicate candidates; larger is kept."""
+
+    return (
+        0.0 if row_bool(row, "confirmation_rescued_by_track") else 1.0,
+        row_float(row, "peak_signal"),
+        row_float(row, "area_px"),
+        row_float(row, "confirmation_iou"),
+        -row_float(row, "confirmation_center_distance_px", default=math.inf),
+    )
+
+
+def dedupe_enabled(args: argparse.Namespace) -> bool:
+    return (
+        args.dedupe_iou_threshold > 0.0
+        or args.dedupe_containment_threshold > 0.0
+        or args.dedupe_center_distance_px > 0.0
+    )
+
+
+def rows_are_duplicates(first: dict[str, Any], second: dict[str, Any], args: argparse.Namespace) -> bool:
+    if (
+        args.dedupe_center_distance_px > 0.0
+        and center_distance(first, second) <= args.dedupe_center_distance_px
+    ):
+        return True
+    first_bbox = expanded_bbox(first, margin=args.dedupe_margin_px)
+    second_bbox = expanded_bbox(second, margin=args.dedupe_margin_px)
+    if args.dedupe_iou_threshold > 0.0 and bbox_iou(first_bbox, second_bbox) >= args.dedupe_iou_threshold:
+        return True
+    if (
+        args.dedupe_containment_threshold > 0.0
+        and bbox_containment(first_bbox, second_bbox) >= args.dedupe_containment_threshold
+    ):
+        return True
+    return False
+
+
+def suppress_duplicate_rows(
+    rows: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    for row in rows:
+        row["confirmation_duplicate_suppressed"] = False
+        row["confirmation_duplicate_kept_label"] = ""
+    if not dedupe_enabled(args):
+        return rows, []
+
+    by_frame: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+    for index, row in enumerate(rows):
+        by_frame.setdefault(int(float(row["frame_index"])), []).append((index, row))
+
+    kept_indices: set[int] = set()
+    suppressed_indices: set[int] = set()
+    for frame_rows in by_frame.values():
+        frame_kept: list[tuple[int, dict[str, Any]]] = []
+        for index, row in sorted(frame_rows, key=lambda item: duplicate_priority(item[1]), reverse=True):
+            duplicate_of = next(
+                (kept_row for _kept_index, kept_row in frame_kept if rows_are_duplicates(row, kept_row, args)),
+                None,
+            )
+            if duplicate_of is None:
+                kept_indices.add(index)
+                frame_kept.append((index, row))
+            else:
+                row["confirmation_duplicate_suppressed"] = True
+                row["confirmation_duplicate_kept_label"] = duplicate_of.get("label", "")
+                suppressed_indices.add(index)
+
+    kept_rows = [row for index, row in enumerate(rows) if index in kept_indices]
+    suppressed_rows = [row for index, row in enumerate(rows) if index in suppressed_indices]
+    return kept_rows, suppressed_rows
 
 
 def best_confirmation(
@@ -433,6 +586,8 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         annotated["confirmation_label"] = "" if match is None else match.get("label", "")
         annotated["confirmation_track_id"] = key_to_track.get(detection_key(row), "")
         annotated["confirmation_rescued_by_track"] = False
+        annotated["confirmation_duplicate_suppressed"] = False
+        annotated["confirmation_duplicate_kept_label"] = ""
         if match is None:
             annotated_rows.append(annotated)
         else:
@@ -459,6 +614,10 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             kept_rows.append(row)
         else:
             rejected_rows.append(row)
+
+    confirmed_or_rescued_count = len(kept_rows)
+    kept_rows, duplicate_rows = suppress_duplicate_rows(kept_rows, args)
+    rejected_rows.extend(duplicate_rows)
 
     n_images = infer_n_images(args.candidate_run, candidate_rows)
     image_by_frame = {
@@ -560,6 +719,12 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "track_rescue_min_confirmed": args.track_rescue_min_confirmed,
             "track_rescue_min_confirmed_fraction": args.track_rescue_min_confirmed_fraction,
             "track_rescued_detections": sum(1 for row in kept_rows if row["confirmation_rescued_by_track"]),
+            "dedupe_iou_threshold": args.dedupe_iou_threshold,
+            "dedupe_containment_threshold": args.dedupe_containment_threshold,
+            "dedupe_center_distance_px": args.dedupe_center_distance_px,
+            "dedupe_margin_px": args.dedupe_margin_px,
+            "confirmed_or_rescued_detections": confirmed_or_rescued_count,
+            "duplicate_suppressed_detections": len(duplicate_rows),
             "rejected_detections": len(rejected_rows),
             "kept_fraction": None if not candidate_rows else len(kept_rows) / len(candidate_rows),
         },

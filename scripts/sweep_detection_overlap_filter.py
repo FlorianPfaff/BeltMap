@@ -27,6 +27,7 @@ SUMMARY_FIELDS = [
     "detection_area_median_px",
     "kept_fraction",
     "track_rescued_detections",
+    "duplicate_suppressed_detections",
     "rejected_detections",
     "output_dir",
 ]
@@ -72,6 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-track-rescue", action="store_true")
     parser.add_argument("--track-rescue-min-detections", type=int, default=3)
     parser.add_argument("--track-rescue-min-confirmed", type=int, default=2)
+    parser.add_argument("--dedupe-iou-threshold", type=float, default=0.0)
+    parser.add_argument("--dedupe-containment-threshold", type=float, default=0.0)
+    parser.add_argument("--dedupe-center-distance-px", type=float, default=0.0)
+    parser.add_argument("--dedupe-margin-px", type=float, default=0.0)
     parser.add_argument("--belt-velocity-px-per-frame", type=float, default=None)
     parser.add_argument("--min-track-length", type=int, default=2)
     parser.add_argument("--tracking-assignment-method", choices=("global", "greedy", "pyrecest_gnn"), default="global")
@@ -120,6 +125,7 @@ def summary_row(spec: SweepSpec, output_dir: Path, metadata: dict[str, Any]) -> 
         "detection_area_median_px": metadata.get("detection_area_median_px"),
         "kept_fraction": confirmation.get("kept_fraction"),
         "track_rescued_detections": confirmation.get("track_rescued_detections"),
+        "duplicate_suppressed_detections": confirmation.get("duplicate_suppressed_detections"),
         "rejected_detections": confirmation.get("rejected_detections"),
         "output_dir": str(output_dir),
     }
@@ -136,18 +142,19 @@ def write_summary(output_root: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         "# Detection-overlap filter sweep",
         "",
-        "| label | detections | detections/frame | filtered velocities | median area px | kept fraction | rejected |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| label | detections | detections/frame | filtered velocities | median area px | kept fraction | duplicate suppressed | rejected |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {label} | {n_detections} | {dpf:.3g} | {velocities} | {area} | {kept:.3g} | {rejected} |".format(
+            "| {label} | {n_detections} | {dpf:.3g} | {velocities} | {area} | {kept:.3g} | {duplicates} | {rejected} |".format(
                 label=row["label"],
                 n_detections=row["n_detections"],
                 dpf=float(row["detections_per_frame"] or 0.0),
                 velocities=row["n_filtered_velocity_estimates"],
                 area="" if row["detection_area_median_px"] is None else f"{row['detection_area_median_px']:.3g}",
                 kept=float(row["kept_fraction"] or 0.0),
+                duplicates=row["duplicate_suppressed_detections"],
                 rejected=row["rejected_detections"],
             )
         )

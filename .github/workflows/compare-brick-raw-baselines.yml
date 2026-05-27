@@ -101,6 +101,11 @@ on:
         required: true
         type: string
         default: "3,2,0.3"
+      raw_confirmation_dedupe:
+        description: "Duplicate suppression as dedupe_iou,dedupe_containment,dedupe_center_distance,dedupe_margin. 0 disables a gate."
+        required: true
+        type: string
+        default: "0.15,0,0,2"
 
 permissions:
   contents: read
@@ -286,6 +291,7 @@ jobs:
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
           RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
           RAW_CONFIRMATION_TRACK_RESCUE: ${{ inputs.raw_confirmation_track_rescue }}
+          RAW_CONFIRMATION_DEDUPE: ${{ inputs.raw_confirmation_dedupe }}
         run: |
           set -euo pipefail
 
@@ -294,6 +300,7 @@ jobs:
 
           IFS=',' read -r MIN_IOU MAX_CENTER CANDIDATE_MARGIN CONFIRMING_MARGIN <<< "$RAW_CONFIRMATION_OVERLAP"
           IFS=',' read -r RESCUE_MIN_DETECTIONS RESCUE_MIN_CONFIRMED RESCUE_MIN_FRACTION <<< "$RAW_CONFIRMATION_TRACK_RESCUE"
+          IFS=',' read -r DEDUPE_IOU DEDUPE_CONTAINMENT DEDUPE_CENTER DEDUPE_MARGIN <<< "$RAW_CONFIRMATION_DEDUPE"
           poetry run python scripts/filter_run_by_detection_overlap.py \
             --candidate-run outputs/beltmap-artifact \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
@@ -306,6 +313,10 @@ jobs:
             --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
             --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
             --track-rescue-min-confirmed-fraction "$RESCUE_MIN_FRACTION" \
+            --dedupe-iou-threshold "$DEDUPE_IOU" \
+            --dedupe-containment-threshold "$DEDUPE_CONTAINMENT" \
+            --dedupe-center-distance-px "$DEDUPE_CENTER" \
+            --dedupe-margin-px "$DEDUPE_MARGIN" \
             --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
             --min-track-length 2 \
             --tracking-assignment-method global \
@@ -340,6 +351,10 @@ jobs:
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
             --output-root outputs/raw-baseline-comparison/raw_confirmation_sweep \
             --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
+            --dedupe-iou-threshold "$DEDUPE_IOU" \
+            --dedupe-containment-threshold "$DEDUPE_CONTAINMENT" \
+            --dedupe-center-distance-px "$DEDUPE_CENTER" \
+            --dedupe-margin-px "$DEDUPE_MARGIN" \
             --quiet
 
       - name: Publish job summary

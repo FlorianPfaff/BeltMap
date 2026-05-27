@@ -228,3 +228,51 @@ def test_filter_run_allows_many_to_one_confirmation_by_default(tmp_path):
     assert exit_code == 0
     kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
     assert [row["label"] for row in kept] == ["1", "2"]
+
+
+def test_filter_run_can_suppress_duplicate_confirmed_detections(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    smaller = detection(1, x=10, y=10)
+    larger = detection(2, x=10.5, y=10.5)
+    larger["area_px"] = 16
+    larger["bbox_top"] = 8.5
+    larger["bbox_left"] = 8.5
+    larger["bbox_bottom"] = 13.5
+    larger["bbox_right"] = 13.5
+    larger["peak_signal"] = 12.0
+    make_run(candidate, [smaller, larger])
+    make_run(confirming, [detection(1, x=10, y=10)])
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.01",
+            "--max-center-distance-px",
+            "10",
+            "--dedupe-iou-threshold",
+            "0.1",
+            "--dedupe-margin-px",
+            "1",
+            "--disable-track-rescue",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    assert [row["label"] for row in kept] == ["2"]
+    assert [row["label"] for row in rejected] == ["1"]
+    assert rejected[0]["confirmation_duplicate_suppressed"] == "True"
+    assert rejected[0]["confirmation_duplicate_kept_label"] == "2"
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["confirmation"]["duplicate_suppressed_detections"] == 1
+    assert metadata["confirmation"]["rejected_detections"] == 1
