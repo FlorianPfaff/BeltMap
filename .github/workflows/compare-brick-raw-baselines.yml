@@ -95,12 +95,12 @@ on:
         description: "Raw confirmation gates as min_iou,max_center_distance,candidate_margin,confirming_margin."
         required: true
         type: string
-        default: "0.01,25,2,2"
+        default: "0.01,35,2,2"
       raw_confirmation_track_rescue:
         description: "Track rescue gates as min_detections,min_confirmed,min_confirmed_fraction."
         required: true
         type: string
-        default: "3,2,0.4"
+        default: "3,2,0.3"
 
 permissions:
   contents: read
