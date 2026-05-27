@@ -780,12 +780,12 @@ def detection_count_for_frame(data: RunData, frame_index: int, *, filtered: bool
 
 
 def preview_paths_for_kind(data: RunData, preview_kind: str) -> dict[int, Path]:
-    """Return the requested preview map, falling back to residual previews if needed."""
+    """Return the requested preview map."""
 
     if preview_kind == "raw":
-        return data.raw_preview_paths or data.preview_paths
+        return data.raw_preview_paths
     if preview_kind == "residual_fixed":
-        return data.fixed_preview_paths or data.preview_paths
+        return data.fixed_preview_paths
     if preview_kind == "residual":
         return data.preview_paths
     raise ValueError(f"unknown preview kind: {preview_kind}")
