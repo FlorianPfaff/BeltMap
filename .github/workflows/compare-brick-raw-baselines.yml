@@ -96,6 +96,14 @@ on:
         required: true
         type: string
         default: "0.005,35,2,2"
+      raw_confirmation_confirming_source:
+        description: "Raw confirmation source: detections or filtered_tracks."
+        required: true
+        type: choice
+        options:
+          - filtered_tracks
+          - detections
+        default: filtered_tracks
       raw_confirmation_track_rescue:
         description: "Track rescue gates as min_detections,min_confirmed,min_confirmed_fraction."
         required: true
@@ -305,6 +313,7 @@ jobs:
           PREVIEW_FRAMES: ${{ inputs.preview_frames }}
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
           RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
+          RAW_CONFIRMATION_CONFIRMING_SOURCE: ${{ inputs.raw_confirmation_confirming_source }}
           RAW_CONFIRMATION_TRACK_RESCUE: ${{ inputs.raw_confirmation_track_rescue }}
           RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE: ${{ inputs.raw_confirmation_track_rescue_max_frame_distance }}
           RAW_CONFIRMATION_RESCUED_QUALITY: ${{ inputs.raw_confirmation_rescued_quality }}
@@ -328,6 +337,7 @@ jobs:
           poetry run python scripts/filter_run_by_detection_overlap.py \
             --candidate-run outputs/beltmap-artifact \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
+            --confirming-detections-source "$RAW_CONFIRMATION_CONFIRMING_SOURCE" \
             --output-dir outputs/raw-baseline-comparison/beltmap_raw_confirmed \
             --label beltmap_raw_confirmed \
             --min-iou "$MIN_IOU" \
@@ -378,6 +388,7 @@ jobs:
           poetry run python scripts/sweep_detection_overlap_filter.py \
             --candidate-run outputs/beltmap-artifact \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
+            --confirming-detections-source "$RAW_CONFIRMATION_CONFIRMING_SOURCE" \
             --output-root outputs/raw-baseline-comparison/raw_confirmation_sweep \
             --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
             --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \

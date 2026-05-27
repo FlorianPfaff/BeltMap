@@ -177,6 +177,45 @@ def test_filter_run_can_rescue_unmatched_detections_from_confirmed_tracks(tmp_pa
     assert metadata["confirmation"]["track_rescued_detections"] == 1
 
 
+def test_filter_run_can_confirm_against_filtered_tracks(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    make_run(candidate, [detection(1, x=10, y=10), detection(2, x=40, y=40)])
+    confirming_detections = [detection(1, x=10, y=10), detection(2, x=40, y=40)]
+    make_run(confirming, confirming_detections)
+    write_csv(
+        confirming / "filtered_tracks.csv",
+        [{"track_id": 1, "track_detection_index": 0, **confirming_detections[0]}],
+        ["track_id", "track_detection_index", *overlap_filter.DETECTION_FIELDS],
+    )
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--confirming-detections-source",
+            "filtered_tracks",
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.1",
+            "--max-center-distance-px",
+            "0",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    assert [row["label"] for row in kept] == ["1"]
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["confirmation"]["confirming_detections_source"] == "filtered_tracks"
+    assert metadata["confirmation"]["n_confirming_detections"] == 1
+
+
 def test_filter_run_can_limit_track_rescue_to_nearby_confirmed_detections(tmp_path):
     candidate = tmp_path / "candidate"
     confirming = tmp_path / "confirming"

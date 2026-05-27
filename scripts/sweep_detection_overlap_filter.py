@@ -30,6 +30,8 @@ SUMMARY_FIELDS = [
     "kept_fraction",
     "track_rescued_detections",
     "track_rescue_max_frame_distance",
+    "confirming_detections_source",
+    "n_confirming_detections",
     "rescued_min_area_px",
     "rescued_min_peak_signal",
     "rescued_quality_rejected_detections",
@@ -70,6 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--candidate-run", type=Path, required=True)
     parser.add_argument("--confirming-run", type=Path, required=True)
+    parser.add_argument(
+        "--confirming-detections-source",
+        choices=("detections", "filtered_tracks"),
+        default="detections",
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--spec", type=parse_spec, action="append", default=None)
     parser.add_argument("--label-prefix", default="")
@@ -143,6 +150,8 @@ def summary_row(spec: SweepSpec, output_dir: Path, metadata: dict[str, Any]) -> 
         "kept_fraction": confirmation.get("kept_fraction"),
         "track_rescued_detections": confirmation.get("track_rescued_detections"),
         "track_rescue_max_frame_distance": confirmation.get("track_rescue_max_frame_distance"),
+        "confirming_detections_source": confirmation.get("confirming_detections_source"),
+        "n_confirming_detections": confirmation.get("n_confirming_detections"),
         "rescued_min_area_px": confirmation.get("rescued_min_area_px"),
         "rescued_min_peak_signal": confirmation.get("rescued_min_peak_signal"),
         "rescued_quality_rejected_detections": confirmation.get("rescued_quality_rejected_detections"),

@@ -96,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--candidate-run", type=Path, required=True)
     parser.add_argument("--confirming-run", type=Path, required=True)
+    parser.add_argument(
+        "--confirming-detections-source",
+        choices=("detections", "filtered_tracks"),
+        default="detections",
+        help="CSV in confirming-run used for direct detection confirmation.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--label", default="raw_confirmed")
     parser.add_argument("--min-iou", type=float, default=0.01)
@@ -237,6 +243,14 @@ def read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def confirming_detections_path(confirming_run: Path, source: str) -> Path:
+    if source == "detections":
+        return confirming_run / "detections.csv"
+    if source == "filtered_tracks":
+        return confirming_run / "filtered_tracks.csv"
+    raise ValueError(f"unsupported confirming detections source: {source}")
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -658,7 +672,7 @@ def copy_previews(candidate_run: Path, output_dir: Path) -> None:
 def filter_run(args: argparse.Namespace) -> dict[str, Any]:
     validate_args(args)
     candidate_rows = read_csv_rows(args.candidate_run / "detections.csv")
-    confirming_rows = read_csv_rows(args.confirming_run / "detections.csv")
+    confirming_rows = read_csv_rows(confirming_detections_path(args.confirming_run, args.confirming_detections_source))
     confirming_by_frame = group_by_frame(confirming_rows)
     key_to_track, track_to_keys = track_memberships(args.candidate_run)
     output_dir = args.output_dir
@@ -860,6 +874,8 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "max_center_distance_px": args.max_center_distance_px,
             "candidate_margin_px": args.candidate_margin_px,
             "confirming_margin_px": args.confirming_margin_px,
+            "confirming_detections_source": args.confirming_detections_source,
+            "n_confirming_detections": len(confirming_rows),
             "one_to_one": args.one_to_one_confirmation,
             "track_rescue_enabled": not args.disable_track_rescue,
             "track_rescue_min_detections": args.track_rescue_min_detections,
