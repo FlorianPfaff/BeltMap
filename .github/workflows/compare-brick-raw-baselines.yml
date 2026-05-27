@@ -86,6 +86,16 @@ on:
         required: true
         type: string
         default: "beltmap-brick-10gpers-scikit-image-results"
+      confirm_beltmap_with_raw:
+        description: "Add a BeltMap run filtered to detections overlapping raw_zscore detections."
+        required: true
+        type: boolean
+        default: true
+      raw_confirmation_overlap:
+        description: "Raw confirmation gates as min_iou,max_center_distance,candidate_margin,confirming_margin."
+        required: true
+        type: string
+        default: "0.01,25,2,2"
 
 permissions:
   contents: read
@@ -262,6 +272,58 @@ jobs:
             --residual-preview-range "$RESIDUAL_PREVIEW_RANGE" \
             "${method_args[@]}" \
             "${beltmap_args[@]}"
+
+      - name: Add raw-confirmed BeltMap comparison
+        if: ${{ inputs.beltmap_run_id != '' && inputs.confirm_beltmap_with_raw }}
+        env:
+          METHODS: ${{ inputs.methods }}
+          PREVIEW_FRAMES: ${{ inputs.preview_frames }}
+          BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
+          RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
+        run: |
+          set -euo pipefail
+
+          test -f outputs/beltmap-artifact/detections.csv
+          test -f outputs/raw-baseline-comparison/raw_zscore/detections.csv
+
+          IFS=',' read -r MIN_IOU MAX_CENTER CANDIDATE_MARGIN CONFIRMING_MARGIN <<< "$RAW_CONFIRMATION_OVERLAP"
+          poetry run python scripts/filter_run_by_detection_overlap.py \
+            --candidate-run outputs/beltmap-artifact \
+            --confirming-run outputs/raw-baseline-comparison/raw_zscore \
+            --output-dir outputs/raw-baseline-comparison/beltmap_raw_confirmed \
+            --label beltmap_raw_confirmed \
+            --min-iou "$MIN_IOU" \
+            --max-center-distance-px "$MAX_CENTER" \
+            --candidate-margin-px "$CANDIDATE_MARGIN" \
+            --confirming-margin-px "$CONFIRMING_MARGIN" \
+            --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
+            --min-track-length 2 \
+            --tracking-assignment-method global \
+            --tracking-max-frame-gap 2 \
+            --tracking-area-cost-weight-px 1.0 \
+            --tracking-signal-cost-weight-px 0.5 \
+            --tracking-lateral-cost-weight 0.25 \
+            --tracking-max-area-ratio 3.0 \
+            --velocity-fit-method theil_sen \
+            --track-filter-min-length 5 \
+            --track-filter-min-velocity-ratio-y 0.0 \
+            --track-filter-max-velocity-ratio-y 1.1
+
+          compare_args=()
+          IFS=',' read -ra requested_methods <<< "$METHODS"
+          for method in "${requested_methods[@]}"; do
+            method="$(echo "$method" | xargs)"
+            if [ -n "$method" ] && [ -f "outputs/raw-baseline-comparison/$method/detections.csv" ]; then
+              compare_args+=(--run "$method=outputs/raw-baseline-comparison/$method")
+            fi
+          done
+          compare_args+=(--run "beltmap-artifact=outputs/beltmap-artifact")
+          compare_args+=(--run "beltmap_raw_confirmed=outputs/raw-baseline-comparison/beltmap_raw_confirmed")
+          poetry run python -m beltmap.cli.compare \
+            "${compare_args[@]}" \
+            --report-dir outputs/raw-baseline-comparison/comparison_report \
+            --frames "$PREVIEW_FRAMES" \
+            --quiet
 
       - name: Publish job summary
         if: always()
