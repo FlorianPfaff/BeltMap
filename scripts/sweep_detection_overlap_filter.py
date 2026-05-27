@@ -11,6 +11,7 @@ from scripts.filter_run_by_detection_overlap import filter_run
 
 
 DEFAULT_SPECS = (
+    "i005c35f01:0.005:35:0.1",
     "c25f03:0.01:25:0.3",
     "c35f03:0.01:35:0.3",
     "c50f04:0.01:50:0.4",
@@ -24,10 +25,14 @@ SUMMARY_FIELDS = [
     "n_detections",
     "detections_per_frame",
     "n_filtered_velocity_estimates",
+    "n_confirmation_filtered_velocity_estimates",
     "detection_area_median_px",
     "kept_fraction",
     "track_rescued_detections",
     "track_rescue_max_frame_distance",
+    "rescued_min_area_px",
+    "rescued_min_peak_signal",
+    "rescued_quality_rejected_detections",
     "duplicate_suppressed_detections",
     "rejected_detections",
     "output_dir",
@@ -80,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only rescue unconfirmed detections this many selected frames from a directly confirmed detection.",
     )
+    parser.add_argument("--rescued-min-area-px", type=float, default=0.0)
+    parser.add_argument("--rescued-min-peak-signal", type=float, default=0.0)
     parser.add_argument("--dedupe-iou-threshold", type=float, default=0.0)
     parser.add_argument("--dedupe-containment-threshold", type=float, default=0.0)
     parser.add_argument("--dedupe-center-distance-px", type=float, default=0.0)
@@ -97,6 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-filter-min-velocity-ratio-y", type=float, default=0.0)
     parser.add_argument("--track-filter-max-velocity-ratio-y", type=float, default=1.1)
     parser.add_argument("--track-filter-max-abs-x-velocity-px-per-frame", type=float, default=None)
+    parser.add_argument("--track-filter-min-confirmed-detections", type=int, default=0)
+    parser.add_argument("--track-filter-min-confirmed-fraction", type=float, default=0.0)
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -129,10 +138,14 @@ def summary_row(spec: SweepSpec, output_dir: Path, metadata: dict[str, Any]) -> 
         "n_detections": metadata.get("n_detections"),
         "detections_per_frame": metadata.get("detections_per_frame"),
         "n_filtered_velocity_estimates": metadata.get("n_filtered_velocity_estimates"),
+        "n_confirmation_filtered_velocity_estimates": metadata.get("n_confirmation_filtered_velocity_estimates"),
         "detection_area_median_px": metadata.get("detection_area_median_px"),
         "kept_fraction": confirmation.get("kept_fraction"),
         "track_rescued_detections": confirmation.get("track_rescued_detections"),
         "track_rescue_max_frame_distance": confirmation.get("track_rescue_max_frame_distance"),
+        "rescued_min_area_px": confirmation.get("rescued_min_area_px"),
+        "rescued_min_peak_signal": confirmation.get("rescued_min_peak_signal"),
+        "rescued_quality_rejected_detections": confirmation.get("rescued_quality_rejected_detections"),
         "duplicate_suppressed_detections": confirmation.get("duplicate_suppressed_detections"),
         "rejected_detections": confirmation.get("rejected_detections"),
         "output_dir": str(output_dir),
@@ -150,24 +163,20 @@ def write_summary(output_root: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         "# Detection-overlap filter sweep",
         "",
-        "| label | detections | detections/frame | filtered velocities | median area px | kept fraction | rescued | rescue max frame distance | duplicate suppressed | rejected |",
+        "| label | detections | detections/frame | filtered velocities | confirmation-filtered velocities | median area px | kept fraction | rescued | duplicate suppressed | rejected |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {label} | {n_detections} | {dpf:.3g} | {velocities} | {area} | {kept:.3g} | {rescued} | {rescue_distance} | {duplicates} | {rejected} |".format(
+            "| {label} | {n_detections} | {dpf:.3g} | {velocities} | {confirmation_filtered} | {area} | {kept:.3g} | {rescued} | {duplicates} | {rejected} |".format(
                 label=row["label"],
                 n_detections=row["n_detections"],
                 dpf=float(row["detections_per_frame"] or 0.0),
                 velocities=row["n_filtered_velocity_estimates"],
+                confirmation_filtered=row["n_confirmation_filtered_velocity_estimates"],
                 area="" if row["detection_area_median_px"] is None else f"{row['detection_area_median_px']:.3g}",
                 kept=float(row["kept_fraction"] or 0.0),
                 rescued=row["track_rescued_detections"],
-                rescue_distance=(
-                    ""
-                    if row["track_rescue_max_frame_distance"] is None
-                    else f"{row['track_rescue_max_frame_distance']:.3g}"
-                ),
                 duplicates=row["duplicate_suppressed_detections"],
                 rejected=row["rejected_detections"],
             )

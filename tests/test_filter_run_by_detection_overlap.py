@@ -58,20 +58,28 @@ def make_run(output_dir: Path, detections: list[dict[str, object]]) -> None:
     Image.new("L", (16, 16), 96).save(output_dir / "residual_frame_000000.png")
 
 
-def detection(label: int, *, x: float, y: float, frame_index: int = 0) -> dict[str, object]:
+def detection(
+    label: int,
+    *,
+    x: float,
+    y: float,
+    frame_index: int = 0,
+    area: int = 9,
+    peak: float = 9.0,
+) -> dict[str, object]:
     return {
         "frame_index": frame_index,
         "image": f"frame{frame_index}.bmp",
         "label": label,
         "y": y,
         "x": x,
-        "area_px": 9,
+        "area_px": area,
         "bbox_top": y - 1,
         "bbox_left": x - 1,
         "bbox_bottom": y + 2,
         "bbox_right": x + 2,
         "mean_signal": 6.0,
-        "peak_signal": 9.0,
+        "peak_signal": peak,
         "recurrent_artifact_overlap_fraction": "",
         "recurrent_artifact_probability": "",
         "recurrent_artifact_required_peak_signal": "",
@@ -223,6 +231,120 @@ def test_filter_run_can_limit_track_rescue_to_nearby_confirmed_detections(tmp_pa
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["confirmation"]["track_rescue_max_frame_distance"] == 1.0
     assert metadata["confirmation"]["track_rescued_detections"] == 1
+
+
+def test_filter_run_can_gate_track_rescued_detections_by_quality(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    candidate_detections = [
+        detection(1, x=10, y=10, frame_index=0, area=16, peak=8.0),
+        detection(1, x=15, y=10, frame_index=1, area=4, peak=5.2),
+        detection(1, x=20, y=10, frame_index=2, area=9, peak=6.0),
+    ]
+    make_run(candidate, candidate_detections)
+    make_run(confirming, [detection(1, x=10, y=10, frame_index=0, area=16, peak=8.0)])
+    write_csv(
+        candidate / "tracks.csv",
+        [
+            {"track_id": 7, "track_detection_index": index, **row}
+            for index, row in enumerate(candidate_detections)
+        ],
+        ["track_id", "track_detection_index", *overlap_filter.DETECTION_FIELDS],
+    )
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.1",
+            "--max-center-distance-px",
+            "0",
+            "--track-rescue-min-detections",
+            "3",
+            "--track-rescue-min-confirmed",
+            "1",
+            "--track-rescue-min-confirmed-fraction",
+            "0.1",
+            "--rescued-min-area-px",
+            "6",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    assert [row["frame_index"] for row in kept] == ["0", "2"]
+    assert [row["frame_index"] for row in rejected] == ["1"]
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["confirmation"]["rescued_min_area_px"] == 6.0
+    assert metadata["confirmation"]["rescued_quality_rejected_detections"] == 1
+    assert metadata["confirmation"]["track_rescued_detections"] == 1
+
+
+def test_filter_run_can_require_direct_confirmation_in_final_tracks(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    candidate_detections = [
+        detection(1, x=10, y=10, frame_index=0),
+        detection(1, x=10, y=15, frame_index=1),
+        detection(1, x=10, y=20, frame_index=2),
+    ]
+    make_run(candidate, candidate_detections)
+    make_run(confirming, [detection(1, x=10, y=10, frame_index=0)])
+    write_csv(
+        candidate / "tracks.csv",
+        [
+            {"track_id": 7, "track_detection_index": index, **row}
+            for index, row in enumerate(candidate_detections)
+        ],
+        ["track_id", "track_detection_index", *overlap_filter.DETECTION_FIELDS],
+    )
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.1",
+            "--max-center-distance-px",
+            "0",
+            "--track-rescue-min-detections",
+            "3",
+            "--track-rescue-min-confirmed",
+            "1",
+            "--track-rescue-min-confirmed-fraction",
+            "0.1",
+            "--min-track-length",
+            "2",
+            "--track-filter-min-length",
+            "2",
+            "--track-filter-min-confirmed-detections",
+            "2",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["n_velocity_accepted_before_confirmation_filter"] == 1
+    assert metadata["n_confirmation_filtered_velocity_estimates"] == 1
+    assert metadata["n_filtered_velocity_estimates"] == 0
+    score_rows = list(csv.DictReader((output / "track_scores.csv").open(newline="", encoding="utf-8")))
+    assert score_rows[0]["direct_confirmed_detections"] == "1"
+    assert score_rows[0]["passes_confirmation"] == "False"
+    assert score_rows[0]["accepted"] == "False"
 
 
 def test_filter_run_can_use_one_to_one_confirmation(tmp_path):

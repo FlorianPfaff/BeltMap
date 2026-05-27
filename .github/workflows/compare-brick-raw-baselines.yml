@@ -106,6 +106,16 @@ on:
         required: false
         type: string
         default: "3"
+      raw_confirmation_rescued_quality:
+        description: "Quality gates for detections kept only by track rescue as rescued_min_area,rescued_min_peak_signal. 0 disables a gate."
+        required: true
+        type: string
+        default: "0,0"
+      raw_confirmation_track_filter:
+        description: "Final track confirmation gates as min_direct_confirmed_detections,min_direct_confirmed_fraction. 0 disables a gate."
+        required: true
+        type: string
+        default: "1,0"
       raw_confirmation_dedupe:
         description: "Duplicate suppression as dedupe_iou,dedupe_containment,dedupe_center_distance,dedupe_margin. 0 disables a gate."
         required: true
@@ -297,6 +307,8 @@ jobs:
           RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
           RAW_CONFIRMATION_TRACK_RESCUE: ${{ inputs.raw_confirmation_track_rescue }}
           RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE: ${{ inputs.raw_confirmation_track_rescue_max_frame_distance }}
+          RAW_CONFIRMATION_RESCUED_QUALITY: ${{ inputs.raw_confirmation_rescued_quality }}
+          RAW_CONFIRMATION_TRACK_FILTER: ${{ inputs.raw_confirmation_track_filter }}
           RAW_CONFIRMATION_DEDUPE: ${{ inputs.raw_confirmation_dedupe }}
         run: |
           set -euo pipefail
@@ -306,6 +318,8 @@ jobs:
 
           IFS=',' read -r MIN_IOU MAX_CENTER CANDIDATE_MARGIN CONFIRMING_MARGIN <<< "$RAW_CONFIRMATION_OVERLAP"
           IFS=',' read -r RESCUE_MIN_DETECTIONS RESCUE_MIN_CONFIRMED RESCUE_MIN_FRACTION <<< "$RAW_CONFIRMATION_TRACK_RESCUE"
+          IFS=',' read -r RESCUED_MIN_AREA RESCUED_MIN_PEAK_SIGNAL <<< "$RAW_CONFIRMATION_RESCUED_QUALITY"
+          IFS=',' read -r TRACK_FILTER_MIN_CONFIRMED TRACK_FILTER_MIN_CONFIRMED_FRACTION <<< "$RAW_CONFIRMATION_TRACK_FILTER"
           IFS=',' read -r DEDUPE_IOU DEDUPE_CONTAINMENT DEDUPE_CENTER DEDUPE_MARGIN <<< "$RAW_CONFIRMATION_DEDUPE"
           rescue_frame_distance_args=()
           if [ -n "${RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE:-}" ]; then
@@ -324,6 +338,8 @@ jobs:
             --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
             --track-rescue-min-confirmed-fraction "$RESCUE_MIN_FRACTION" \
             "${rescue_frame_distance_args[@]}" \
+            --rescued-min-area-px "$RESCUED_MIN_AREA" \
+            --rescued-min-peak-signal "$RESCUED_MIN_PEAK_SIGNAL" \
             --dedupe-iou-threshold "$DEDUPE_IOU" \
             --dedupe-containment-threshold "$DEDUPE_CONTAINMENT" \
             --dedupe-center-distance-px "$DEDUPE_CENTER" \
@@ -339,7 +355,9 @@ jobs:
             --velocity-fit-method theil_sen \
             --track-filter-min-length 5 \
             --track-filter-min-velocity-ratio-y 0.0 \
-            --track-filter-max-velocity-ratio-y 1.1
+            --track-filter-max-velocity-ratio-y 1.1 \
+            --track-filter-min-confirmed-detections "$TRACK_FILTER_MIN_CONFIRMED" \
+            --track-filter-min-confirmed-fraction "$TRACK_FILTER_MIN_CONFIRMED_FRACTION"
 
           compare_args=()
           IFS=',' read -ra requested_methods <<< "$METHODS"
@@ -365,10 +383,14 @@ jobs:
             --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
             --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
             "${rescue_frame_distance_args[@]}" \
+            --rescued-min-area-px "$RESCUED_MIN_AREA" \
+            --rescued-min-peak-signal "$RESCUED_MIN_PEAK_SIGNAL" \
             --dedupe-iou-threshold "$DEDUPE_IOU" \
             --dedupe-containment-threshold "$DEDUPE_CONTAINMENT" \
             --dedupe-center-distance-px "$DEDUPE_CENTER" \
             --dedupe-margin-px "$DEDUPE_MARGIN" \
+            --track-filter-min-confirmed-detections "$TRACK_FILTER_MIN_CONFIRMED" \
+            --track-filter-min-confirmed-fraction "$TRACK_FILTER_MIN_CONFIRMED_FRACTION" \
             --quiet
 
       - name: Publish job summary

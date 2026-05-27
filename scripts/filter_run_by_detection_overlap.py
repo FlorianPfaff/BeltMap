@@ -51,6 +51,7 @@ TRACK_DETECTION_FIELDS = [
     "track_id",
     "track_detection_index",
     *DETECTION_FIELDS,
+    *CONFIRMATION_FIELDS,
 ]
 VELOCITY_FIELDS = [
     "track_id",
@@ -76,6 +77,9 @@ TRACK_SCORE_FIELDS = [
     "passes_min_track_length",
     "passes_velocity_ratio",
     "passes_lateral_velocity",
+    "direct_confirmed_detections",
+    "direct_confirmed_fraction",
+    "passes_confirmation",
     "accepted",
     "plausibility_score",
 ]
@@ -123,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--rescued-min-area-px",
+        type=float,
+        default=0.0,
+        help="Minimum area for detections kept only by track rescue. 0 disables.",
+    )
+    parser.add_argument(
+        "--rescued-min-peak-signal",
+        type=float,
+        default=0.0,
+        help="Minimum peak signal for detections kept only by track rescue. 0 disables.",
+    )
+    parser.add_argument(
         "--dedupe-iou-threshold",
         type=float,
         default=0.0,
@@ -159,6 +175,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-filter-min-velocity-ratio-y", type=float, default=0.0)
     parser.add_argument("--track-filter-max-velocity-ratio-y", type=float, default=1.1)
     parser.add_argument("--track-filter-max-abs-x-velocity-px-per-frame", type=float, default=None)
+    parser.add_argument(
+        "--track-filter-min-confirmed-detections",
+        type=int,
+        default=0,
+        help="Minimum directly raw-confirmed detections required in a final accepted track. 0 disables.",
+    )
+    parser.add_argument(
+        "--track-filter-min-confirmed-fraction",
+        type=float,
+        default=0.0,
+        help="Minimum directly raw-confirmed detection fraction required in a final accepted track. 0 disables.",
+    )
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -172,6 +200,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
     if args.min_track_length < 1 or args.track_filter_min_length < 1:
         raise ValueError("track length thresholds must be positive")
+    if args.track_filter_min_confirmed_detections < 0:
+        raise ValueError("--track-filter-min-confirmed-detections must be non-negative")
+    if not 0.0 <= args.track_filter_min_confirmed_fraction <= 1.0:
+        raise ValueError("--track-filter-min-confirmed-fraction must be in [0, 1]")
     if args.track_rescue_min_detections < 1 or args.track_rescue_min_confirmed < 1:
         raise ValueError("track rescue count thresholds must be positive")
     if not 0.0 <= args.track_rescue_min_confirmed_fraction <= 1.0:
@@ -180,6 +212,10 @@ def validate_args(args: argparse.Namespace) -> None:
         args.track_rescue_max_frame_distance < 0 or not math.isfinite(args.track_rescue_max_frame_distance)
     ):
         raise ValueError("--track-rescue-max-frame-distance must be finite and non-negative")
+    for name in ("rescued_min_area_px", "rescued_min_peak_signal"):
+        value = getattr(args, name)
+        if value < 0 or not math.isfinite(value):
+            raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
     for name in ("dedupe_iou_threshold", "dedupe_containment_threshold"):
         value = getattr(args, name)
         if not 0.0 <= value <= 1.0:
@@ -397,6 +433,53 @@ def row_bool(row: dict[str, Any], field: str) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def rescued_row_passes_quality_gates(row: dict[str, Any], args: argparse.Namespace) -> bool:
+    if args.rescued_min_area_px > 0.0 and row_float(row, "area_px") < args.rescued_min_area_px:
+        return False
+    if args.rescued_min_peak_signal > 0.0 and row_float(row, "peak_signal") < args.rescued_min_peak_signal:
+        return False
+    return True
+
+
+def row_is_directly_confirmed(row: dict[str, Any]) -> bool:
+    return not row_bool(row, "confirmation_rescued_by_track") and str(row.get("confirmation_label", "")) != ""
+
+
+def track_confirmation_summaries(track_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    summaries: dict[int, dict[str, Any]] = {}
+    for row in track_rows:
+        track_id = int(row["track_id"])
+        summary = summaries.setdefault(
+            track_id,
+            {
+                "n_detections": 0,
+                "direct_confirmed_detections": 0,
+                "direct_confirmed_fraction": 0.0,
+            },
+        )
+        summary["n_detections"] += 1
+        if row_is_directly_confirmed(row):
+            summary["direct_confirmed_detections"] += 1
+    for summary in summaries.values():
+        n_detections = summary["n_detections"]
+        summary["direct_confirmed_fraction"] = (
+            0.0 if n_detections == 0 else summary["direct_confirmed_detections"] / n_detections
+        )
+    return summaries
+
+
+def track_passes_confirmation_filter(
+    summary: dict[str, Any],
+    *,
+    min_confirmed_detections: int,
+    min_confirmed_fraction: float,
+) -> bool:
+    return (
+        summary["direct_confirmed_detections"] >= min_confirmed_detections
+        and summary["direct_confirmed_fraction"] >= min_confirmed_fraction
+    )
 
 
 def duplicate_priority(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
@@ -632,12 +715,17 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
 
     kept_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
+    rescued_quality_rejected_count = 0
     for row in annotated_rows:
         key = detection_key(row)
-        if key in confirmed_keys or key in rescued_keys:
+        if key in confirmed_keys:
+            kept_rows.append(row)
+        elif key in rescued_keys and rescued_row_passes_quality_gates(row, args):
             row["confirmation_rescued_by_track"] = key not in confirmed_keys
             kept_rows.append(row)
         else:
+            if key in rescued_keys:
+                rescued_quality_rejected_count += 1
             rejected_rows.append(row)
 
     confirmed_or_rescued_count = len(kept_rows)
@@ -690,18 +778,52 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         ),
     )
     track_scores = score_particle_velocities(velocity_objects, config=track_filter)
-    accepted_track_ids = {score.track_id for score in track_scores if score.accepted}
-
+    kept_annotation_by_key = {
+        detection_key(row): {field: row.get(field, "") for field in CONFIRMATION_FIELDS}
+        for row in kept_rows
+    }
     track_rows = [
-        detection_row(
-            detection,
-            image=image_by_frame.get(int(detection.frame_index), ""),
-            track_id=track.track_id,
-            track_detection_index=detection_index,
-        )
+        {
+            **detection_row(
+                detection,
+                image=image_by_frame.get(int(detection.frame_index), ""),
+                track_id=track.track_id,
+                track_detection_index=detection_index,
+            ),
+            **kept_annotation_by_key.get((int(detection.frame_index), int(detection.label)), {}),
+        }
         for track in tracks
         for detection_index, detection in enumerate(track.detections)
     ]
+    confirmation_by_track = track_confirmation_summaries(track_rows)
+    track_score_rows: list[dict[str, Any]] = []
+    velocity_accepted_track_ids: set[int] = set()
+    accepted_track_ids: set[int] = set()
+    for score in track_scores:
+        row = asdict(score)
+        summary = confirmation_by_track.get(
+            score.track_id,
+            {
+                "direct_confirmed_detections": 0,
+                "direct_confirmed_fraction": 0.0,
+            },
+        )
+        passes_confirmation = track_passes_confirmation_filter(
+            summary,
+            min_confirmed_detections=args.track_filter_min_confirmed_detections,
+            min_confirmed_fraction=args.track_filter_min_confirmed_fraction,
+        )
+        row["direct_confirmed_detections"] = summary["direct_confirmed_detections"]
+        row["direct_confirmed_fraction"] = summary["direct_confirmed_fraction"]
+        row["passes_confirmation"] = passes_confirmation
+        if score.accepted:
+            velocity_accepted_track_ids.add(score.track_id)
+        if score.accepted and passes_confirmation:
+            accepted_track_ids.add(score.track_id)
+        elif score.accepted:
+            row["accepted"] = False
+        track_score_rows.append(row)
+
     filtered_track_rows = [row for row in track_rows if row["track_id"] in accepted_track_ids]
     filtered_velocity_rows = [
         asdict(velocity)
@@ -722,7 +844,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
     )
     write_csv(output_dir / "tracks.csv", track_rows, TRACK_DETECTION_FIELDS)
     write_csv(output_dir / "velocities.csv", [asdict(velocity) for velocity in velocity_objects], VELOCITY_FIELDS)
-    write_csv(output_dir / "track_scores.csv", [asdict(score) for score in track_scores], TRACK_SCORE_FIELDS)
+    write_csv(output_dir / "track_scores.csv", track_score_rows, TRACK_SCORE_FIELDS)
     write_csv(output_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
     write_csv(output_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
     copy_previews(args.candidate_run, output_dir)
@@ -744,6 +866,9 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "track_rescue_min_confirmed": args.track_rescue_min_confirmed,
             "track_rescue_min_confirmed_fraction": args.track_rescue_min_confirmed_fraction,
             "track_rescue_max_frame_distance": args.track_rescue_max_frame_distance,
+            "rescued_min_area_px": args.rescued_min_area_px,
+            "rescued_min_peak_signal": args.rescued_min_peak_signal,
+            "rescued_quality_rejected_detections": rescued_quality_rejected_count,
             "track_rescued_detections": sum(1 for row in kept_rows if row["confirmation_rescued_by_track"]),
             "dedupe_iou_threshold": args.dedupe_iou_threshold,
             "dedupe_containment_threshold": args.dedupe_containment_threshold,
@@ -758,7 +883,11 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         "n_detections": len(kept_rows),
         "n_tracks": len(tracks),
         "n_velocity_estimates": len(velocity_objects),
+        "n_velocity_accepted_before_confirmation_filter": len(velocity_accepted_track_ids),
+        "n_confirmation_filtered_velocity_estimates": len(velocity_accepted_track_ids - accepted_track_ids),
         "n_filtered_velocity_estimates": len(filtered_velocity_rows),
+        "track_filter_min_confirmed_detections": args.track_filter_min_confirmed_detections,
+        "track_filter_min_confirmed_fraction": args.track_filter_min_confirmed_fraction,
         "belt_velocity_px_per_frame": belt_velocity,
         "detection_area_median_px": None if areas.size == 0 else float(np.median(areas)),
         "detections_per_frame": None if n_images == 0 else len(kept_rows) / n_images,
