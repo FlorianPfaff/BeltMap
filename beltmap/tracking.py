@@ -381,16 +381,37 @@ def _predict_track_position(
         if np.unique(frames).size >= 2:
             ys = np.asarray([detection.y for detection in recent], dtype=np.float64)
             xs = np.asarray([detection.x for detection in recent], dtype=np.float64)
-            candidate_velocity_y = _linear_slope(frames, ys)
-            candidate_velocity_x = _linear_slope(frames, xs)
-            if np.isfinite(candidate_velocity_y) and np.isfinite(candidate_velocity_x):
-                velocity_y = candidate_velocity_y
-                velocity_x = candidate_velocity_x
+            predicted_y = _predict_axis_from_recent_track(frames, ys, frame_index)
+            predicted_x = _predict_axis_from_recent_track(frames, xs, frame_index)
+            if predicted_y is not None and predicted_x is not None:
+                return predicted_y, predicted_x
 
     return (
         last.y + velocity_y * dt,
         last.x + velocity_x * dt,
     )
+
+
+def _predict_axis_from_recent_track(
+    frames: FloatArray,
+    values: FloatArray,
+    frame_index: float,
+) -> float | None:
+    finite = np.isfinite(frames) & np.isfinite(values)
+    frames = frames[finite]
+    values = values[finite]
+    if np.unique(frames).size < 2:
+        return None
+    try:
+        slope = _theil_sen_slope(frames, values)
+    except ValueError:
+        return None
+    intercepts = values - slope * frames
+    intercepts = intercepts[np.isfinite(intercepts)]
+    if intercepts.size == 0:
+        return None
+    prediction = float(np.median(intercepts) + slope * frame_index)
+    return prediction if np.isfinite(prediction) else None
 
 
 def _association_feature_cost_matrix(

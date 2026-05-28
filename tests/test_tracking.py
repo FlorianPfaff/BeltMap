@@ -199,6 +199,67 @@ def test_track_particle_detections_predicts_from_recent_track_velocity():
     assert [track.n_detections for track in tracks] == [4]
 
 
+def test_track_particle_detections_robust_prediction_resists_one_bad_centroid():
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                frame_index,
+                1,
+                y=y,
+                x=5.0,
+                area_px=4,
+                bbox_top=int(y),
+                bbox_left=4,
+                bbox_bottom=int(y) + 2,
+                bbox_right=6,
+            )
+        ]
+        for frame_index, y in enumerate([0.0, 3.0, 44.0, 9.0])
+    ]
+    detections_by_frame.append(
+        [
+            ParticleDetection(
+                4,
+                1,
+                y=12.0,
+                x=5.0,
+                area_px=4,
+                bbox_top=12,
+                bbox_left=4,
+                bbox_bottom=14,
+                bbox_right=6,
+            ),
+            ParticleDetection(
+                4,
+                2,
+                y=15.8,
+                x=5.0,
+                area_px=4,
+                bbox_top=15,
+                bbox_left=4,
+                bbox_bottom=17,
+                bbox_right=6,
+            ),
+        ]
+    )
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=60.0,
+            velocity_prior_y_px_per_frame=3.0,
+        ),
+    )
+
+    assert [detection.y for detection in tracks[0].detections] == [
+        0.0,
+        3.0,
+        44.0,
+        9.0,
+        12.0,
+    ]
+
+
 def test_track_particle_detections_uses_positional_indices_by_default():
     detections_by_frame = [
         [
