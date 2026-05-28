@@ -299,6 +299,7 @@ def _associate_pyrecest_gnn(
 
     candidate_track_ids: list[int] = []
     initial_priors: list[tuple[FloatArray, FloatArray]] = []
+    predicted_positions: list[tuple[float, float]] = []
     for track_id in active_track_ids:
         prediction = _predict_track_position(
             tracks[track_id],
@@ -309,6 +310,7 @@ def _associate_pyrecest_gnn(
             continue
         predicted_y, predicted_x = prediction
         candidate_track_ids.append(track_id)
+        predicted_positions.append((predicted_y, predicted_x))
         initial_priors.append(
             (
                 np.asarray([predicted_y, predicted_x], dtype=np.float64),
@@ -324,7 +326,9 @@ def _associate_pyrecest_gnn(
         association_param={
             "distance_metric_pos": "Euclidean",
             "square_dist": False,
-            "gating_distance_threshold": config.max_match_distance_px,
+            "gating_distance_threshold": (
+                config.max_match_distance_px + _track_feature_cost_cap(config)
+            ),
             "maximize_cardinality": True,
             "max_new_tracks": max(len(current), len(candidate_track_ids), 1),
         },
@@ -343,6 +347,7 @@ def _associate_pyrecest_gnn(
             warn_on_no_meas_for_track=False,
             pairwise_cost_matrix=_association_feature_cost_matrix(
                 candidate_track_ids,
+                predicted_positions,
                 tracks,
                 current,
                 config=config,
@@ -390,32 +395,46 @@ def _predict_track_position(
 
 def _association_feature_cost_matrix(
     candidate_track_ids: Sequence[int],
+    predicted_positions: Sequence[tuple[float, float]],
     tracks: Sequence[Sequence[ParticleDetection]],
     detections: Sequence[ParticleDetection],
     *,
     config: ParticleTrackingConfig,
 ) -> FloatArray:
-    costs = np.zeros((len(candidate_track_ids), len(detections)), dtype=np.float64)
+    cost_cap = _track_feature_cost_cap(config)
+    blocked_cost = config.max_match_distance_px + cost_cap
+    costs = np.full(
+        (len(candidate_track_ids), len(detections)),
+        blocked_cost,
+        dtype=np.float64,
+    )
     for track_index, track_id in enumerate(candidate_track_ids):
+        predicted_y, predicted_x = predicted_positions[track_index]
         track_area, track_signal = _track_feature_reference(tracks[track_id])
         for detection_index, detection in enumerate(detections):
+            distance = hypot(detection.y - predicted_y, detection.x - predicted_x)
+            if distance > config.max_match_distance_px:
+                continue
+            feature_cost = 0.0
             area_ratio = _positive_ratio(track_area, float(detection.area_px))
             if area_ratio is not None:
-                costs[track_index, detection_index] += (
+                feature_cost += (
                     _TRACK_AREA_COST_WEIGHT_PX
                     * min(abs(log(area_ratio)), _TRACK_FEATURE_LOG_RATIO_CAP)
                 )
 
             signal_ratio = _positive_ratio(track_signal, _detection_signal(detection))
             if signal_ratio is not None:
-                costs[track_index, detection_index] += (
+                feature_cost += (
                     _TRACK_SIGNAL_COST_WEIGHT_PX
                     * min(abs(log(signal_ratio)), _TRACK_FEATURE_LOG_RATIO_CAP)
                 )
-    return np.minimum(
-        costs,
-        config.max_match_distance_px * _TRACK_FEATURE_COST_MAX_GATE_FRACTION,
-    )
+            costs[track_index, detection_index] = min(feature_cost, cost_cap)
+    return costs
+
+
+def _track_feature_cost_cap(config: ParticleTrackingConfig) -> float:
+    return config.max_match_distance_px * _TRACK_FEATURE_COST_MAX_GATE_FRACTION
 
 
 def _track_feature_reference(

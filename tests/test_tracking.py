@@ -414,7 +414,10 @@ def test_track_particle_detections_uses_pyrecest_gnn_assignment(monkeypatch):
     )
 
     assert [track.n_detections for track in tracks] == [2]
-    assert calls["association_param"]["gating_distance_threshold"] == 5.0
+    np.testing.assert_allclose(
+        calls["association_param"]["gating_distance_threshold"],
+        5.75,
+    )
     assert calls["association_param"]["square_dist"] is False
     assert calls["association_param"]["maximize_cardinality"] is True
     assert calls["log_prior_estimates"] is False
@@ -609,6 +612,85 @@ def test_track_particle_detections_uses_recent_feature_median_for_costs(monkeypa
     costs = observed_costs[-1]
     assert costs.shape == (1, 2)
     assert costs[0, 0] < costs[0, 1]
+
+
+def test_track_particle_detections_preserves_spatial_gate_with_feature_costs(monkeypatch):
+    calls = {}
+
+    class FakeGlobalNearestNeighbor:
+        def __init__(
+            self,
+            *,
+            initial_prior,
+            association_param,
+            log_prior_estimates,
+            log_posterior_estimates,
+        ):
+            calls["association_param"] = association_param
+
+        def find_association(self, measurements, *_args, **kwargs):
+            costs = kwargs["pairwise_cost_matrix"]
+            threshold = calls["association_param"]["gating_distance_threshold"]
+            valid_total = measurements[0, 0] + costs[0, 0]
+            invalid_total = measurements[0, 1] + costs[0, 1]
+            assert valid_total <= threshold
+            assert invalid_total > threshold
+            return np.asarray([0], dtype=int)
+
+    monkeypatch.setattr(tracking_module, "GlobalNearestNeighbor", FakeGlobalNearestNeighbor)
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0,
+                1,
+                y=0.0,
+                x=0.0,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=0,
+                bbox_bottom=2,
+                bbox_right=2,
+                mean_signal=8.0,
+            )
+        ],
+        [
+            ParticleDetection(
+                1,
+                1,
+                y=9.9,
+                x=0.0,
+                area_px=16,
+                bbox_top=9,
+                bbox_left=0,
+                bbox_bottom=13,
+                bbox_right=4,
+                mean_signal=2.0,
+            ),
+            ParticleDetection(
+                1,
+                2,
+                y=10.1,
+                x=0.0,
+                area_px=4,
+                bbox_top=10,
+                bbox_left=0,
+                bbox_bottom=12,
+                bbox_right=2,
+                mean_signal=8.0,
+            ),
+        ],
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(max_match_distance_px=10.0),
+    )
+
+    np.testing.assert_allclose(
+        calls["association_param"]["gating_distance_threshold"],
+        11.5,
+    )
+    assert sorted(track.n_detections for track in tracks) == [1, 2]
 
 
 def test_extract_particle_velocities_vs_belt_from_masks():
