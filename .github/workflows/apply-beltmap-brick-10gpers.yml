@@ -109,6 +109,11 @@ on:
         required: true
         type: string
         default: "3,2,0.3,soft,0.5,8,10,8,10"
+      recurrent_artifact_protect_source_tracks:
+        description: "Apply recurrent artifact filtering as a post-run step that protects detections from accepted source tracks."
+        required: true
+        type: boolean
+        default: true
       registration_search:
         description: "Local phase-registration search as radius,step in pixels"
         required: true
@@ -240,6 +245,7 @@ jobs:
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
+          RECURRENT_ARTIFACT_PROTECT_SOURCE_TRACKS: ${{ inputs.recurrent_artifact_protect_source_tracks }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
           PHASE_REFINEMENT_MIN_SCORE: ${{ inputs.phase_refinement_min_score }}
@@ -354,6 +360,7 @@ jobs:
               "recurrent_artifact_reject_max_area_px": recurrent_artifact[7],
               "recurrent_artifact_reject_max_peak_signal": recurrent_artifact[8],
               "reuse_recurrent_artifact_map_path": recurrent_artifact[9],
+              "recurrent_artifact_protect_source_tracks": os.environ["RECURRENT_ARTIFACT_PROTECT_SOURCE_TRACKS"],
               "registration_search_radius_px": float(registration_search[0]),
               "registration_search_step_px": float(registration_search[1]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
@@ -516,6 +523,7 @@ jobs:
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
+          RECURRENT_ARTIFACT_PROTECT_SOURCE_TRACKS: ${{ inputs.recurrent_artifact_protect_source_tracks }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
           PHASE_REFINEMENT_ITERATIONS: ${{ inputs.phase_refinement_iterations }}
           PHASE_REFINEMENT_MIN_SCORE: ${{ inputs.phase_refinement_min_score }}
@@ -628,15 +636,33 @@ jobs:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS reject_max_peak must be non-negative or empty")
               return values
 
+          def env_bool(name: str) -> bool:
+              return env_value(name).lower() in {"1", "true", "yes", "on"}
+
           lines: list[str] = []
           lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
 
           recurrent_artifact = parse_recurrent_artifact_options()
-          if recurrent_artifact[9]:
+          protect_source_tracks = env_bool("RECURRENT_ARTIFACT_PROTECT_SOURCE_TRACKS")
+          driver_recurrent_artifact = recurrent_artifact
+          if protect_source_tracks and int(recurrent_artifact[0]) > 0:
+              driver_recurrent_artifact = [
+                  "0",
+                  recurrent_artifact[1],
+                  recurrent_artifact[2],
+                  recurrent_artifact[3],
+                  recurrent_artifact[4],
+                  recurrent_artifact[5],
+                  recurrent_artifact[6],
+                  recurrent_artifact[7],
+                  recurrent_artifact[8],
+                  "",
+              ]
+          if driver_recurrent_artifact[9]:
               lines.extend(
                   [
                       "[reuse]",
-                      f"recurrent_artifact_map_path = {json.dumps(recurrent_artifact[9])}",
+                      f"recurrent_artifact_map_path = {json.dumps(driver_recurrent_artifact[9])}",
                       "",
                   ]
               )
@@ -734,7 +760,7 @@ jobs:
                   "reject_max_area_px",
                   "reject_max_peak_signal",
               ],
-              recurrent_artifact,
+              driver_recurrent_artifact,
           ):
               if value != "":
                   lines.append(f"{key} = {json.dumps(value)}")
@@ -774,6 +800,84 @@ jobs:
 
           poetry run beltmap-apply --config beltmap-run.toml --print-config
 
+      - name: Apply track-protected recurrent post-filter
+        if: ${{ inputs.recurrent_artifact_protect_source_tracks }}
+        env:
+          RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
+        run: |
+          poetry run python - <<'PY'
+          import os
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          def parse_recurrent_artifact_options() -> list[str]:
+              values = [part.strip() for part in os.environ["RECURRENT_ARTIFACT_OPTIONS"].split(",")]
+              if len(values) == 3:
+                  values.extend(["hard", "1.0", "", "", "", "", ""])
+              elif len(values) == 5:
+                  values.extend(["", "", "", "", ""])
+              elif len(values) == 6:
+                  values = values[:5] + ["", "", "", "", values[5]]
+              elif len(values) == 7:
+                  values.extend(["", "", ""])
+              elif len(values) == 8:
+                  values = values[:7] + ["", "", values[7]]
+              elif len(values) == 9:
+                  values.append("")
+              elif len(values) != 10:
+                  raise SystemExit(
+                      "RECURRENT_ARTIFACT_OPTIONS must contain "
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reject_max_area,reject_max_peak[,reuse_map_path]]]]"
+                  )
+              return values
+
+          recurrent_artifact = parse_recurrent_artifact_options()
+          if int(recurrent_artifact[0]) < 1:
+              print("Track-protected recurrent post-filter disabled by min_revolutions < 1")
+              raise SystemExit(0)
+
+          source = Path("outputs-unprotected-source")
+          output = Path("outputs")
+          if source.exists():
+              shutil.rmtree(source)
+          output.rename(source)
+
+          cmd = [
+              sys.executable,
+              "-m",
+              "beltmap.cli.filter_recurrent_artifacts",
+              "--input-dir",
+              str(source),
+              "--output-dir",
+              str(output),
+              "--min-revolutions",
+              recurrent_artifact[0],
+              "--margin-px",
+              recurrent_artifact[1],
+              "--max-overlap-fraction",
+              recurrent_artifact[2],
+              "--mode",
+              recurrent_artifact[3],
+              "--soft-penalty-weight",
+              recurrent_artifact[4],
+              "--protect-source-filtered-tracks",
+              "--quiet",
+          ]
+          optional_args = [
+              ("--candidate-max-area-px", recurrent_artifact[5]),
+              ("--candidate-max-peak-signal", recurrent_artifact[6]),
+              ("--reject-max-area-px", recurrent_artifact[7]),
+              ("--reject-max-peak-signal", recurrent_artifact[8]),
+          ]
+          for flag, value in optional_args:
+              if value:
+                  cmd.extend([flag, value])
+          print("Running", " ".join(cmd))
+          subprocess.run(cmd, check=True)
+          PY
+
       - name: Generate validation report and visual QC
         run: |
           poetry run beltmap-validate --output-dir outputs
@@ -783,7 +887,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: beltmap-brick-10gpers-scikit-image-results
-          path: outputs/**
+          path: |
+            outputs/**
+            outputs-unprotected-source/**
           if-no-files-found: warn
           retention-days: 14
 
