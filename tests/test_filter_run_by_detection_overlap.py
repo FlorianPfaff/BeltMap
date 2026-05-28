@@ -121,6 +121,47 @@ def test_filter_run_keeps_only_detections_confirmed_by_overlap(tmp_path):
     assert metadata["confirmation"]["rejected_detections"] == 1
 
 
+def test_filter_run_can_reject_distant_iou_confirmation(tmp_path):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    candidate_row = detection(1, x=10, y=10)
+    confirming_row = detection(1, x=80, y=80)
+    for row in (candidate_row, confirming_row):
+        row["bbox_top"] = 0
+        row["bbox_left"] = 0
+        row["bbox_bottom"] = 100
+        row["bbox_right"] = 100
+    make_run(candidate, [candidate_row])
+    make_run(confirming, [confirming_row])
+
+    exit_code = overlap_filter.main(
+        [
+            "--candidate-run",
+            str(candidate),
+            "--confirming-run",
+            str(confirming),
+            "--output-dir",
+            str(output),
+            "--min-iou",
+            "0.5",
+            "--max-center-distance-px",
+            "0",
+            "--max-match-center-distance-px",
+            "50",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    assert kept == []
+    assert [row["label"] for row in rejected] == ["1"]
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["confirmation"]["max_match_center_distance_px"] == 50.0
+
+
 def test_filter_run_can_rescue_unmatched_detections_from_confirmed_tracks(tmp_path):
     candidate = tmp_path / "candidate"
     confirming = tmp_path / "confirming"

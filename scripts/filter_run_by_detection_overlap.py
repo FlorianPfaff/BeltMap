@@ -106,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label", default="raw_confirmed")
     parser.add_argument("--min-iou", type=float, default=0.01)
     parser.add_argument("--max-center-distance-px", type=float, default=35.0)
+    parser.add_argument(
+        "--max-match-center-distance-px",
+        type=float,
+        default=None,
+        help="Hard maximum center distance for any direct confirmation match. Omit to allow IoU-only distant matches.",
+    )
     parser.add_argument("--candidate-margin-px", type=float, default=2.0)
     parser.add_argument("--confirming-margin-px", type=float, default=2.0)
     parser.add_argument(
@@ -204,6 +210,10 @@ def validate_args(args: argparse.Namespace) -> None:
         value = getattr(args, name)
         if value < 0 or not math.isfinite(value):
             raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
+    if args.max_match_center_distance_px is not None and (
+        args.max_match_center_distance_px < 0 or not math.isfinite(args.max_match_center_distance_px)
+    ):
+        raise ValueError("--max-match-center-distance-px must be finite and non-negative")
     if args.min_track_length < 1 or args.track_filter_min_length < 1:
         raise ValueError("track length thresholds must be positive")
     if args.track_filter_min_confirmed_detections < 0:
@@ -576,6 +586,7 @@ def best_confirmation(
     *,
     min_iou: float,
     max_center_distance_px: float,
+    max_match_center_distance_px: float | None,
     candidate_margin_px: float,
     confirming_margin_px: float,
 ) -> tuple[dict[str, str] | None, float, float]:
@@ -592,6 +603,8 @@ def best_confirmation(
             best_distance = distance
     if best_row is None:
         return None, 0.0, math.inf
+    if max_match_center_distance_px is not None and best_distance > max_match_center_distance_px:
+        return None, best_iou, best_distance
     if best_iou >= min_iou or best_distance <= max_center_distance_px:
         return best_row, best_iou, best_distance
     return None, best_iou, best_distance
@@ -603,6 +616,7 @@ def confirmation_matches(
     *,
     min_iou: float,
     max_center_distance_px: float,
+    max_match_center_distance_px: float | None,
     candidate_margin_px: float,
     confirming_margin_px: float,
     one_to_one: bool,
@@ -616,6 +630,8 @@ def confirmation_matches(
         for confirmer_index, confirmer in enumerate(confirmers):
             iou = bbox_iou(candidate_bbox, expanded_bbox(confirmer, margin=confirming_margin_px))
             distance = center_distance(candidate, confirmer)
+            if max_match_center_distance_px is not None and distance > max_match_center_distance_px:
+                continue
             is_match = iou >= min_iou or distance <= max_center_distance_px
             if not is_match:
                 continue
@@ -688,6 +704,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             confirming_by_frame.get(frame_index, []),
             min_iou=args.min_iou,
             max_center_distance_px=args.max_center_distance_px,
+            max_match_center_distance_px=args.max_match_center_distance_px,
             candidate_margin_px=args.candidate_margin_px,
             confirming_margin_px=args.confirming_margin_px,
             one_to_one=args.one_to_one_confirmation,
@@ -872,6 +889,7 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         "confirmation": {
             "min_iou": args.min_iou,
             "max_center_distance_px": args.max_center_distance_px,
+            "max_match_center_distance_px": args.max_match_center_distance_px,
             "candidate_margin_px": args.candidate_margin_px,
             "confirming_margin_px": args.confirming_margin_px,
             "confirming_detections_source": args.confirming_detections_source,

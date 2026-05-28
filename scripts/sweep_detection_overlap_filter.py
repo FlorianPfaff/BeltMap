@@ -23,6 +23,7 @@ SUMMARY_FIELDS = [
     "label",
     "min_iou",
     "max_center_distance_px",
+    "max_match_center_distance_px",
     "track_rescue_min_confirmed_fraction",
     "n_detections",
     "detections_per_frame",
@@ -84,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label-prefix", default="")
     parser.add_argument("--candidate-margin-px", type=float, default=2.0)
     parser.add_argument("--confirming-margin-px", type=float, default=2.0)
+    parser.add_argument("--max-match-center-distance-px", type=float, default=None)
     parser.add_argument("--one-to-one-confirmation", action="store_true")
     parser.add_argument("--disable-track-rescue", action="store_true")
     parser.add_argument("--track-rescue-min-detections", type=int, default=3)
@@ -143,6 +145,7 @@ def summary_row(spec: SweepSpec, output_dir: Path, metadata: dict[str, Any]) -> 
         "label": spec.label,
         "min_iou": spec.min_iou,
         "max_center_distance_px": spec.max_center_distance_px,
+        "max_match_center_distance_px": confirmation.get("max_match_center_distance_px"),
         "track_rescue_min_confirmed_fraction": spec.track_rescue_min_confirmed_fraction,
         "n_detections": metadata.get("n_detections"),
         "detections_per_frame": metadata.get("detections_per_frame"),
@@ -174,12 +177,12 @@ def write_summary(output_root: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         "# Detection-overlap filter sweep",
         "",
-        "| label | detections | detections/frame | filtered velocities | confirmation-filtered velocities | median area px | kept fraction | rescued | duplicate suppressed | rejected |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| label | detections | detections/frame | filtered velocities | confirmation-filtered velocities | median area px | kept fraction | rescued | max match distance | duplicate suppressed | rejected |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {label} | {n_detections} | {dpf:.3g} | {velocities} | {confirmation_filtered} | {area} | {kept:.3g} | {rescued} | {duplicates} | {rejected} |".format(
+            "| {label} | {n_detections} | {dpf:.3g} | {velocities} | {confirmation_filtered} | {area} | {kept:.3g} | {rescued} | {max_match_distance} | {duplicates} | {rejected} |".format(
                 label=row["label"],
                 n_detections=row["n_detections"],
                 dpf=float(row["detections_per_frame"] or 0.0),
@@ -188,6 +191,11 @@ def write_summary(output_root: Path, rows: list[dict[str, Any]]) -> None:
                 area="" if row["detection_area_median_px"] is None else f"{row['detection_area_median_px']:.3g}",
                 kept=float(row["kept_fraction"] or 0.0),
                 rescued=row["track_rescued_detections"],
+                max_match_distance=(
+                    ""
+                    if row["max_match_center_distance_px"] is None
+                    else f"{row['max_match_center_distance_px']:.3g}"
+                ),
                 duplicates=row["duplicate_suppressed_detections"],
                 rejected=row["rejected_detections"],
             )

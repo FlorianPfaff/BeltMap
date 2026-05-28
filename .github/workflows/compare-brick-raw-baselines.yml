@@ -104,6 +104,11 @@ on:
           - filtered_tracks
           - detections
         default: filtered_tracks
+      raw_confirmation_max_match_center_distance:
+        description: "Hard maximum center distance for any raw confirmation match. Empty allows IoU-only distant matches."
+        required: false
+        type: string
+        default: "120"
       raw_confirmation_track_rescue:
         description: "Track rescue gates as min_detections,min_confirmed,min_confirmed_fraction."
         required: true
@@ -314,6 +319,7 @@ jobs:
           BELT_VELOCITY_PX_PER_FRAME: ${{ inputs.belt_velocity_px_per_frame }}
           RAW_CONFIRMATION_OVERLAP: ${{ inputs.raw_confirmation_overlap }}
           RAW_CONFIRMATION_CONFIRMING_SOURCE: ${{ inputs.raw_confirmation_confirming_source }}
+          RAW_CONFIRMATION_MAX_MATCH_CENTER_DISTANCE: ${{ inputs.raw_confirmation_max_match_center_distance }}
           RAW_CONFIRMATION_TRACK_RESCUE: ${{ inputs.raw_confirmation_track_rescue }}
           RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE: ${{ inputs.raw_confirmation_track_rescue_max_frame_distance }}
           RAW_CONFIRMATION_RESCUED_QUALITY: ${{ inputs.raw_confirmation_rescued_quality }}
@@ -334,6 +340,10 @@ jobs:
           if [ -n "${RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE:-}" ]; then
             rescue_frame_distance_args+=(--track-rescue-max-frame-distance "$RAW_CONFIRMATION_TRACK_RESCUE_MAX_FRAME_DISTANCE")
           fi
+          max_match_center_args=()
+          if [ -n "${RAW_CONFIRMATION_MAX_MATCH_CENTER_DISTANCE:-}" ]; then
+            max_match_center_args+=(--max-match-center-distance-px "$RAW_CONFIRMATION_MAX_MATCH_CENTER_DISTANCE")
+          fi
           poetry run python scripts/filter_run_by_detection_overlap.py \
             --candidate-run outputs/beltmap-artifact \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
@@ -342,6 +352,7 @@ jobs:
             --label beltmap_raw_confirmed \
             --min-iou "$MIN_IOU" \
             --max-center-distance-px "$MAX_CENTER" \
+            "${max_match_center_args[@]}" \
             --candidate-margin-px "$CANDIDATE_MARGIN" \
             --confirming-margin-px "$CONFIRMING_MARGIN" \
             --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
@@ -391,6 +402,7 @@ jobs:
             --confirming-detections-source "$RAW_CONFIRMATION_CONFIRMING_SOURCE" \
             --output-root outputs/raw-baseline-comparison/raw_confirmation_sweep \
             --belt-velocity-px-per-frame "$BELT_VELOCITY_PX_PER_FRAME" \
+            "${max_match_center_args[@]}" \
             --track-rescue-min-detections "$RESCUE_MIN_DETECTIONS" \
             --track-rescue-min-confirmed "$RESCUE_MIN_CONFIRMED" \
             "${rescue_frame_distance_args[@]}" \
