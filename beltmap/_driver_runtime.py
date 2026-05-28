@@ -67,6 +67,8 @@ GENERATED_OUTPUT_FILES = {
 
 GENERATED_OUTPUT_PATTERNS = (
     "residual_frame_*.png",
+    "residual_fixed_frame_*.png",
+    "raw_frame_*.png",
     "detections_overlay_sample_*.png",
     "tracks_overlay_sample_*.png",
 )
@@ -261,10 +263,23 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         writer.writerows(rows)
 
 
-def save_png(array: Any, path: Path) -> None:
+def display_values(array: Any) -> np.ndarray:
+    """Return the numeric image values used for diagnostic preview rendering."""
+
     arr = np.asarray(array.normalized if isinstance(array, ResidualImage) else array, dtype=np.float64)
+    return arr
+
+
+def save_scaled_png(array: Any, path: Path, *, scale: tuple[float, float]) -> None:
+    arr = display_values(array)
+    low, high = scale
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        low, high = 0.0, 1.0
+    Image.fromarray(np.clip((arr - low) / (high - low) * 255, 0, 255).astype(np.uint8)).save(path)
+
+
+def save_png(array: Any, path: Path) -> None:
+    arr = display_values(array)
     finite = np.isfinite(arr)
     low, high = np.percentile(arr[finite], [1, 99]) if finite.any() else (0, 1)
-    if high <= low:
-        high = low + 1
-    Image.fromarray(np.clip((arr - low) / (high - low) * 255, 0, 255).astype(np.uint8)).save(path)
+    save_scaled_png(array, path, scale=(float(low), float(high)))

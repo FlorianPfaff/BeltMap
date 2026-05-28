@@ -18,13 +18,19 @@ def test_clear_generated_outputs_removes_optional_driver_outputs(tmp_path, monke
     ]
     for name in stale_names:
         (tmp_path / name).write_text("stale", encoding="utf-8")
+    stale_patterns = [
+        "raw_frame_000000.png",
+        "residual_fixed_frame_000000.png",
+    ]
+    for name in stale_patterns:
+        (tmp_path / name).write_text("stale", encoding="utf-8")
     keep_path = tmp_path / "manual_notes.txt"
     keep_path.write_text("keep", encoding="utf-8")
 
     rt.clear_generated_outputs()
 
     assert keep_path.is_file()
-    for name in stale_names:
+    for name in [*stale_names, *stale_patterns]:
         assert not (tmp_path / name).exists()
 
 

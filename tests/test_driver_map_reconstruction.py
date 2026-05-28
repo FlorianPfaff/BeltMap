@@ -15,6 +15,10 @@ def _write_gray(path, value: int) -> None:
     Image.fromarray(np.full((1, 1), value, dtype=np.uint8)).save(path)
 
 
+def _write_gray_array(path, values: np.ndarray) -> None:
+    Image.fromarray(np.asarray(values, dtype=np.uint8)).save(path)
+
+
 def test_trimmed_map_reconstruction_rejects_single_bright_outlier(tmp_path, monkeypatch):
     monkeypatch.setattr(rt, "OUT", tmp_path / "out")
     monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
@@ -88,6 +92,54 @@ def test_trimmed_map_reconstruction_fails_before_large_memory_allocation(tmp_pat
             pass_label="test",
             map_trim_fraction=0.25,
         )
+
+
+def test_huber_map_reconstruction_downweights_single_bright_outlier(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    paths = []
+    for index in range(20):
+        values = np.full((3, 3), 10, dtype=np.uint8)
+        if index == 19:
+            values[1, 1] = 250
+        path = tmp_path / f"frame_{index:03d}.png"
+        _write_gray_array(path, values)
+        paths.append(path)
+
+    common_kwargs = dict(
+        paths=paths,
+        samples=list(range(20)),
+        region=(0, 0, 3, 3),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=3.0,
+        map_height=3,
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+    )
+
+    mean_map, _mean_coverage = accumulate_belt_map(
+        **common_kwargs,
+        previous_belt_map=None,
+        pass_label="mean",
+    )
+    huber_map, huber_coverage = accumulate_belt_map(
+        **common_kwargs,
+        previous_belt_map=None,
+        robust_reference_belt_map=mean_map,
+        robust_huber_delta=3.0,
+        robust_min_scale=1.0,
+        pass_label="huber",
+    )
+
+    assert mean_map[1, 1] == pytest.approx(22.0)
+    assert huber_coverage["contributed_pixels"] == 20 * 9
+    assert huber_map[1, 1] < 12.0
 
 
 def test_non_fractional_map_accumulation_uses_nearest_row_assignment():

@@ -1582,7 +1582,13 @@ def main() -> None:
         phase_rows.append(phase_row)
         phase_px_by_frame.append(float(phase_row["phase_px"]))
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
+            rt.save_scaled_png(frame, rt.OUT / f"raw_frame_{frame_index:06d}.png", scale=(0.0, 255.0))
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
+            rt.save_scaled_png(
+                residual,
+                rt.OUT / f"residual_fixed_frame_{frame_index:06d}.png",
+                scale=(-8.0, 8.0),
+            )
         mask = detect_particles_from_residual(
             residual,
             threshold=detection_threshold,

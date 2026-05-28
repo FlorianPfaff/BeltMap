@@ -224,9 +224,10 @@ number of tracks with at least 10 detections
 
 ## Diagnostic 7: residual preview inspection
 
-Use `residual_frame_*.png` previews when enabled. At minimum, inspect the first
-few frames and any frames flagged by low registration score or unusually high
-detection count.
+Use `raw_frame_*.png`, `residual_frame_*.png`, and
+`residual_fixed_frame_*.png` previews when enabled. At minimum, inspect the
+first few frames and any frames flagged by low registration score or unusually
+high detection count.
 
 Expected behavior:
 

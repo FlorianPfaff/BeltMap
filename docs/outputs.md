@@ -59,9 +59,15 @@ outputs/
   recurrent_artifact_detections.csv # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.npy     # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.png     # only when recurrent artifact filtering is enabled
+  raw_frame_000000.png
+  raw_frame_000001.png
+  raw_frame_000002.png
   residual_frame_000000.png
   residual_frame_000001.png
   residual_frame_000002.png
+  residual_fixed_frame_000000.png
+  residual_fixed_frame_000001.png
+  residual_fixed_frame_000002.png
   static_background.npy   # only when static-background learning or reuse is enabled
   static_background.png   # only when static-background learning or reuse is enabled
   static_noise.npy        # only when static-noise learning or reuse is enabled
@@ -581,7 +587,19 @@ Format: same columns and units as `tracks.csv`.
 This is useful for visual overlays or downstream analysis that should ignore
 short fragments and physically implausible velocity rows.
 
-## `residual_frame_*.png`
+## `raw_frame_*.png`
+
+Purpose: visual debug previews of the processed raw crop for the same sampled
+frames as `residual_frame_*.png`.
+
+Format: 8-bit grayscale PNG.
+
+Shape: same height and width as the processed crop, not necessarily the original
+full frame.
+
+Scaling: fixed 0..255 grayscale display range.
+
+## `residual_frame_*.png` and `residual_fixed_frame_*.png`
 
 Purpose: visual debug previews of selected normalized residual frames.
 
@@ -590,10 +608,12 @@ Format: 8-bit grayscale PNG.
 Shape: same height and width as the processed crop, not necessarily the original
 full frame.
 
-Scaling: display-only robust percentile scaling of the normalized residual. Do
-not use these PNGs for quantitative thresholding or measurement; use the driver
-CSV outputs or rerun residual generation in Python when numerical residual
-values are needed.
+Scaling: `residual_frame_*.png` uses display-only robust percentile scaling of
+each normalized residual frame. `residual_fixed_frame_*.png` uses a fixed
+normalized residual display range of -8..8 so frames can be compared visually.
+Do not use these PNGs for quantitative thresholding or measurement; use the
+driver CSV outputs or rerun residual generation in Python when numerical
+residual values are needed.
 
 When written:
 

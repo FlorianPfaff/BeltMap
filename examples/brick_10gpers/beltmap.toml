@@ -44,7 +44,7 @@ max_abs_x_velocity_px_per_frame = 0.0
 [map]
 sample_frames = 500
 sampling_strategy = "adaptive_phase_coverage"
-reconstruction_trim_fraction = 0.05
+reconstruction_trim_fraction = 0.0
 mask_iterations = 2
 fractional_splat = true
 sample_strategy = "phase_coverage"
