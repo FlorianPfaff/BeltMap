@@ -242,6 +242,31 @@ def test_recurrent_artifact_prior_can_use_only_weak_small_candidates():
     ]
 
 
+def test_recurrent_artifact_reject_gates_keep_large_or_strong_detections():
+    artifact_map = np.zeros((12, 12), dtype=bool)
+    artifact_map[1:5, 2:6] = True
+    weak_small = detection(0, 1, 2, 3, 4, peak_signal=6.0)
+    strong_small = detection(0, 1, 2, 3, 4, peak_signal=20.0)
+    weak_large = detection(0, 1, 2, 5, 6, peak_signal=6.0)
+
+    filtered, rejected = filter_recurrent_artifact_detections(
+        [[weak_small, strong_small, weak_large]],
+        phase_px_by_frame=[0.0],
+        artifact_map=artifact_map,
+        config=RecurrentArtifactConfig(
+            min_revolutions=0,
+            margin_px=0,
+            max_overlap_fraction=0.3,
+            reject_max_area_px=4,
+            reject_max_peak_signal=10.0,
+        ),
+    )
+
+    assert rejected == 1
+    assert [item.peak_signal for item in filtered[0]] == [20.0, 6.0]
+    assert [item.area_px for item in filtered[0]] == [4, 16]
+
+
 def test_built_recurrent_probability_excludes_current_revolution_exposure():
     recurrent_first = detection(0, 0, 1, 1, 2, peak_signal=4.0)
     recurrent_second = detection(1, 0, 1, 1, 2, peak_signal=4.0)

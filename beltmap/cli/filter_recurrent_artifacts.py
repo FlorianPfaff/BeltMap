@@ -129,6 +129,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only use detections up to this peak signal when building the recurrent artifact prior.",
     )
     parser.add_argument(
+        "--reject-max-area-px",
+        type=int,
+        default=None,
+        help="Only reject detections up to this area. Larger detections are scored but kept.",
+    )
+    parser.add_argument(
+        "--reject-max-peak-signal",
+        type=float,
+        default=None,
+        help="Only reject detections up to this peak signal. Stronger detections are scored but kept.",
+    )
+    parser.add_argument(
         "--velocity-fit-method",
         choices=["linear", "theil_sen"],
         default=None,
@@ -624,6 +636,8 @@ def filter_recurrent_artifacts(
         "recurrent_artifact_soft_penalty_weight": recurrent_config.soft_penalty_weight,
         "recurrent_artifact_candidate_max_area_px": recurrent_config.candidate_max_area_px,
         "recurrent_artifact_candidate_max_peak_signal": recurrent_config.candidate_max_peak_signal,
+        "recurrent_artifact_reject_max_area_px": recurrent_config.reject_max_area_px,
+        "recurrent_artifact_reject_max_peak_signal": recurrent_config.reject_max_peak_signal,
         "recurrent_artifact_revolutions": recurrent_result.revolution_count,
         "recurrent_artifact_pixels": recurrent_result.artifact_pixels,
         "track_filter_min_length": track_filter_config.min_track_length,
@@ -655,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
             min_recurrence_probability=args.min_recurrence_probability,
             candidate_max_area_px=args.candidate_max_area_px,
             candidate_max_peak_signal=args.candidate_max_peak_signal,
+            reject_max_area_px=args.reject_max_area_px,
+            reject_max_peak_signal=args.reject_max_peak_signal,
         )
         max_abs_x_velocity = optional_nonnegative_float(
             args.track_filter_max_abs_x_velocity_px_per_frame,

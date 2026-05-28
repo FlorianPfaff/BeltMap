@@ -99,6 +99,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("recurrent_artifact_soft_penalty_weight", "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT", "float", (("recurrent_artifact_soft_penalty_weight",), ("recurrent_artifact", "soft_penalty_weight")), "Soft-mode peak-signal penalty per artifact-overlap fraction.", "WEIGHT"),
     ("recurrent_artifact_candidate_max_area_px", "RECURRENT_ARTIFACT_CANDIDATE_MAX_AREA_PX", "int", (("recurrent_artifact_candidate_max_area_px",), ("recurrent_artifact", "candidate_max_area_px")), "Optional max component area used when building the recurrent-artifact prior. Use 0 to include all detections.", "PX"),
     ("recurrent_artifact_candidate_max_peak_signal", "RECURRENT_ARTIFACT_CANDIDATE_MAX_PEAK_SIGNAL", "float", (("recurrent_artifact_candidate_max_peak_signal",), ("recurrent_artifact", "candidate_max_peak_signal")), "Optional max peak signal used when building the recurrent-artifact prior. Use 0 to include all detections.", "SIGNAL"),
+    ("recurrent_artifact_reject_max_area_px", "RECURRENT_ARTIFACT_REJECT_MAX_AREA_PX", "int", (("recurrent_artifact_reject_max_area_px",), ("recurrent_artifact", "reject_max_area_px")), "Optional max component area eligible for recurrent-artifact rejection. Use 0 to allow rejecting all detections.", "PX"),
+    ("recurrent_artifact_reject_max_peak_signal", "RECURRENT_ARTIFACT_REJECT_MAX_PEAK_SIGNAL", "float", (("recurrent_artifact_reject_max_peak_signal",), ("recurrent_artifact", "reject_max_peak_signal")), "Optional max peak signal eligible for recurrent-artifact rejection. Use 0 to allow rejecting all detections.", "SIGNAL"),
     ("velocity_search_radius_px", "VELOCITY_SEARCH_RADIUS_PX", "int", (("velocity_search_radius_px",), ("auto_velocity", "search_radius_px")), "Max vertical shift searched during automatic belt-velocity estimation.", "PX"),
     ("velocity_estimation_pairs", "VELOCITY_ESTIMATION_PAIRS", "int", (("velocity_estimation_pairs",), ("auto_velocity", "estimation_pairs")), "Number of adjacent frame pairs used for automatic velocity estimation.", "N"),
     ("auto_velocity_min_abs_px_per_frame", "AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", "float", (("auto_velocity_min_abs_px_per_frame",), ("auto_velocity", "min_abs_px_per_frame")), "Minimum accepted absolute auto-estimated belt velocity.", "PX_PER_FRAME"),
@@ -262,6 +264,10 @@ max_overlap_fraction = 0.3
 min_recurrence_probability = 0.0
 mode = "hard"
 soft_penalty_weight = 1.0
+candidate_max_area_px = 0
+candidate_max_peak_signal = 0.0
+reject_max_area_px = 0
+reject_max_peak_signal = 0.0
 
 [auto_velocity]
 search_radius_px = 90

@@ -151,6 +151,10 @@ def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_pat
             "2",
             "--margin-px",
             "0",
+            "--reject-max-area-px",
+            "1",
+            "--reject-max-peak-signal",
+            "6",
             "--quiet",
         ]
     ) == 0
@@ -159,6 +163,8 @@ def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_pat
     assert metadata["n_source_detections"] == 3
     assert metadata["n_recurrent_artifact_rejected"] == 2
     assert metadata["n_detections"] == 1
+    assert metadata["recurrent_artifact_reject_max_area_px"] == 1
+    assert metadata["recurrent_artifact_reject_max_peak_signal"] == 6.0
 
     with (output_dir / "recurrent_artifact_detections.csv").open(newline="", encoding="utf-8") as handle:
         recurrent_rows = list(csv.DictReader(handle))

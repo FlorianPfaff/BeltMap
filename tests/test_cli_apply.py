@@ -144,6 +144,10 @@ max_overlap_fraction = 0.35
 min_recurrence_probability = 0.25
 mode = "soft"
 soft_penalty_weight = 1.5
+candidate_max_area_px = 8
+candidate_max_peak_signal = 10
+reject_max_area_px = 8
+reject_max_peak_signal = 10
 
 [auto_velocity]
 allow_full_frame = true
@@ -209,6 +213,10 @@ max_abs_px = 6
         "RECURRENT_ARTIFACT_MIN_REVOLUTIONS": "3",
         "RECURRENT_ARTIFACT_MODE": "soft",
         "RECURRENT_ARTIFACT_SOFT_PENALTY_WEIGHT": "1.5",
+        "RECURRENT_ARTIFACT_CANDIDATE_MAX_AREA_PX": "8",
+        "RECURRENT_ARTIFACT_CANDIDATE_MAX_PEAK_SIGNAL": "10",
+        "RECURRENT_ARTIFACT_REJECT_MAX_AREA_PX": "8",
+        "RECURRENT_ARTIFACT_REJECT_MAX_PEAK_SIGNAL": "10",
         "STATIC_BACKGROUND_MASK_MARGIN_PX": "10",
         "STATIC_BACKGROUND_MASK_MIN_AREA_PX": "5",
         "STATIC_BACKGROUND_MASK_THRESHOLD": "3.5",
@@ -456,6 +464,10 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["recurrent_artifact"]["min_recurrence_probability"] == 0.0
     assert parsed["recurrent_artifact"]["mode"] == "hard"
     assert parsed["recurrent_artifact"]["soft_penalty_weight"] == 1.0
+    assert parsed["recurrent_artifact"]["candidate_max_area_px"] == 0
+    assert parsed["recurrent_artifact"]["candidate_max_peak_signal"] == 0.0
+    assert parsed["recurrent_artifact"]["reject_max_area_px"] == 0
+    assert parsed["recurrent_artifact"]["reject_max_peak_signal"] == 0.0
     assert parsed["tracking"]["assignment_method"] == "global"
     assert parsed["tracking"]["area_cost_weight_px"] == 0.0
     assert parsed["tracking"]["signal_cost_weight_px"] == 0.0

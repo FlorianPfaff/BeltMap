@@ -105,10 +105,10 @@ on:
         type: string
         default: "0,0,4.0,16,4,500,4.0,16,4"
       recurrent_artifact_options:
-        description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reuse_map_path]]]. 0,2,0.3 disables."
+        description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reject_max_area,reject_max_peak[,reuse_map_path]]]]. 0,2,0.3 disables."
         required: true
         type: string
-        default: "3,2,0.3,soft,0.5,8,10"
+        default: "3,2,0.3,soft,0.5,8,10,8,10"
       registration_search:
         description: "Local phase-registration search as radius,step in pixels"
         required: true
@@ -286,17 +286,21 @@ jobs:
           def parse_recurrent_artifact_options():
               values = [part.strip() for part in os.environ["RECURRENT_ARTIFACT_OPTIONS"].split(",")]
               if len(values) == 3:
-                  values.extend(["hard", "1.0", "", "", ""])
+                  values.extend(["hard", "1.0", "", "", "", "", ""])
               elif len(values) == 5:
-                  values.extend(["", "", ""])
+                  values.extend(["", "", "", "", ""])
               elif len(values) == 6:
-                  values = values[:5] + ["", "", values[5]]
+                  values = values[:5] + ["", "", "", "", values[5]]
               elif len(values) == 7:
+                  values.extend(["", "", ""])
+              elif len(values) == 8:
+                  values = values[:7] + ["", "", values[7]]
+              elif len(values) == 9:
                   values.append("")
-              elif len(values) != 8:
+              elif len(values) != 10:
                   raise SystemExit(
                       "RECURRENT_ARTIFACT_OPTIONS must contain "
-                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reuse_map_path]]]"
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reject_max_area,reject_max_peak[,reuse_map_path]]]]"
                   )
               values[3] = values[3].lower()
               if values[3] not in {"hard", "soft", "probabilistic"}:
@@ -307,6 +311,10 @@ jobs:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_area must be positive or empty")
               if values[6] and float(values[6]) < 0:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_peak must be non-negative or empty")
+              if values[7] and int(values[7]) < 1:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS reject_max_area must be positive or empty")
+              if values[8] and float(values[8]) < 0:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS reject_max_peak must be non-negative or empty")
               return values
 
           static_noise, static_background = parse_static_options()
@@ -343,7 +351,9 @@ jobs:
               "recurrent_artifact_soft_penalty_weight": float(recurrent_artifact[4]),
               "recurrent_artifact_candidate_max_area_px": recurrent_artifact[5],
               "recurrent_artifact_candidate_max_peak_signal": recurrent_artifact[6],
-              "reuse_recurrent_artifact_map_path": recurrent_artifact[7],
+              "recurrent_artifact_reject_max_area_px": recurrent_artifact[7],
+              "recurrent_artifact_reject_max_peak_signal": recurrent_artifact[8],
+              "reuse_recurrent_artifact_map_path": recurrent_artifact[9],
               "registration_search_radius_px": float(registration_search[0]),
               "registration_search_step_px": float(registration_search[1]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
@@ -587,17 +597,21 @@ jobs:
           def parse_recurrent_artifact_options() -> list[str]:
               values = [part.strip() for part in env_value("RECURRENT_ARTIFACT_OPTIONS").split(",")]
               if len(values) == 3:
-                  values.extend(["hard", "1.0", "", "", ""])
+                  values.extend(["hard", "1.0", "", "", "", "", ""])
               elif len(values) == 5:
-                  values.extend(["", "", ""])
+                  values.extend(["", "", "", "", ""])
               elif len(values) == 6:
-                  values = values[:5] + ["", "", values[5]]
+                  values = values[:5] + ["", "", "", "", values[5]]
               elif len(values) == 7:
+                  values.extend(["", "", ""])
+              elif len(values) == 8:
+                  values = values[:7] + ["", "", values[7]]
+              elif len(values) == 9:
                   values.append("")
-              elif len(values) != 8:
+              elif len(values) != 10:
                   raise SystemExit(
                       "RECURRENT_ARTIFACT_OPTIONS must contain "
-                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reuse_map_path]]]"
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reject_max_area,reject_max_peak[,reuse_map_path]]]]"
                   )
               values[3] = values[3].lower()
               if values[3] not in {"hard", "soft", "probabilistic"}:
@@ -608,17 +622,21 @@ jobs:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_area must be positive or empty")
               if values[6] and float(values[6]) < 0:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_peak must be non-negative or empty")
+              if values[7] and int(values[7]) < 1:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS reject_max_area must be positive or empty")
+              if values[8] and float(values[8]) < 0:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS reject_max_peak must be non-negative or empty")
               return values
 
           lines: list[str] = []
           lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
 
           recurrent_artifact = parse_recurrent_artifact_options()
-          if recurrent_artifact[7]:
+          if recurrent_artifact[9]:
               lines.extend(
                   [
                       "[reuse]",
-                      f"recurrent_artifact_map_path = {json.dumps(recurrent_artifact[7])}",
+                      f"recurrent_artifact_map_path = {json.dumps(recurrent_artifact[9])}",
                       "",
                   ]
               )
@@ -713,6 +731,8 @@ jobs:
                   "soft_penalty_weight",
                   "candidate_max_area_px",
                   "candidate_max_peak_signal",
+                  "reject_max_area_px",
+                  "reject_max_peak_signal",
               ],
               recurrent_artifact,
           ):

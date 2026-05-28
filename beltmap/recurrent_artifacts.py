@@ -28,6 +28,8 @@ class RecurrentArtifactConfig:
     min_recurrence_probability: float = 0.0
     candidate_max_area_px: int | None = None
     candidate_max_peak_signal: float | None = None
+    reject_max_area_px: int | None = None
+    reject_max_peak_signal: float | None = None
 
 
 @dataclass(frozen=True)
@@ -377,6 +379,12 @@ def _reject_detection(
     decision_value = artifact_probability if mode == "probabilistic" else overlap
     if decision_value <= config.max_overlap_fraction:
         return False
+    if not _is_recurrent_artifact_candidate(
+        detection,
+        max_area_px=config.reject_max_area_px,
+        max_peak_signal=config.reject_max_peak_signal,
+    ):
+        return False
     if mode == "hard":
         return True
     assert detection_threshold is not None
@@ -633,6 +641,13 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         or config.candidate_max_peak_signal < 0
     ):
         raise ValueError("candidate_max_peak_signal must be finite and non-negative when set")
+    if config.reject_max_area_px is not None and config.reject_max_area_px < 1:
+        raise ValueError("reject_max_area_px must be positive when set")
+    if config.reject_max_peak_signal is not None and (
+        not np.isfinite(config.reject_max_peak_signal)
+        or config.reject_max_peak_signal < 0
+    ):
+        raise ValueError("reject_max_peak_signal must be finite and non-negative when set")
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
