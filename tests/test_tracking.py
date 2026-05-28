@@ -479,10 +479,60 @@ def test_track_particle_detections_uses_pyrecest_gnn_assignment(monkeypatch):
         calls["association_param"]["gating_distance_threshold"],
         5.75,
     )
+    assert calls["association_param"]["distance_metric_pos"] == "Mahalanobis"
     assert calls["association_param"]["square_dist"] is False
     assert calls["association_param"]["maximize_cardinality"] is True
     assert calls["log_prior_estimates"] is False
     assert calls["log_posterior_estimates"] is False
+
+
+def test_track_particle_detections_inflates_covariance_for_noisy_tracks(monkeypatch):
+    covariances = []
+
+    class FakeGlobalNearestNeighbor:
+        def __init__(
+            self,
+            *,
+            initial_prior,
+            association_param,
+            log_prior_estimates,
+            log_posterior_estimates,
+        ):
+            covariances.append(initial_prior[0][1].copy())
+
+        def find_association(self, measurements, *_args, **kwargs):
+            return np.asarray([0], dtype=int)
+
+    monkeypatch.setattr(tracking_module, "GlobalNearestNeighbor", FakeGlobalNearestNeighbor)
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                frame_index,
+                1,
+                y=y,
+                x=5.0,
+                area_px=4,
+                bbox_top=int(y),
+                bbox_left=4,
+                bbox_bottom=int(y) + 2,
+                bbox_right=6,
+            )
+        ]
+        for frame_index, y in enumerate([0.0, 3.0, 44.0, 9.0, 12.0])
+    ]
+
+    track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=60.0,
+            velocity_prior_y_px_per_frame=3.0,
+        ),
+    )
+
+    assert covariances
+    noisy_covariance = covariances[-1]
+    assert noisy_covariance[0, 0] > noisy_covariance[1, 1]
+    np.testing.assert_allclose(noisy_covariance[1, 1], 1.0)
 
 
 def test_track_particle_detections_passes_feature_costs_to_pyrecest(monkeypatch):

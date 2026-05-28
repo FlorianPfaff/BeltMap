@@ -27,6 +27,8 @@ _TRACK_AREA_COST_WEIGHT_PX = 0.5
 _TRACK_SIGNAL_COST_WEIGHT_PX = 0.25
 _TRACK_FEATURE_LOG_RATIO_CAP = log(4.0)
 _TRACK_FEATURE_COST_MAX_GATE_FRACTION = 0.15
+_TRACK_MIN_PREDICTION_SIGMA_PX = 1.0
+_TRACK_MAX_PREDICTION_SIGMA_GATE_FRACTION = 0.5
 
 
 @dataclass(frozen=True)
@@ -314,7 +316,7 @@ def _associate_pyrecest_gnn(
         initial_priors.append(
             (
                 np.asarray([predicted_y, predicted_x], dtype=np.float64),
-                np.eye(2, dtype=np.float64),
+                _track_prediction_covariance(tracks[track_id], config=config),
             )
         )
 
@@ -324,7 +326,7 @@ def _associate_pyrecest_gnn(
     tracker = GlobalNearestNeighbor(
         initial_prior=initial_priors,
         association_param={
-            "distance_metric_pos": "Euclidean",
+            "distance_metric_pos": "Mahalanobis",
             "square_dist": False,
             "gating_distance_threshold": (
                 config.max_match_distance_px + _track_feature_cost_cap(config)
@@ -402,6 +404,18 @@ def _predict_axis_from_recent_track(
     values = values[finite]
     if np.unique(frames).size < 2:
         return None
+    line = _robust_axis_line(frames, values)
+    if line is None:
+        return None
+    slope, intercept = line
+    prediction = float(intercept + slope * frame_index)
+    return prediction if np.isfinite(prediction) else None
+
+
+def _robust_axis_line(
+    frames: FloatArray,
+    values: FloatArray,
+) -> tuple[float, float] | None:
     try:
         slope = _theil_sen_slope(frames, values)
     except ValueError:
@@ -410,8 +424,58 @@ def _predict_axis_from_recent_track(
     intercepts = intercepts[np.isfinite(intercepts)]
     if intercepts.size == 0:
         return None
-    prediction = float(np.median(intercepts) + slope * frame_index)
-    return prediction if np.isfinite(prediction) else None
+    intercept = float(np.median(intercepts))
+    if not np.isfinite(slope) or not np.isfinite(intercept):
+        return None
+    return float(slope), intercept
+
+
+def _track_prediction_covariance(
+    track: Sequence[ParticleDetection],
+    *,
+    config: ParticleTrackingConfig,
+) -> FloatArray:
+    recent = track[-_TRACK_PREDICTION_HISTORY:]
+    if len(recent) < 3:
+        return np.eye(2, dtype=np.float64)
+
+    frames = np.asarray([detection.frame_index for detection in recent], dtype=np.float64)
+    if np.unique(frames).size < 2:
+        return np.eye(2, dtype=np.float64)
+
+    ys = np.asarray([detection.y for detection in recent], dtype=np.float64)
+    xs = np.asarray([detection.x for detection in recent], dtype=np.float64)
+    return np.diag(
+        [
+            _axis_prediction_variance(frames, ys, config=config),
+            _axis_prediction_variance(frames, xs, config=config),
+        ]
+    ).astype(np.float64)
+
+
+def _axis_prediction_variance(
+    frames: FloatArray,
+    values: FloatArray,
+    *,
+    config: ParticleTrackingConfig,
+) -> float:
+    line = _robust_axis_line(frames, values)
+    if line is None:
+        return _TRACK_MIN_PREDICTION_SIGMA_PX**2
+
+    slope, intercept = line
+    residuals = values - (slope * frames + intercept)
+    residuals = np.abs(residuals[np.isfinite(residuals)])
+    if residuals.size == 0:
+        sigma = _TRACK_MIN_PREDICTION_SIGMA_PX
+    else:
+        sigma = float(np.percentile(residuals, 75))
+    max_sigma = max(
+        _TRACK_MIN_PREDICTION_SIGMA_PX,
+        config.max_match_distance_px * _TRACK_MAX_PREDICTION_SIGMA_GATE_FRACTION,
+    )
+    sigma = min(max(sigma, _TRACK_MIN_PREDICTION_SIGMA_PX), max_sigma)
+    return float(sigma * sigma)
 
 
 def _association_feature_cost_matrix(
@@ -423,7 +487,7 @@ def _association_feature_cost_matrix(
     config: ParticleTrackingConfig,
 ) -> FloatArray:
     cost_cap = _track_feature_cost_cap(config)
-    blocked_cost = config.max_match_distance_px + cost_cap
+    blocked_cost = config.max_match_distance_px + cost_cap + 1.0
     costs = np.full(
         (len(candidate_track_ids), len(detections)),
         blocked_cost,
