@@ -26,6 +26,8 @@ class RecurrentArtifactConfig:
     mode: str = "hard"
     soft_penalty_weight: float = 1.0
     min_recurrence_probability: float = 0.0
+    candidate_max_area_px: int | None = None
+    candidate_max_peak_signal: float | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,8 @@ def build_recurrent_artifact_map(
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
+            candidate_max_area_px=cfg.candidate_max_area_px,
+            candidate_max_peak_signal=cfg.candidate_max_peak_signal,
             frame_height=frame_height,
         )
         revolution_exposure = _build_revolution_exposure_mask(
@@ -182,6 +186,8 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
+            candidate_max_area_px=cfg.candidate_max_area_px,
+            candidate_max_peak_signal=cfg.candidate_max_peak_signal,
             frame_height=frame_height,
         )
         revolution_exposure = _build_revolution_exposure_mask(
@@ -410,6 +416,8 @@ def _build_revolution_detection_mask(
     revolution: int,
     map_shape: tuple[int, int],
     margin_px: int,
+    candidate_max_area_px: int | None,
+    candidate_max_peak_signal: float | None,
     frame_height: int | None,
 ) -> tuple[NDArray[np.bool_], int]:
     map_height, map_width = _validate_map_shape(map_shape)
@@ -420,6 +428,12 @@ def _build_revolution_detection_mask(
             continue
         phase_px = float(phase_px_by_frame[frame_index])
         for detection in detections:
+            if not _is_recurrent_artifact_candidate(
+                detection,
+                max_area_px=candidate_max_area_px,
+                max_peak_signal=candidate_max_peak_signal,
+            ):
+                continue
             _mark_detection_bbox(
                 revolution_mask,
                 detection,
@@ -429,6 +443,23 @@ def _build_revolution_detection_mask(
             )
             candidate_detections += 1
     return revolution_mask, candidate_detections
+
+
+def _is_recurrent_artifact_candidate(
+    detection: ParticleDetection,
+    *,
+    max_area_px: int | None,
+    max_peak_signal: float | None,
+) -> bool:
+    if max_area_px is not None and detection.area_px > max_area_px:
+        return False
+    if max_peak_signal is not None:
+        peak_signal = detection.peak_signal
+        if peak_signal is None or not np.isfinite(peak_signal):
+            return False
+        if peak_signal > max_peak_signal:
+            return False
+    return True
 
 
 def _mark_detection_bbox(
@@ -595,6 +626,13 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         raise ValueError(f"mode must be one of {choices}")
     if not np.isfinite(config.soft_penalty_weight) or config.soft_penalty_weight < 0:
         raise ValueError("soft_penalty_weight must be finite and non-negative")
+    if config.candidate_max_area_px is not None and config.candidate_max_area_px < 1:
+        raise ValueError("candidate_max_area_px must be positive when set")
+    if config.candidate_max_peak_signal is not None and (
+        not np.isfinite(config.candidate_max_peak_signal)
+        or config.candidate_max_peak_signal < 0
+    ):
+        raise ValueError("candidate_max_peak_signal must be finite and non-negative when set")
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:

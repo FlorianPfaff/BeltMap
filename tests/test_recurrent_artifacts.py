@@ -201,6 +201,47 @@ def test_built_recurrent_scores_reject_cross_revolution_recurrence():
     ]
 
 
+def test_recurrent_artifact_prior_can_use_only_weak_small_candidates():
+    weak_recurring_first = detection(0, 1, 2, 3, 4, peak_signal=6.0)
+    weak_recurring_second = detection(1, 1, 2, 3, 4, peak_signal=6.0)
+    strong_large_repeating_first = detection(0, 6, 2, 10, 6, peak_signal=20.0)
+    strong_large_repeating_second = detection(1, 6, 2, 10, 6, peak_signal=20.0)
+    detections_by_frame = [
+        [weak_recurring_first, strong_large_repeating_first],
+        [weak_recurring_second, strong_large_repeating_second],
+    ]
+    config = RecurrentArtifactConfig(
+        min_revolutions=2,
+        margin_px=0,
+        max_overlap_fraction=0.5,
+        candidate_max_area_px=4,
+        candidate_max_peak_signal=10.0,
+    )
+
+    result = build_recurrent_artifact_map(
+        detections_by_frame,
+        phase_px_by_frame=[0.0, 0.0],
+        revolution_by_frame=[0, 1],
+        map_shape=(12, 12),
+        config=config,
+    )
+    scores = score_recurrent_artifact_detections_excluding_current_revolution(
+        detections_by_frame,
+        [0.0, 0.0],
+        [0, 1],
+        result,
+        config=config,
+    )
+
+    assert result.candidate_detections == 2
+    assert result.counts[1:3, 2:4].max() == 2
+    assert result.counts[6:10, 2:6].max() == 0
+    assert [[score.rejected for score in frame] for frame in scores] == [
+        [True, False],
+        [True, False],
+    ]
+
+
 def test_built_recurrent_probability_excludes_current_revolution_exposure():
     recurrent_first = detection(0, 0, 1, 1, 2, peak_signal=4.0)
     recurrent_second = detection(1, 0, 1, 1, 2, peak_signal=4.0)

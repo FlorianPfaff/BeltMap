@@ -105,10 +105,10 @@ on:
         type: string
         default: "0,0,4.0,16,4,500,4.0,16,4"
       recurrent_artifact_options:
-        description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,reuse_map_path]]. 0,2,0.3 disables."
+        description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reuse_map_path]]]. 0,2,0.3 disables."
         required: true
         type: string
-        default: "3,2,0.3,soft,0.5"
+        default: "3,2,0.3,soft,0.5,8,10"
       registration_search:
         description: "Local phase-registration search as radius,step in pixels"
         required: true
@@ -286,19 +286,27 @@ jobs:
           def parse_recurrent_artifact_options():
               values = [part.strip() for part in os.environ["RECURRENT_ARTIFACT_OPTIONS"].split(",")]
               if len(values) == 3:
-                  values.extend(["hard", "1.0"])
-              elif len(values) not in {5, 6}:
+                  values.extend(["hard", "1.0", "", "", ""])
+              elif len(values) == 5:
+                  values.extend(["", "", ""])
+              elif len(values) == 6:
+                  values = values[:5] + ["", "", values[5]]
+              elif len(values) == 7:
+                  values.append("")
+              elif len(values) != 8:
                   raise SystemExit(
                       "RECURRENT_ARTIFACT_OPTIONS must contain "
-                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,reuse_map_path]]"
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reuse_map_path]]]"
                   )
-              if len(values) == 5:
-                  values.append("")
               values[3] = values[3].lower()
-              if values[3] not in {"hard", "soft"}:
-                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS mode must be hard or soft")
+              if values[3] not in {"hard", "soft", "probabilistic"}:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS mode must be hard, soft, or probabilistic")
               if float(values[4]) < 0:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS soft_penalty must be non-negative")
+              if values[5] and int(values[5]) < 1:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_area must be positive or empty")
+              if values[6] and float(values[6]) < 0:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_peak must be non-negative or empty")
               return values
 
           static_noise, static_background = parse_static_options()
@@ -333,7 +341,9 @@ jobs:
               "recurrent_artifact_max_overlap_fraction": float(recurrent_artifact[2]),
               "recurrent_artifact_mode": recurrent_artifact[3],
               "recurrent_artifact_soft_penalty_weight": float(recurrent_artifact[4]),
-              "reuse_recurrent_artifact_map_path": recurrent_artifact[5],
+              "recurrent_artifact_candidate_max_area_px": recurrent_artifact[5],
+              "recurrent_artifact_candidate_max_peak_signal": recurrent_artifact[6],
+              "reuse_recurrent_artifact_map_path": recurrent_artifact[7],
               "registration_search_radius_px": float(registration_search[0]),
               "registration_search_step_px": float(registration_search[1]),
               "phase_refinement_iterations": int(os.environ["PHASE_REFINEMENT_ITERATIONS"]),
@@ -577,30 +587,38 @@ jobs:
           def parse_recurrent_artifact_options() -> list[str]:
               values = [part.strip() for part in env_value("RECURRENT_ARTIFACT_OPTIONS").split(",")]
               if len(values) == 3:
-                  values.extend(["hard", "1.0"])
-              elif len(values) not in {5, 6}:
+                  values.extend(["hard", "1.0", "", "", ""])
+              elif len(values) == 5:
+                  values.extend(["", "", ""])
+              elif len(values) == 6:
+                  values = values[:5] + ["", "", values[5]]
+              elif len(values) == 7:
+                  values.append("")
+              elif len(values) != 8:
                   raise SystemExit(
                       "RECURRENT_ARTIFACT_OPTIONS must contain "
-                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,reuse_map_path]]"
+                      "min_revolutions,margin,max_overlap[,mode,soft_penalty[,candidate_max_area,candidate_max_peak[,reuse_map_path]]]"
                   )
-              if len(values) == 5:
-                  values.append("")
               values[3] = values[3].lower()
-              if values[3] not in {"hard", "soft"}:
-                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS mode must be hard or soft")
+              if values[3] not in {"hard", "soft", "probabilistic"}:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS mode must be hard, soft, or probabilistic")
               if float(values[4]) < 0:
                   raise SystemExit("RECURRENT_ARTIFACT_OPTIONS soft_penalty must be non-negative")
+              if values[5] and int(values[5]) < 1:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_area must be positive or empty")
+              if values[6] and float(values[6]) < 0:
+                  raise SystemExit("RECURRENT_ARTIFACT_OPTIONS candidate_max_peak must be non-negative or empty")
               return values
 
           lines: list[str] = []
           lines.extend(["[paths]", 'image_dir = "data/images"', 'output_dir = "outputs"', ""])
 
           recurrent_artifact = parse_recurrent_artifact_options()
-          if recurrent_artifact[5]:
+          if recurrent_artifact[7]:
               lines.extend(
                   [
                       "[reuse]",
-                      f"recurrent_artifact_map_path = {json.dumps(recurrent_artifact[5])}",
+                      f"recurrent_artifact_map_path = {json.dumps(recurrent_artifact[7])}",
                       "",
                   ]
               )
@@ -693,10 +711,13 @@ jobs:
                   "max_overlap_fraction",
                   "mode",
                   "soft_penalty_weight",
+                  "candidate_max_area_px",
+                  "candidate_max_peak_signal",
               ],
               recurrent_artifact,
           ):
-              lines.append(f"{key} = {json.dumps(value)}")
+              if value != "":
+                  lines.append(f"{key} = {json.dumps(value)}")
           lines.append("")
 
           lines.append("[registration]")

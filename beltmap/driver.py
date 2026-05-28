@@ -1102,6 +1102,11 @@ def main() -> None:
             1.0,
             minimum=0.0,
         ),
+        candidate_max_area_px=optional_positive_int("RECURRENT_ARTIFACT_CANDIDATE_MAX_AREA_PX"),
+        candidate_max_peak_signal=optional_positive_float(
+            "RECURRENT_ARTIFACT_CANDIDATE_MAX_PEAK_SIGNAL",
+            0.0,
+        ),
     )
     if recurrent_artifact_config.max_overlap_fraction > 1:
         raise ValueError("RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION must be in [0, 1]")
@@ -1217,6 +1222,8 @@ def main() -> None:
         recurrent_artifact_min_recurrence_probability=recurrent_artifact_config.min_recurrence_probability,
         recurrent_artifact_mode=recurrent_artifact_config.mode,
         recurrent_artifact_soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
+        recurrent_artifact_candidate_max_area_px=recurrent_artifact_config.candidate_max_area_px,
+        recurrent_artifact_candidate_max_peak_signal=recurrent_artifact_config.candidate_max_peak_signal,
         registration_search_radius_px=registration_config.search_radius_px,
         registration_search_step_px=registration_config.search_step_px,
         registration_subpixel_refinement=registration_config.subpixel_refinement,
@@ -1646,6 +1653,8 @@ def main() -> None:
                 ),
                 mode=recurrent_artifact_config.mode,
                 soft_penalty_weight=recurrent_artifact_config.soft_penalty_weight,
+                candidate_max_area_px=recurrent_artifact_config.candidate_max_area_px,
+                candidate_max_peak_signal=recurrent_artifact_config.candidate_max_peak_signal,
             )
             revolution_by_frame = belt_revolution_indices(len(paths), motion_model)
             recurrent_result = build_recurrent_artifact_map(
@@ -1920,6 +1929,8 @@ def main() -> None:
         "recurrent_artifact_min_recurrence_probability": recurrent_artifact_config.min_recurrence_probability,
         "recurrent_artifact_mode": recurrent_artifact_config.mode,
         "recurrent_artifact_soft_penalty_weight": recurrent_artifact_config.soft_penalty_weight,
+        "recurrent_artifact_candidate_max_area_px": recurrent_artifact_config.candidate_max_area_px,
+        "recurrent_artifact_candidate_max_peak_signal": recurrent_artifact_config.candidate_max_peak_signal,
         "recurrent_artifact_filter_used": recurrent_artifact_enabled,
         "recurrent_artifact_source": recurrent_artifact_source,
         "recurrent_artifact_revolutions": recurrent_artifact_revolutions,
