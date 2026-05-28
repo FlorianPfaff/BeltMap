@@ -11,6 +11,7 @@ from scripts.filter_run_by_detection_overlap import filter_run
 
 
 DEFAULT_SPECS = (
+    "i005c90f005:0.005:90:0.05",
     "i005c75f005:0.005:75:0.05",
     "i005c55f005:0.005:55:0.05",
     "i005c35f01:0.005:35:0.1",
