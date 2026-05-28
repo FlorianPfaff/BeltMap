@@ -95,7 +95,7 @@ on:
         description: "Raw confirmation gates as min_iou,max_center_distance,candidate_margin,confirming_margin."
         required: true
         type: string
-        default: "0.005,55,2,2"
+        default: "0.005,75,2,2"
       raw_confirmation_confirming_source:
         description: "Raw confirmation source: detections or filtered_tracks."
         required: true
@@ -113,7 +113,7 @@ on:
         description: "Maximum selected-frame distance from a directly raw-confirmed detection for track rescue. Empty rescues whole qualifying tracks."
         required: false
         type: string
-        default: "8"
+        default: "5"
       raw_confirmation_rescued_quality:
         description: "Quality gates for detections kept only by track rescue as rescued_min_area,rescued_min_peak_signal. 0 disables a gate."
         required: true
