@@ -1031,18 +1031,7 @@ def main() -> None:
     photometric_max_iterations = rt.env_int("PHOTOMETRIC_MAX_ITERATIONS", 3, minimum=1)
     photometric_min_pixels = rt.env_int("PHOTOMETRIC_MIN_PIXELS", 128, minimum=1)
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=2)
-    tracking_assignment_method = os.getenv("TRACKING_ASSIGNMENT_METHOD", "global").strip().lower()
     tracking_max_frame_gap = rt.env_float("TRACKING_MAX_FRAME_GAP", 1.0, minimum=1e-9)
-    tracking_area_cost_weight_px = rt.env_float(
-        "TRACKING_AREA_COST_WEIGHT_PX", 0.0, minimum=0.0
-    )
-    tracking_signal_cost_weight_px = rt.env_float(
-        "TRACKING_SIGNAL_COST_WEIGHT_PX", 0.0, minimum=0.0
-    )
-    tracking_lateral_cost_weight = rt.env_float(
-        "TRACKING_LATERAL_COST_WEIGHT", 0.0, minimum=0.0
-    )
-    tracking_max_area_ratio = optional_positive_float("TRACKING_MAX_AREA_RATIO", 0.0)
     tracking_velocity_fit_method = os.getenv("TRACKING_VELOCITY_FIT_METHOD", "linear").strip().lower()
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_sampling_strategy = map_sampling_strategy_from_env()
@@ -1187,12 +1176,8 @@ def main() -> None:
         photometric_max_iterations=photometric_max_iterations,
         photometric_min_pixels=photometric_min_pixels,
         min_track_length=min_track_length,
-        tracking_assignment_method=tracking_assignment_method,
+        tracking_backend="pyrecest_gnn",
         tracking_max_frame_gap=tracking_max_frame_gap,
-        tracking_area_cost_weight_px=tracking_area_cost_weight_px,
-        tracking_signal_cost_weight_px=tracking_signal_cost_weight_px,
-        tracking_lateral_cost_weight=tracking_lateral_cost_weight,
-        tracking_max_area_ratio=tracking_max_area_ratio,
         tracking_velocity_fit_method=tracking_velocity_fit_method,
         map_mask_iterations=map_mask_iterations,
         map_sampling_strategy=map_sampling_strategy,
@@ -1773,11 +1758,6 @@ def main() -> None:
         max_match_distance_px=float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity)),
         max_frame_gap=tracking_max_frame_gap,
         velocity_prior_y_px_per_frame=0.8 * belt_velocity,
-        assignment_method=tracking_assignment_method,
-        area_cost_weight_px=tracking_area_cost_weight_px,
-        signal_cost_weight_px=tracking_signal_cost_weight_px,
-        lateral_cost_weight=tracking_lateral_cost_weight,
-        max_area_ratio=tracking_max_area_ratio,
     )
     rt.emit(
         "track",
@@ -1787,11 +1767,7 @@ def main() -> None:
         max_frame_gap=tracking_config.max_frame_gap,
         velocity_prior_y_px_per_frame=tracking_config.velocity_prior_y_px_per_frame,
         velocity_prior_x_px_per_frame=tracking_config.velocity_prior_x_px_per_frame,
-        assignment_method=tracking_config.assignment_method,
-        area_cost_weight_px=tracking_config.area_cost_weight_px,
-        signal_cost_weight_px=tracking_config.signal_cost_weight_px,
-        lateral_cost_weight=tracking_config.lateral_cost_weight,
-        max_area_ratio=tracking_config.max_area_ratio,
+        tracking_backend="pyrecest_gnn",
     )
     tracks = track_particle_detections(detections_by_frame, config=tracking_config, frame_indices=[float(i) for i in range(len(paths))])
     rt.emit("track", "finished particle tracking", tracks=len(tracks))
@@ -1885,12 +1861,7 @@ def main() -> None:
         "photometric_trim_fraction": photometric_trim_fraction,
         "photometric_max_iterations": photometric_max_iterations,
         "photometric_min_pixels": photometric_min_pixels,
-        "tracking_assignment_method": tracking_config.assignment_method,
         "tracking_max_frame_gap": tracking_config.max_frame_gap,
-        "tracking_area_cost_weight_px": tracking_config.area_cost_weight_px,
-        "tracking_signal_cost_weight_px": tracking_config.signal_cost_weight_px,
-        "tracking_lateral_cost_weight": tracking_config.lateral_cost_weight,
-        "tracking_max_area_ratio": tracking_config.max_area_ratio,
         "tracking_velocity_fit_method": tracking_velocity_fit_method,
         "map_mask_iterations": map_mask_iterations,
         "map_sampling_strategy": map_sampling_strategy,
@@ -1961,7 +1932,7 @@ def main() -> None:
         "n_photometric_fits": len(photometric_rows),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
-        "tracking_backend": tracking_config.assignment_method,
+        "tracking_backend": "pyrecest_gnn",
         "n_velocity_estimates": len(velocity_rows),
         "n_filtered_velocity_estimates": len(filtered_velocity_rows),
         "track_filter_min_length": track_filter_config.min_track_length,

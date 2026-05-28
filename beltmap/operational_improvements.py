@@ -1121,7 +1121,7 @@ def classify_failure_modes(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
     if float(summary.get("map_low_coverage_fraction", 0.0) or 0.0) > 0.05:
         add("low-map-coverage", "medium", "Some belt-map pixels have low coverage; increase sample frames or use adaptive sampling.")
     if float(summary.get("track_fragmentation", 0.0) or 0.0) > 0.5:
-        add("track-fragmentation", "medium", "Tracks are fragmented; use wider matching, global assignment, or tracklet stitching.")
+        add("track-fragmentation", "medium", "Tracks are fragmented; use wider PyRecEst matching or tracklet stitching.")
     return warnings
 
 

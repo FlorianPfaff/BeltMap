@@ -452,11 +452,6 @@ def write_tracking_outputs(
         max_match_distance_px=max_match,
         max_frame_gap=float(metadata.get("tracking_max_frame_gap", 2.0)),
         velocity_prior_y_px_per_frame=0.8 * velocity,
-        assignment_method=str(metadata.get("tracking_assignment_method", "global")),
-        area_cost_weight_px=float(metadata.get("tracking_area_cost_weight_px", 1.0)),
-        signal_cost_weight_px=float(metadata.get("tracking_signal_cost_weight_px", 0.5)),
-        lateral_cost_weight=float(metadata.get("tracking_lateral_cost_weight", 0.25)),
-        max_area_ratio=metadata.get("tracking_max_area_ratio", 3.0),
     )
     tracks = track_particle_detections(
         detections_by_frame,

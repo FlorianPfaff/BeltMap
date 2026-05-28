@@ -53,11 +53,6 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
     ("tracking_max_frame_gap", "TRACKING_MAX_FRAME_GAP", "float", (("tracking_max_frame_gap",), ("tracking", "max_frame_gap")), "Maximum selected-frame gap allowed when linking detections into one track.", "FRAMES"),
-    ("tracking_assignment_method", "TRACKING_ASSIGNMENT_METHOD", "path", (("tracking_assignment_method",), ("tracking", "assignment_method"), ("tracking", "matching_strategy")), "Tracking association method: global, greedy, or pyrecest_gnn.", "METHOD"),
-    ("tracking_area_cost_weight_px", "TRACKING_AREA_COST_WEIGHT_PX", "float", (("tracking_area_cost_weight_px",), ("tracking", "area_cost_weight_px")), "Additional assignment cost for log area-ratio changes.", "PX"),
-    ("tracking_signal_cost_weight_px", "TRACKING_SIGNAL_COST_WEIGHT_PX", "float", (("tracking_signal_cost_weight_px",), ("tracking", "signal_cost_weight_px")), "Additional assignment cost for log signal-ratio changes.", "PX"),
-    ("tracking_lateral_cost_weight", "TRACKING_LATERAL_COST_WEIGHT", "float", (("tracking_lateral_cost_weight",), ("tracking", "lateral_cost_weight")), "Additional assignment cost per pixel of lateral residual motion.", "WEIGHT"),
-    ("tracking_max_area_ratio", "TRACKING_MAX_AREA_RATIO", "float", (("tracking_max_area_ratio",), ("tracking", "max_area_ratio")), "Optional maximum frame-to-frame detection area ratio. Use 0 to disable.", "RATIO"),
     ("tracking_velocity_fit_method", "TRACKING_VELOCITY_FIT_METHOD", "path", (("tracking_velocity_fit_method",), ("tracking", "velocity_fit_method")), "Velocity fit method: linear or theil_sen.", "METHOD"),
     ("track_filter_min_length", "TRACK_FILTER_MIN_LENGTH", "int", (("track_filter_min_length",), ("track_filter", "min_length")), "Minimum detections per accepted filtered track.", "N"),
     ("track_filter_min_velocity_ratio_y", "TRACK_FILTER_MIN_VELOCITY_RATIO_Y", "float", (("track_filter_min_velocity_ratio_y",), ("track_filter", "min_velocity_ratio_y")), "Minimum accepted particle/belt vertical velocity ratio.", "RATIO"),
@@ -135,7 +130,6 @@ CONFIG_KEY_TO_NAME = {key: spec[0] for spec in OPTION_SPECS for key in spec[3]}
 CONFIG_KEY_ALIASES = {
     # Backwards-compatible aliases used by earlier result-improvement notes.
     ("detection", "grow_threshold"): "detection_low_threshold",
-    ("tracking", "matching_strategy"): "tracking_assignment_method",
 }
 DETECTION_METHOD_MODE_ALIASES = {
     "threshold": "positive",
@@ -212,11 +206,6 @@ min_pixels = 128
 min_track_length = 2
 # max_match_distance_px = 90.0
 max_frame_gap = 1.0
-assignment_method = "global"
-area_cost_weight_px = 0.0
-signal_cost_weight_px = 0.0
-lateral_cost_weight = 0.0
-max_area_ratio = 0.0
 velocity_fit_method = "linear"
 
 [track_filter]

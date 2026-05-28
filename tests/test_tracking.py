@@ -278,7 +278,7 @@ def test_track_particle_detections_advances_empty_frames_by_default():
     assert [track.frame_start for track in tracks] == [0.0, 2.0]
 
 
-def test_track_particle_detections_global_assignment_maximizes_cardinality():
+def test_track_particle_detections_pyrecest_assignment_maximizes_cardinality():
     detections_by_frame = [
         [
             ParticleDetection(
@@ -338,42 +338,7 @@ def test_track_particle_detections_global_assignment_maximizes_cardinality():
     assert sorted(track.n_detections for track in tracks) == [2, 2]
 
 
-def test_track_particle_detections_can_use_legacy_greedy_assignment():
-    detections_by_frame = [
-        [
-            ParticleDetection(
-                0, 1, y=0.0, x=0.0, area_px=4,
-                bbox_top=0, bbox_left=0, bbox_bottom=2, bbox_right=2,
-            ),
-            ParticleDetection(
-                0, 2, y=0.0, x=-0.1, area_px=4,
-                bbox_top=0, bbox_left=0, bbox_bottom=2, bbox_right=2,
-            ),
-        ],
-        [
-            ParticleDetection(
-                1, 1, y=0.0, x=1.0, area_px=4,
-                bbox_top=0, bbox_left=1, bbox_bottom=2, bbox_right=3,
-            ),
-            ParticleDetection(
-                1, 2, y=0.0, x=2.0, area_px=4,
-                bbox_top=0, bbox_left=2, bbox_bottom=2, bbox_right=4,
-            ),
-        ],
-    ]
-
-    tracks = track_particle_detections(
-        detections_by_frame,
-        config=ParticleTrackingConfig(
-            max_match_distance_px=2.05,
-            assignment_method="greedy",
-        ),
-    )
-
-    assert sorted(track.n_detections for track in tracks) == [1, 1, 2]
-
-
-def test_track_particle_detections_can_use_pyrecest_gnn_assignment(monkeypatch):
+def test_track_particle_detections_uses_pyrecest_gnn_assignment(monkeypatch):
     calls = {}
 
     class FakeGlobalNearestNeighbor:
@@ -416,7 +381,6 @@ def test_track_particle_detections_can_use_pyrecest_gnn_assignment(monkeypatch):
         config=ParticleTrackingConfig(
             max_match_distance_px=5.0,
             velocity_prior_y_px_per_frame=3.0,
-            assignment_method="pyrecest_gnn",
         ),
     )
 

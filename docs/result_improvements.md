@@ -12,7 +12,7 @@ a stronger map build, phase-coverage map sampling, Huber map aggregation,
 hysteresis detection, static-background and static-noise learning,
 offline phase smoothing, dense-component splitting, robust velocity fitting, soft
 recurrent-artifact suppression, conservative shape gates, optional fractional
-map accumulation, and global tracking assignment.
+map accumulation, and PyRecEst-backed multitarget tracking.
 
 Run:
 
@@ -24,7 +24,7 @@ beltmap-validate --output-dir outputs
 The Brick GitHub Actions workflow should use the same values as this checked-in
 config by default: 500 sampled map frames, adaptive phase-coverage sampling,
 phase-feedback refinement, additive static-background learning, soft recurrent
-artifact filtering, shape gates, and global tracking. Use workflow inputs for
+artifact filtering, shape gates, and PyRecEst tracking. Use workflow inputs for
 ablation sweeps rather than treating the weaker historical defaults as the main
 result path.
 
@@ -68,9 +68,6 @@ sample_frames = 0
 
 [recurrent_artifact]
 min_revolutions = 0
-
-[tracking]
-assignment_method = "greedy"
 ```
 
 ### 2. Strong map

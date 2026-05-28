@@ -100,11 +100,6 @@ min_pixels = 512
 min_track_length = 2
 max_match_distance_px = 75
 max_frame_gap = 2
-assignment_method = "global"
-area_cost_weight_px = 2.5
-signal_cost_weight_px = 0.5
-lateral_cost_weight = 1.0
-max_area_ratio = 3.0
 
 [track_filter]
 min_length = 5
@@ -226,12 +221,7 @@ max_abs_px = 6
         "STATIC_NOISE_MASK_THRESHOLD": "4",
         "STATIC_NOISE_MIN_SCALE": "0.25",
         "STATIC_NOISE_SAMPLE_FRAMES": "250",
-        "TRACKING_AREA_COST_WEIGHT_PX": "2.5",
-        "TRACKING_ASSIGNMENT_METHOD": "global",
         "TRACKING_MAX_FRAME_GAP": "2",
-        "TRACKING_LATERAL_COST_WEIGHT": "1",
-        "TRACKING_MAX_AREA_RATIO": "3",
-        "TRACKING_SIGNAL_COST_WEIGHT_PX": "0.5",
         "TRACK_FILTER_MAX_ABS_X_VELOCITY_PX_PER_FRAME": "12.5",
         "TRACK_FILTER_MAX_VELOCITY_RATIO_Y": "1.05",
         "TRACK_FILTER_MIN_LENGTH": "5",
@@ -254,9 +244,6 @@ def test_legacy_result_improvement_aliases_are_resolved(tmp_path):
 [detection]
 method = "absolute"
 grow_threshold = 2.0
-
-[tracking]
-matching_strategy = "greedy"
 """.strip(),
         encoding="utf-8",
     )
@@ -269,7 +256,6 @@ matching_strategy = "greedy"
     assert env_updates == {
         "DETECTION_LOW_THRESHOLD": "2",
         "DETECTION_MODE": "absolute",
-        "TRACKING_ASSIGNMENT_METHOD": "greedy",
     }
 
 
@@ -304,16 +290,13 @@ def test_flat_json_config_is_resolved_to_driver_environment(tmp_path):
     }
 
 
-def test_legacy_detection_and_tracking_config_aliases_are_resolved(tmp_path):
+def test_legacy_detection_config_aliases_are_resolved(tmp_path):
     config_path = tmp_path / "legacy.toml"
     config_path.write_text(
         """
 [detection]
 method = "hysteresis_abs"
 grow_threshold = 2.0
-
-[tracking]
-matching_strategy = "greedy"
 """.strip(),
         encoding="utf-8",
     )
@@ -326,8 +309,21 @@ matching_strategy = "greedy"
     assert env_updates == {
         "DETECTION_LOW_THRESHOLD": "2",
         "DETECTION_MODE": "absolute",
-        "TRACKING_ASSIGNMENT_METHOD": "greedy",
     }
+
+
+def test_removed_tracking_assignment_config_is_rejected(tmp_path):
+    config_path = tmp_path / "legacy-tracking.toml"
+    config_path.write_text(
+        """
+[tracking]
+matching_strategy = "greedy"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"Unknown config option 'tracking\.matching_strategy'"):
+        cli.values_from_config(config_path)
 
 
 def test_unknown_config_option_raises_useful_error(tmp_path):
@@ -468,11 +464,11 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["recurrent_artifact"]["candidate_max_peak_signal"] == 0.0
     assert parsed["recurrent_artifact"]["reject_max_area_px"] == 0
     assert parsed["recurrent_artifact"]["reject_max_peak_signal"] == 0.0
-    assert parsed["tracking"]["assignment_method"] == "global"
-    assert parsed["tracking"]["area_cost_weight_px"] == 0.0
-    assert parsed["tracking"]["signal_cost_weight_px"] == 0.0
-    assert parsed["tracking"]["lateral_cost_weight"] == 0.0
-    assert parsed["tracking"]["max_area_ratio"] == 0.0
+    assert "assignment_method" not in parsed["tracking"]
+    assert "area_cost_weight_px" not in parsed["tracking"]
+    assert "signal_cost_weight_px" not in parsed["tracking"]
+    assert "lateral_cost_weight" not in parsed["tracking"]
+    assert "max_area_ratio" not in parsed["tracking"]
 
 
 def test_write_config_template_omits_legacy_map_sample_strategy(tmp_path):

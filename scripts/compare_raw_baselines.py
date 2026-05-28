@@ -477,12 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split-min-projection-gap-px", type=int, default=1)
     parser.add_argument("--split-min-component-area-px", type=int, default=4)
     parser.add_argument("--min-track-length", type=int, default=2)
-    parser.add_argument("--tracking-assignment-method", choices=("global", "greedy", "pyrecest_gnn"), default="global")
     parser.add_argument("--tracking-max-frame-gap", type=float, default=2.0)
-    parser.add_argument("--tracking-area-cost-weight-px", type=float, default=1.0)
-    parser.add_argument("--tracking-signal-cost-weight-px", type=float, default=0.5)
-    parser.add_argument("--tracking-lateral-cost-weight", type=float, default=0.25)
-    parser.add_argument("--tracking-max-area-ratio", type=parse_optional_float, default=3.0)
     parser.add_argument("--velocity-fit-method", choices=("linear", "theil_sen"), default="theil_sen")
     parser.add_argument("--track-filter-min-length", type=int, default=5)
     parser.add_argument("--track-filter-min-velocity-ratio-y", type=float, default=0.0)
@@ -610,11 +605,6 @@ def main(argv: list[str] | None = None) -> int:
         max_match_distance_px=max(5.0, 1.5 * abs(args.belt_velocity_px_per_frame)),
         max_frame_gap=args.tracking_max_frame_gap,
         velocity_prior_y_px_per_frame=0.8 * args.belt_velocity_px_per_frame,
-        assignment_method=args.tracking_assignment_method,
-        area_cost_weight_px=args.tracking_area_cost_weight_px,
-        signal_cost_weight_px=args.tracking_signal_cost_weight_px,
-        lateral_cost_weight=args.tracking_lateral_cost_weight,
-        max_area_ratio=args.tracking_max_area_ratio,
     )
     track_filter_config = TrackFilterConfig(
         min_track_length=args.track_filter_min_length,

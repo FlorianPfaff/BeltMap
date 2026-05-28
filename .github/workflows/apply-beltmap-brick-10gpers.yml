@@ -677,10 +677,6 @@ jobs:
           append_value(lines, "min_track_length", "MIN_TRACK_LENGTH")
           append_value(lines, "max_match_distance_px", "MAX_MATCH_DISTANCE_PX", optional=True)
           lines.append('max_frame_gap = "2"')
-          lines.append('area_cost_weight_px = "1.0"')
-          lines.append('signal_cost_weight_px = "0.5"')
-          lines.append('lateral_cost_weight = "0.25"')
-          lines.append('max_area_ratio = "3.0"')
           lines.append("")
 
           lines.append("[map]")

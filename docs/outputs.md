@@ -383,7 +383,7 @@ Columns:
 
 | Column | Unit | Meaning |
 |---|---:|---|
-| `track_id` | 1 | Zero-based track identifier assigned by the greedy tracker. |
+| `track_id` | 1 | Zero-based track identifier assigned by the PyRecEst-backed tracker. |
 | `n_detections` | count | Number of detections associated with this track. |
 | `frame_start` | frame | First frame index in the track. |
 | `frame_end` | frame | Last frame index in the track. |

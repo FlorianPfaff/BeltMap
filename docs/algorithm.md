@@ -137,7 +137,7 @@ location across separate revolutions.
 
 Particle detections are extracted as connected components of the particle mask. Components can use 4- or 8-neighborhood connectivity, are filtered by area, and receive either unweighted or residual-weighted centroids.
 
-Frame-to-frame association uses greedy nearest-neighbor matching with an optional velocity prior and a maximum match distance. Per-track particle velocity is then estimated by a linear slope of centroid position versus frame index. Belt-relative output includes
+Frame-to-frame association uses PyRecEst global nearest-neighbor multitarget tracking with an optional velocity prior and a maximum match distance. Per-track particle velocity is then estimated by a linear slope of centroid position versus frame index. Belt-relative output includes
 
 ```text
 velocity_ratio_y = particle_velocity_y / belt_velocity_y
