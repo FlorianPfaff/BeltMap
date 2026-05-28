@@ -238,6 +238,7 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
+          MAP_AGGREGATION_OPTIONS: "huber,1,3.0,1.0"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
@@ -283,6 +284,23 @@ jobs:
                   "[,background_sample,background_mask_threshold,background_mask_margin,background_min_area]"
               )
 
+          def parse_map_aggregation_options():
+              values = [part.strip() for part in os.environ["MAP_AGGREGATION_OPTIONS"].split(",")]
+              if len(values) != 4:
+                  raise SystemExit(
+                      "MAP_AGGREGATION_OPTIONS must contain method,robust_iterations,huber_delta,min_scale"
+                  )
+              values[0] = values[0].lower()
+              if values[0] not in {"mean", "huber"}:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS method must be mean or huber")
+              if int(values[1]) < 0:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS robust_iterations must be non-negative")
+              if float(values[2]) <= 0:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS huber_delta must be positive")
+              if float(values[3]) <= 0:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS min_scale must be positive")
+              return values
+
           def parse_recurrent_artifact_options():
               values = [part.strip() for part in os.environ["RECURRENT_ARTIFACT_OPTIONS"].split(",")]
               if len(values) == 3:
@@ -318,6 +336,7 @@ jobs:
               return values
 
           static_noise, static_background = parse_static_options()
+          map_aggregation = parse_map_aggregation_options()
           recurrent_artifact = parse_recurrent_artifact_options()
           registration_search = parse_csv_values("REGISTRATION_SEARCH", 2)
           progress = parse_progress_intervals()
@@ -335,6 +354,10 @@ jobs:
               "map_particle_mask_dilation_px": int(os.environ["MAP_PARTICLE_MASK_DILATION_PX"]),
               "map_particle_mask_margin_px": int(os.environ["MAP_PARTICLE_MASK_MARGIN_PX"]),
               "map_particle_mask_min_area_px": int(os.environ["MAP_PARTICLE_MASK_MIN_AREA_PX"]),
+              "map_aggregation": map_aggregation[0],
+              "map_robust_iterations": int(map_aggregation[1]),
+              "map_robust_huber_delta": float(map_aggregation[2]),
+              "map_robust_min_scale": float(map_aggregation[3]),
               "static_noise_sample_frames": int(static_noise[0]),
               "static_noise_min_scale": float(static_noise[1]),
               "static_noise_mask_threshold": float(static_noise[2]),
@@ -514,6 +537,7 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
+          MAP_AGGREGATION_OPTIONS: "huber,1,3.0,1.0"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
@@ -593,6 +617,23 @@ jobs:
                   "noise_sample,min_scale,noise_mask_threshold,noise_mask_margin,noise_min_area"
                   "[,background_sample,background_mask_threshold,background_mask_margin,background_min_area]"
               )
+
+          def parse_map_aggregation_options() -> list[str]:
+              values = [part.strip() for part in env_value("MAP_AGGREGATION_OPTIONS").split(",")]
+              if len(values) != 4:
+                  raise SystemExit(
+                      "MAP_AGGREGATION_OPTIONS must contain method,robust_iterations,huber_delta,min_scale"
+                  )
+              values[0] = values[0].lower()
+              if values[0] not in {"mean", "huber"}:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS method must be mean or huber")
+              if int(values[1]) < 0:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS robust_iterations must be non-negative")
+              if float(values[2]) <= 0:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS huber_delta must be positive")
+              if float(values[3]) <= 0:
+                  raise SystemExit("MAP_AGGREGATION_OPTIONS min_scale must be positive")
+              return values
 
           def parse_recurrent_artifact_options() -> list[str]:
               values = [part.strip() for part in env_value("RECURRENT_ARTIFACT_OPTIONS").split(",")]
@@ -680,13 +721,20 @@ jobs:
           lines.append("")
 
           lines.append("[map]")
+          map_aggregation = parse_map_aggregation_options()
           append_value(lines, "sample_frames", "MAP_SAMPLE_FRAMES")
           lines.append('sampling_strategy = "adaptive_phase_coverage"')
           lines.append('reconstruction_trim_fraction = "0"')
-          lines.append('aggregation = "mean"')
-          lines.append('robust_iterations = "0"')
-          lines.append('robust_huber_delta = "3.0"')
-          lines.append('robust_min_scale = "1.0"')
+          for key, value in zip(
+              [
+                  "aggregation",
+                  "robust_iterations",
+                  "robust_huber_delta",
+                  "robust_min_scale",
+              ],
+              map_aggregation,
+          ):
+              lines.append(f"{key} = {json.dumps(value)}")
           append_value(lines, "mask_iterations", "MAP_MASK_ITERATIONS")
           append_value(lines, "particle_mask_mode", "MAP_PARTICLE_MASK_MODE")
           append_value(lines, "particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD")

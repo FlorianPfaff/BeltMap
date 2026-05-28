@@ -118,6 +118,8 @@ jobs:
         include:
           - variant: baseline
             params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
+          - variant: huber-map
+            params_json: '{"map":["huber","1","3.0","1.0"],"static_noise":["0","0","0","8","4"],"static_background":["0","0","8","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: static-bg
             params_json: '{"static_noise":["0","0","0","8","4"],"static_background":["120","4.0","16","4"],"recurrent_artifact":["0","2","0.3","hard","1.0"],"registration":["8.0","0.5"],"phase_refinement":["0","0.0","0","25"]}'
           - variant: static-bg-threshold-6
@@ -214,6 +216,11 @@ jobs:
           recurrent_artifact = params["recurrent_artifact"]
           registration = params["registration"]
           phase_refinement = params["phase_refinement"]
+          map_aggregation = params.get("map", ["mean", "0", "3.0", "1.0"])
+          if len(map_aggregation) != 4:
+              raise SystemExit("map params must be aggregation,robust_iterations,huber_delta,min_scale")
+          if map_aggregation[0] not in {"mean", "huber"}:
+              raise SystemExit("map aggregation must be mean or huber")
           detection_threshold = params.get("detection_threshold", env("DETECTION_THRESHOLD"))
           min_area_px = params.get("min_area_px", env("MIN_AREA_PX"))
 
@@ -223,7 +230,7 @@ jobs:
               ("belt", {"region": env("BELT_REGION"), "velocity_px_per_frame": env("BELT_VELOCITY_PX_PER_FRAME"), "period_px": env("BELT_PERIOD_PX")}),
               ("detection", {"threshold": detection_threshold, "min_area_px": min_area_px, "max_area_px": "0", "min_bbox_width_px": "0", "min_bbox_height_px": "0", "max_bbox_aspect_ratio": "0", "min_bbox_extent": "0"}),
               ("tracking", {"min_track_length": env("MIN_TRACK_LENGTH")}),
-              ("map", {"sample_frames": env("MAP_SAMPLE_FRAMES"), "mask_iterations": "2", "particle_mask_mode": "hysteresis_abs", "particle_mask_threshold": "4.0", "particle_mask_grow_threshold": "1.5", "particle_mask_dilation_px": "24", "particle_mask_margin_px": "16", "particle_mask_min_area_px": "8"}),
+              ("map", {"sample_frames": env("MAP_SAMPLE_FRAMES"), "mask_iterations": "2", "particle_mask_mode": "hysteresis_abs", "particle_mask_threshold": "4.0", "particle_mask_grow_threshold": "1.5", "particle_mask_dilation_px": "24", "particle_mask_margin_px": "16", "particle_mask_min_area_px": "8", "aggregation": map_aggregation[0], "robust_iterations": map_aggregation[1], "robust_huber_delta": map_aggregation[2], "robust_min_scale": map_aggregation[3]}),
               ("static_noise", {"sample_frames": static_noise[0], "min_scale": static_noise[1], "mask_threshold": static_noise[2], "mask_margin_px": static_noise[3], "mask_min_area_px": static_noise[4]}),
               ("static_background", {"sample_frames": static_background[0], "mask_threshold": static_background[1], "mask_margin_px": static_background[2], "mask_min_area_px": static_background[3]}),
               ("recurrent_artifact", {"min_revolutions": recurrent_artifact[0], "margin_px": recurrent_artifact[1], "max_overlap_fraction": recurrent_artifact[2], "mode": recurrent_artifact[3], "soft_penalty_weight": recurrent_artifact[4]}),
