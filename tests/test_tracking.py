@@ -170,6 +170,35 @@ def test_track_particle_detections_uses_velocity_prior():
     assert velocity.belt_minus_particle_velocity_y_px_per_frame == 2.0
 
 
+def test_track_particle_detections_predicts_from_recent_track_velocity():
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                frame_index,
+                1,
+                y=y,
+                x=5.0,
+                area_px=4,
+                bbox_top=int(y),
+                bbox_left=4,
+                bbox_bottom=int(y) + 2,
+                bbox_right=6,
+            )
+        ]
+        for frame_index, y in enumerate([0.0, 3.0, 8.0, 13.5])
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=2.1,
+            velocity_prior_y_px_per_frame=3.0,
+        ),
+    )
+
+    assert [track.n_detections for track in tracks] == [4]
+
+
 def test_track_particle_detections_uses_positional_indices_by_default():
     detections_by_frame = [
         [

@@ -21,6 +21,7 @@ _IMPORT_MISSING = object()
 _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 _VELOCITY_FIT_METHODS = {"linear", "theil_sen"}
+_TRACK_PREDICTION_HISTORY = 4
 
 
 @dataclass(frozen=True)
@@ -294,12 +295,14 @@ def _associate_pyrecest_gnn(
     candidate_track_ids: list[int] = []
     initial_priors: list[tuple[FloatArray, FloatArray]] = []
     for track_id in active_track_ids:
-        last = tracks[track_id][-1]
-        dt = frame_index - last.frame_index
-        if dt <= 0 or dt > config.max_frame_gap:
+        prediction = _predict_track_position(
+            tracks[track_id],
+            frame_index=frame_index,
+            config=config,
+        )
+        if prediction is None:
             continue
-        predicted_y = last.y + config.velocity_prior_y_px_per_frame * dt
-        predicted_x = last.x + config.velocity_prior_x_px_per_frame * dt
+        predicted_y, predicted_x = prediction
         candidate_track_ids.append(track_id)
         initial_priors.append(
             (
@@ -341,6 +344,37 @@ def _associate_pyrecest_gnn(
         for track_index, detection_index in enumerate(association)
         if 0 <= detection_index < len(current)
     ]
+
+
+def _predict_track_position(
+    track: Sequence[ParticleDetection],
+    *,
+    frame_index: float,
+    config: ParticleTrackingConfig,
+) -> tuple[float, float] | None:
+    last = track[-1]
+    dt = frame_index - last.frame_index
+    if dt <= 0 or dt > config.max_frame_gap:
+        return None
+
+    velocity_y = config.velocity_prior_y_px_per_frame
+    velocity_x = config.velocity_prior_x_px_per_frame
+    recent = track[-_TRACK_PREDICTION_HISTORY:]
+    if len(recent) >= 2:
+        frames = np.asarray([detection.frame_index for detection in recent], dtype=np.float64)
+        if np.unique(frames).size >= 2:
+            ys = np.asarray([detection.y for detection in recent], dtype=np.float64)
+            xs = np.asarray([detection.x for detection in recent], dtype=np.float64)
+            candidate_velocity_y = _linear_slope(frames, ys)
+            candidate_velocity_x = _linear_slope(frames, xs)
+            if np.isfinite(candidate_velocity_y) and np.isfinite(candidate_velocity_x):
+                velocity_y = candidate_velocity_y
+                velocity_x = candidate_velocity_x
+
+    return (
+        last.y + velocity_y * dt,
+        last.x + velocity_x * dt,
+    )
 
 
 def estimate_particle_velocities_vs_belt(
