@@ -108,7 +108,7 @@ on:
         description: "Recurrent artifact options as min_revolutions,margin,max_overlap[,mode,soft_penalty[,reuse_map_path]]. 0,2,0.3 disables."
         required: true
         type: string
-        default: "3,4,0.3,soft,1.0"
+        default: "3,2,0.3,soft,0.5"
       registration_search:
         description: "Local phase-registration search as radius,step in pixels"
         required: true
@@ -637,8 +637,8 @@ jobs:
           append_value(lines, "sample_frames", "MAP_SAMPLE_FRAMES")
           lines.append('sampling_strategy = "adaptive_phase_coverage"')
           lines.append('reconstruction_trim_fraction = "0"')
-          lines.append('aggregation = "huber"')
-          lines.append('robust_iterations = "1"')
+          lines.append('aggregation = "mean"')
+          lines.append('robust_iterations = "0"')
           lines.append('robust_huber_delta = "3.0"')
           lines.append('robust_min_scale = "1.0"')
           append_value(lines, "mask_iterations", "MAP_MASK_ITERATIONS")

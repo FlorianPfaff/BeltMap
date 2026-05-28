@@ -84,6 +84,9 @@ TRACK_SCORE_FIELDS = [
     "plausibility_score",
 ]
 PREVIEW_PATTERNS = (
+    "phase_estimates.csv",
+    "belt_map.png",
+    "preview_scales.json",
     "residual_frame_*.png",
     "residual_fixed_frame_*.png",
     "raw_frame_*.png",
