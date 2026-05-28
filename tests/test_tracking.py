@@ -535,6 +535,81 @@ def test_track_particle_detections_inflates_covariance_for_noisy_tracks(monkeypa
     np.testing.assert_allclose(noisy_covariance[1, 1], 1.0)
 
 
+def test_track_particle_detections_scales_covariance_for_frame_gaps(monkeypatch):
+    covariances = []
+
+    class FakeGlobalNearestNeighbor:
+        def __init__(
+            self,
+            *,
+            initial_prior,
+            association_param,
+            log_prior_estimates,
+            log_posterior_estimates,
+        ):
+            covariances.append(initial_prior[0][1].copy())
+
+        def find_association(self, measurements, *_args, **kwargs):
+            return np.asarray([0], dtype=int)
+
+    monkeypatch.setattr(tracking_module, "GlobalNearestNeighbor", FakeGlobalNearestNeighbor)
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0,
+                1,
+                y=0.0,
+                x=5.0,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=4,
+                bbox_bottom=2,
+                bbox_right=6,
+            )
+        ],
+        [
+            ParticleDetection(
+                1,
+                1,
+                y=3.0,
+                x=5.0,
+                area_px=4,
+                bbox_top=3,
+                bbox_left=4,
+                bbox_bottom=5,
+                bbox_right=6,
+            )
+        ],
+        [],
+        [
+            ParticleDetection(
+                3,
+                1,
+                y=9.0,
+                x=5.0,
+                area_px=4,
+                bbox_top=9,
+                bbox_left=4,
+                bbox_bottom=11,
+                bbox_right=6,
+            )
+        ],
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=10.0,
+            max_frame_gap=2.0,
+            velocity_prior_y_px_per_frame=3.0,
+        ),
+    )
+
+    assert [track.n_detections for track in tracks] == [3]
+    np.testing.assert_allclose(covariances[0], np.eye(2, dtype=np.float64))
+    np.testing.assert_allclose(covariances[-1], np.eye(2, dtype=np.float64) * 4.0)
+
+
 def test_track_particle_detections_passes_feature_costs_to_pyrecest(monkeypatch):
     calls = {}
 

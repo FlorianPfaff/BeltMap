@@ -316,7 +316,11 @@ def _associate_pyrecest_gnn(
         initial_priors.append(
             (
                 np.asarray([predicted_y, predicted_x], dtype=np.float64),
-                _track_prediction_covariance(tracks[track_id], config=config),
+                _track_prediction_covariance(
+                    tracks[track_id],
+                    frame_index=frame_index,
+                    config=config,
+                ),
             )
         )
 
@@ -433,35 +437,55 @@ def _robust_axis_line(
 def _track_prediction_covariance(
     track: Sequence[ParticleDetection],
     *,
+    frame_index: float,
     config: ParticleTrackingConfig,
 ) -> FloatArray:
+    horizon = _prediction_horizon(track, frame_index)
+    fallback_variance = _bounded_prediction_variance(
+        _TRACK_MIN_PREDICTION_SIGMA_PX * horizon,
+        config=config,
+    )
     recent = track[-_TRACK_PREDICTION_HISTORY:]
     if len(recent) < 3:
-        return np.eye(2, dtype=np.float64)
+        return np.eye(2, dtype=np.float64) * fallback_variance
 
     frames = np.asarray([detection.frame_index for detection in recent], dtype=np.float64)
     if np.unique(frames).size < 2:
-        return np.eye(2, dtype=np.float64)
+        return np.eye(2, dtype=np.float64) * fallback_variance
 
     ys = np.asarray([detection.y for detection in recent], dtype=np.float64)
     xs = np.asarray([detection.x for detection in recent], dtype=np.float64)
     return np.diag(
         [
-            _axis_prediction_variance(frames, ys, config=config),
-            _axis_prediction_variance(frames, xs, config=config),
+            _axis_prediction_variance(frames, ys, horizon=horizon, config=config),
+            _axis_prediction_variance(frames, xs, horizon=horizon, config=config),
         ]
     ).astype(np.float64)
+
+
+def _prediction_horizon(
+    track: Sequence[ParticleDetection],
+    frame_index: float,
+) -> float:
+    dt = frame_index - track[-1].frame_index
+    if not np.isfinite(dt) or dt <= 0:
+        return 1.0
+    return max(1.0, float(dt))
 
 
 def _axis_prediction_variance(
     frames: FloatArray,
     values: FloatArray,
     *,
+    horizon: float,
     config: ParticleTrackingConfig,
 ) -> float:
     line = _robust_axis_line(frames, values)
     if line is None:
-        return _TRACK_MIN_PREDICTION_SIGMA_PX**2
+        return _bounded_prediction_variance(
+            _TRACK_MIN_PREDICTION_SIGMA_PX * horizon,
+            config=config,
+        )
 
     slope, intercept = line
     residuals = values - (slope * frames + intercept)
@@ -470,6 +494,15 @@ def _axis_prediction_variance(
         sigma = _TRACK_MIN_PREDICTION_SIGMA_PX
     else:
         sigma = float(np.percentile(residuals, 75))
+    sigma *= horizon
+    return _bounded_prediction_variance(sigma, config=config)
+
+
+def _bounded_prediction_variance(
+    sigma: float,
+    *,
+    config: ParticleTrackingConfig,
+) -> float:
     max_sigma = max(
         _TRACK_MIN_PREDICTION_SIGMA_PX,
         config.max_match_distance_px * _TRACK_MAX_PREDICTION_SIGMA_GATE_FRACTION,
