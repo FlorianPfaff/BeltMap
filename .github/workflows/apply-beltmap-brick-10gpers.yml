@@ -773,7 +773,7 @@ jobs:
           lines.append("")
 
           lines.append("[photometric]")
-          lines.append('enabled = "false"')
+          lines.append('enabled = "true"')
           lines.append('trim_fraction = "0.05"')
           lines.append('max_iterations = "3"')
           lines.append('min_pixels = "10000"')
