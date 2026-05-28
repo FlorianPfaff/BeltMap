@@ -99,11 +99,6 @@ on:
         required: true
         type: string
         default: "16"
-      map_aggregation_options:
-        description: "Map aggregation as method,robust_iterations,huber_delta,min_scale"
-        required: true
-        type: string
-        default: "huber,1,3.0,1.0"
       static_noise_options:
         description: "Static options as noise_sample,min_scale,noise_mask_threshold,noise_mask_margin,noise_min_area[,background_sample,background_mask_threshold,background_mask_margin,background_min_area]."
         required: true
@@ -243,7 +238,7 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
-          MAP_AGGREGATION_OPTIONS: ${{ inputs.map_aggregation_options }}
+          MAP_AGGREGATION_OPTIONS: "huber,1,3.0,1.0"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
@@ -542,7 +537,7 @@ jobs:
           MAP_PARTICLE_MASK_DILATION_PX: ${{ inputs.map_particle_mask_dilation_px }}
           MAP_PARTICLE_MASK_MARGIN_PX: ${{ inputs.map_particle_mask_margin_px }}
           MAP_PARTICLE_MASK_MIN_AREA_PX: "8"
-          MAP_AGGREGATION_OPTIONS: ${{ inputs.map_aggregation_options }}
+          MAP_AGGREGATION_OPTIONS: "huber,1,3.0,1.0"
           STATIC_NOISE_OPTIONS: ${{ inputs.static_noise_options }}
           RECURRENT_ARTIFACT_OPTIONS: ${{ inputs.recurrent_artifact_options }}
           REGISTRATION_SEARCH: ${{ inputs.registration_search }}
