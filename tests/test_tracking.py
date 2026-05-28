@@ -421,6 +421,92 @@ def test_track_particle_detections_uses_pyrecest_gnn_assignment(monkeypatch):
     assert calls["log_posterior_estimates"] is False
 
 
+def test_track_particle_detections_passes_feature_costs_to_pyrecest(monkeypatch):
+    calls = {}
+
+    class FakeGlobalNearestNeighbor:
+        def __init__(
+            self,
+            *,
+            initial_prior,
+            association_param,
+            log_prior_estimates,
+            log_posterior_estimates,
+        ):
+            pass
+
+        def find_association(self, measurements, *_args, **kwargs):
+            calls["pairwise_cost_matrix"] = kwargs["pairwise_cost_matrix"].copy()
+            return np.asarray([1, 0], dtype=int)
+
+    monkeypatch.setattr(tracking_module, "GlobalNearestNeighbor", FakeGlobalNearestNeighbor)
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0,
+                1,
+                y=10.0,
+                x=5.0,
+                area_px=4,
+                bbox_top=9,
+                bbox_left=4,
+                bbox_bottom=11,
+                bbox_right=6,
+                mean_signal=8.0,
+            ),
+            ParticleDetection(
+                0,
+                2,
+                y=12.0,
+                x=5.0,
+                area_px=16,
+                bbox_top=11,
+                bbox_left=4,
+                bbox_bottom=15,
+                bbox_right=8,
+                mean_signal=2.0,
+            ),
+        ],
+        [
+            ParticleDetection(
+                1,
+                1,
+                y=13.0,
+                x=5.0,
+                area_px=16,
+                bbox_top=12,
+                bbox_left=4,
+                bbox_bottom=16,
+                bbox_right=8,
+                mean_signal=2.0,
+            ),
+            ParticleDetection(
+                1,
+                2,
+                y=14.0,
+                x=5.0,
+                area_px=4,
+                bbox_top=13,
+                bbox_left=4,
+                bbox_bottom=15,
+                bbox_right=6,
+                mean_signal=8.0,
+            ),
+        ],
+    ]
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=ParticleTrackingConfig(max_match_distance_px=10.0),
+    )
+
+    costs = calls["pairwise_cost_matrix"]
+    assert costs.shape == (2, 2)
+    assert costs[0, 1] < costs[0, 0]
+    assert costs[1, 0] < costs[1, 1]
+    assert sorted(track.n_detections for track in tracks) == [2, 2]
+
+
 def test_extract_particle_velocities_vs_belt_from_masks():
     masks = []
     for frame_index in range(5):

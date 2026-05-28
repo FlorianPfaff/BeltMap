@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import hypot
+from math import hypot, log
 from typing import Any, Sequence
 
 import numpy as np
@@ -22,6 +22,10 @@ _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 _VELOCITY_FIT_METHODS = {"linear", "theil_sen"}
 _TRACK_PREDICTION_HISTORY = 4
+_TRACK_AREA_COST_WEIGHT_PX = 0.5
+_TRACK_SIGNAL_COST_WEIGHT_PX = 0.25
+_TRACK_FEATURE_LOG_RATIO_CAP = log(4.0)
+_TRACK_FEATURE_COST_MAX_GATE_FRACTION = 0.15
 
 
 @dataclass(frozen=True)
@@ -336,6 +340,12 @@ def _associate_pyrecest_gnn(
             np.eye(2, dtype=np.float64),
             np.eye(2, dtype=np.float64),
             warn_on_no_meas_for_track=False,
+            pairwise_cost_matrix=_association_feature_cost_matrix(
+                candidate_track_ids,
+                tracks,
+                current,
+                config=config,
+            ),
         ),
         dtype=int,
     )
@@ -375,6 +385,54 @@ def _predict_track_position(
         last.y + velocity_y * dt,
         last.x + velocity_x * dt,
     )
+
+
+def _association_feature_cost_matrix(
+    candidate_track_ids: Sequence[int],
+    tracks: Sequence[Sequence[ParticleDetection]],
+    detections: Sequence[ParticleDetection],
+    *,
+    config: ParticleTrackingConfig,
+) -> FloatArray:
+    costs = np.zeros((len(candidate_track_ids), len(detections)), dtype=np.float64)
+    for track_index, track_id in enumerate(candidate_track_ids):
+        last = tracks[track_id][-1]
+        last_signal = _detection_signal(last)
+        for detection_index, detection in enumerate(detections):
+            area_ratio = _positive_ratio(float(last.area_px), float(detection.area_px))
+            if area_ratio is not None:
+                costs[track_index, detection_index] += (
+                    _TRACK_AREA_COST_WEIGHT_PX
+                    * min(abs(log(area_ratio)), _TRACK_FEATURE_LOG_RATIO_CAP)
+                )
+
+            signal_ratio = _positive_ratio(last_signal, _detection_signal(detection))
+            if signal_ratio is not None:
+                costs[track_index, detection_index] += (
+                    _TRACK_SIGNAL_COST_WEIGHT_PX
+                    * min(abs(log(signal_ratio)), _TRACK_FEATURE_LOG_RATIO_CAP)
+                )
+    return np.minimum(
+        costs,
+        config.max_match_distance_px * _TRACK_FEATURE_COST_MAX_GATE_FRACTION,
+    )
+
+
+def _positive_ratio(first: float | None, second: float | None) -> float | None:
+    if first is None or second is None:
+        return None
+    if first <= 0 or second <= 0:
+        return None
+    if not np.isfinite(first) or not np.isfinite(second):
+        return None
+    return max(first, second) / min(first, second)
+
+
+def _detection_signal(detection: ParticleDetection) -> float | None:
+    for value in (detection.mean_signal, detection.peak_signal):
+        if value is not None and np.isfinite(value) and value > 0:
+            return float(value)
+    return None
 
 
 def estimate_particle_velocities_vs_belt(
