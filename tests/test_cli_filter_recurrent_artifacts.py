@@ -24,6 +24,7 @@ DETECTION_FIELDS = [
     "recurrent_artifact_probability",
     "recurrent_artifact_required_peak_signal",
 ]
+TRACK_DETECTION_FIELDS = ["track_id", "track_detection_index", *DETECTION_FIELDS]
 
 
 def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
@@ -140,6 +141,31 @@ def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_pat
         ],
         DETECTION_FIELDS,
     )
+    write_csv(
+        input_dir / "filtered_tracks.csv",
+        [
+            {
+                "track_id": 1,
+                "track_detection_index": 0,
+                "frame_index": 0,
+                "image": "frame_0.png",
+                "label": 1,
+                "y": 1.5,
+                "x": 1.5,
+                "area_px": 1,
+                "bbox_top": 1,
+                "bbox_left": 1,
+                "bbox_bottom": 2,
+                "bbox_right": 2,
+                "mean_signal": 6.0,
+                "peak_signal": 6.0,
+                "recurrent_artifact_overlap_fraction": "",
+                "recurrent_artifact_probability": "",
+                "recurrent_artifact_required_peak_signal": "",
+            }
+        ],
+        TRACK_DETECTION_FIELDS,
+    )
 
     assert main(
         [
@@ -177,3 +203,41 @@ def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_pat
     with (output_dir / "detections.csv").open(newline="", encoding="utf-8") as handle:
         kept_rows = list(csv.DictReader(handle))
     assert [row["frame_index"] for row in kept_rows] == ["2"]
+
+    protected_output_dir = tmp_path / "filtered_protected"
+    assert main(
+        [
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(protected_output_dir),
+            "--min-revolutions",
+            "2",
+            "--margin-px",
+            "0",
+            "--protect-source-filtered-tracks",
+            "--quiet",
+        ]
+    ) == 0
+
+    protected_metadata = json.loads(
+        (protected_output_dir / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert protected_metadata["n_recurrent_artifact_rejected"] == 1
+    assert protected_metadata["n_recurrent_artifact_protected_by_source_track"] == 1
+    assert protected_metadata["n_detections"] == 2
+
+    with (protected_output_dir / "recurrent_artifact_detections.csv").open(
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        protected_recurrent_rows = list(csv.DictReader(handle))
+    assert [
+        row["recurrent_artifact_protected_by_source_track"]
+        for row in protected_recurrent_rows
+    ] == ["True", "False", "False"]
+    assert [row["recurrent_artifact_rejected"] for row in protected_recurrent_rows] == [
+        "False",
+        "True",
+        "False",
+    ]

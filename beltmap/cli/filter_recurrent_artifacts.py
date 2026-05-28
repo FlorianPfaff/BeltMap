@@ -50,6 +50,7 @@ DETECTION_FIELDS = [
 RECURRENT_ARTIFACT_DETECTION_FIELDS = [
     *DETECTION_FIELDS,
     "recurrent_artifact_rejected",
+    "recurrent_artifact_protected_by_source_track",
 ]
 TRACK_DETECTION_FIELDS = [
     "track_id",
@@ -156,6 +157,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-filter-min-velocity-ratio-y", type=float, default=None)
     parser.add_argument("--track-filter-max-velocity-ratio-y", type=float, default=None)
     parser.add_argument("--track-filter-max-abs-x-velocity-px-per-frame", type=float, default=None)
+    parser.add_argument(
+        "--protect-source-filtered-tracks",
+        action="store_true",
+        help=(
+            "Keep recurrent-artifact hits that were part of an accepted source "
+            "filtered track. This is useful for stricter post-run cleanup without "
+            "breaking already plausible particle tracks."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -225,11 +235,27 @@ def parse_detection(row: dict[str, str]) -> ParticleDetection:
     )
 
 
+def detection_key(detection: ParticleDetection) -> tuple[int, int]:
+    return (int(detection.frame_index), int(detection.label))
+
+
+def row_detection_key(row: dict[str, Any]) -> tuple[int, int]:
+    return (int(float(row["frame_index"])), int(float(row["label"])))
+
+
+def read_source_filtered_track_keys(input_dir: Path) -> set[tuple[int, int]]:
+    return {
+        row_detection_key(row)
+        for row in read_csv_rows(input_dir / "filtered_tracks.csv")
+    }
+
+
 def detection_to_row(
     detection: ParticleDetection,
     *,
     image_by_frame: dict[int, str],
     rejected: bool | None = None,
+    protected_by_source_track: bool | None = None,
 ) -> dict[str, Any]:
     frame_index = int(detection.frame_index)
     row: dict[str, Any] = {
@@ -263,6 +289,8 @@ def detection_to_row(
     }
     if rejected is not None:
         row["recurrent_artifact_rejected"] = rejected
+    if protected_by_source_track is not None:
+        row["recurrent_artifact_protected_by_source_track"] = protected_by_source_track
     return row
 
 
@@ -485,6 +513,7 @@ def filter_recurrent_artifacts(
     min_track_length: int | None,
     velocity_fit_method: str | None,
     track_filter_config: TrackFilterConfig | None,
+    protect_source_filtered_tracks: bool = False,
 ) -> dict[str, Any]:
     input_dir = input_dir.resolve()
     output_dir = output_dir.resolve()
@@ -511,6 +540,11 @@ def filter_recurrent_artifacts(
     reference_phase = float(metadata.get("reference_phase_px", 0.0))
     phase_px_by_frame = load_phase_px_by_frame(input_dir / "phase_estimates.csv", frame_count=frame_count)
     detections_by_frame, image_by_frame = group_detections(detection_rows, frame_count=frame_count)
+    protected_track_keys = (
+        read_source_filtered_track_keys(input_dir)
+        if protect_source_filtered_tracks
+        else set()
+    )
 
     recurrent_result = build_recurrent_artifact_map(
         detections_by_frame,
@@ -544,15 +578,18 @@ def filter_recurrent_artifacts(
         detection_threshold=detection_threshold,
         frame_shape=(region[2], region[3]),
     )
-    recurrent_rows = [
-        detection_to_row(
-            score.detection,
-            image_by_frame=image_by_frame,
-            rejected=score.rejected,
-        )
-        for frame_scores in recurrent_scores
-        for score in frame_scores
-    ]
+    recurrent_rows = []
+    for frame_scores in recurrent_scores:
+        for score in frame_scores:
+            protected = score.rejected and detection_key(score.detection) in protected_track_keys
+            recurrent_rows.append(
+                detection_to_row(
+                    score.detection,
+                    image_by_frame=image_by_frame,
+                    rejected=score.rejected and not protected,
+                    protected_by_source_track=protected,
+                )
+            )
     write_csv(
         output_dir / "recurrent_artifact_detections.csv",
         recurrent_rows,
@@ -566,10 +603,14 @@ def filter_recurrent_artifacts(
     save_scaled_png(recurrent_result.counts.astype(np.float32), output_dir / "recurrent_artifact_counts.png")
     save_scaled_png(recurrent_result.probability.astype(np.float32), output_dir / "recurrent_artifact_probability.png")
 
-    filtered_by_frame = [
-        [score.detection for score in frame_scores if not score.rejected]
-        for frame_scores in recurrent_scores
-    ]
+    filtered_by_frame = []
+    for frame_scores in recurrent_scores:
+        kept = []
+        for score in frame_scores:
+            protected = score.rejected and detection_key(score.detection) in protected_track_keys
+            if not score.rejected or protected:
+                kept.append(score.detection)
+        filtered_by_frame.append(kept)
     filtered_rows = write_detection_outputs(
         output_dir,
         filtered_by_frame,
@@ -608,7 +649,13 @@ def filter_recurrent_artifacts(
         1
         for frame_scores in recurrent_scores
         for score in frame_scores
-        if score.rejected
+        if score.rejected and detection_key(score.detection) not in protected_track_keys
+    )
+    protected = sum(
+        1
+        for frame_scores in recurrent_scores
+        for score in frame_scores
+        if score.rejected and detection_key(score.detection) in protected_track_keys
     )
     payload = {
         **metadata,
@@ -618,6 +665,7 @@ def filter_recurrent_artifacts(
         "n_source_detections": len(detection_rows),
         "n_detections": len(filtered_rows),
         "n_recurrent_artifact_rejected": rejected,
+        "n_recurrent_artifact_protected_by_source_track": protected,
         "n_tracks": n_tracks,
         "n_velocity_estimates": n_velocities,
         "n_filtered_velocity_estimates": n_filtered_velocities,
@@ -638,6 +686,7 @@ def filter_recurrent_artifacts(
         "recurrent_artifact_candidate_max_peak_signal": recurrent_config.candidate_max_peak_signal,
         "recurrent_artifact_reject_max_area_px": recurrent_config.reject_max_area_px,
         "recurrent_artifact_reject_max_peak_signal": recurrent_config.reject_max_peak_signal,
+        "recurrent_artifact_protect_source_filtered_tracks": protect_source_filtered_tracks,
         "recurrent_artifact_revolutions": recurrent_result.revolution_count,
         "recurrent_artifact_pixels": recurrent_result.artifact_pixels,
         "track_filter_min_length": track_filter_config.min_track_length,
@@ -704,6 +753,7 @@ def main(argv: list[str] | None = None) -> int:
             min_track_length=args.min_track_length,
             velocity_fit_method=args.velocity_fit_method,
             track_filter_config=track_filter_config,
+            protect_source_filtered_tracks=args.protect_source_filtered_tracks,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
