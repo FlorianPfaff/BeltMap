@@ -326,13 +326,35 @@ def event_id_from_row(row: dict[str, Any]) -> str | None:
     return None
 
 
+def truth_particle_rows(truth: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return per-frame truth particle rows from supported metadata layouts."""
+
+    rows: list[dict[str, Any]] = []
+    for particle in truth.get("particles", []):
+        if isinstance(particle, dict):
+            rows.append(particle)
+
+    frames = truth.get("frames", [])
+    if isinstance(frames, list):
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+            frame_index = finite_int(frame.get("frame_index"))
+            for box in frame.get("boxes", []):
+                if not isinstance(box, dict):
+                    continue
+                row = dict(box)
+                if frame_index is not None and finite_int(row.get("frame_index")) is None:
+                    row["frame_index"] = frame_index
+                rows.append(row)
+    return rows
+
+
 def truth_event_boxes(truth: dict[str, Any]) -> list[dict[str, Any]]:
     """Return synthetic truth boxes with frame and optional event identifiers."""
 
     boxes: list[dict[str, Any]] = []
-    for particle in truth.get("particles", []):
-        if not isinstance(particle, dict):
-            continue
+    for particle in truth_particle_rows(truth):
         frame_index = finite_int(particle.get("frame_index"))
         if frame_index is None:
             continue
@@ -630,9 +652,7 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
     """Group synthetic particle boxes by source frame."""
 
     grouped: dict[int, list[dict[str, float]]] = {}
-    for particle in truth.get("particles", []):
-        if not isinstance(particle, dict):
-            continue
+    for particle in truth_particle_rows(truth):
         frame_index = finite_int(particle.get("frame_index"))
         if frame_index is None:
             continue
@@ -845,6 +865,12 @@ def compute_benchmark_metrics(
     velocity_rows = read_csv_rows(output_dir / "velocities.csv")
     metadata_path = output_dir / "metadata.json"
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
+    truth_rows = truth_particle_rows(truth)
+    truth_frame_count = (
+        len(truth.get("frames"))
+        if isinstance(truth.get("frames"), list)
+        else finite_int(truth.get("frames"))
+    )
 
     return {
         "benchmark": {
@@ -853,7 +879,8 @@ def compute_benchmark_metrics(
             "output_dir": str(output_dir),
         },
         "case": {
-            "frames": truth.get("frames"),
+            "frames": truth_frame_count,
+            "truth_boxes": len(truth_rows),
             "height": truth.get("height"),
             "width": truth.get("width"),
             "belt_period_px": truth.get("belt_period_px"),

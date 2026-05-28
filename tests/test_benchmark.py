@@ -192,6 +192,42 @@ def test_detection_metrics_no_matches_report_zero_f1():
     assert metrics["f1"] == 0.0
 
 
+def test_detection_metrics_accept_frame_box_truth_layout():
+    truth = {
+        "frames": [
+            {
+                "frame_index": 0,
+                "boxes": [
+                    {"top": 0, "left": 0, "bottom": 10, "right": 10, "event_id": "a"},
+                    {"top": 20, "left": 20, "bottom": 25, "right": 25, "event_id": "b"},
+                ],
+            }
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "0",
+            "bbox_left": "0",
+            "bbox_bottom": "10",
+            "bbox_right": "10",
+            "y": "4.5",
+            "x": "4.5",
+        }
+    ]
+
+    detection = detection_metrics(detections, truth, iou_threshold=0.5)
+    events = event_metrics(detections, truth, iou_threshold=0.5)
+
+    assert detection["truth_boxes"] == 2
+    assert detection["predicted_boxes"] == 1
+    assert detection["true_positives"] == 1
+    assert detection["false_negatives"] == 1
+    assert detection["recall"] == pytest.approx(0.5)
+    assert events["truth_events"] == 2
+    assert events["matched_events"] == 1
+
+
 def test_event_metrics_no_matches_report_zero_f1():
     truth = {
         "particles": [
@@ -224,6 +260,8 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
 
     assert metrics["phase"]["rmse_px"] == pytest.approx(np.sqrt((0.0**2 + 0.1**2 + 0.1**2) / 3))
+    assert metrics["case"]["frames"] == 3
+    assert metrics["case"]["truth_boxes"] == 3
     assert metrics["belt_map"]["rmse_gray"] == pytest.approx(0.0)
     assert metrics["belt_map"]["best_cyclic_shift_px"] == 1
     assert metrics["detections"]["precision"] == pytest.approx(1.0)
