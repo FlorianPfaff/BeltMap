@@ -25,6 +25,7 @@ MAP_SAMPLE_STRATEGY_ENV = "MAP_SAMPLE_STRATEGY"
 MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
 MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV = "MAP_ADAPTIVE_CANDIDATE_FRAMES"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
+MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV = "MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
     "smoothed_correction_px", "refined_phase_px", "loss", "score",
@@ -478,6 +479,27 @@ def accumulate_belt_map(
             f"got {map_trim_fraction!r}"
         )
     use_trimmed_mean = map_trim_fraction > 0.0 and not use_huber_weights
+    if use_trimmed_mean:
+        estimated_trim_bytes = (
+            len(samples)
+            * map_height
+            * crop_width
+            * 2
+            * np.dtype(np.float64).itemsize
+        )
+        max_trim_memory_gb = env_float(
+            MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV,
+            32.0,
+            minimum=0.0,
+        )
+        if max_trim_memory_gb > 0.0 and estimated_trim_bytes > max_trim_memory_gb * (1024**3):
+            estimated_gb = estimated_trim_bytes / (1024**3)
+            raise MemoryError(
+                "trimmed belt-map reconstruction would require approximately "
+                f"{estimated_gb:.1f} GiB for per-sample accumulators. "
+                f"Set {MAP_RECONSTRUCTION_TRIM_FRACTION_ENV}=0 for streaming mean "
+                f"or raise {MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV} if this is intentional."
+            )
     sums = np.zeros((map_height, crop_width), dtype=np.float64)
     weights = np.zeros((map_height, crop_width), dtype=np.float64)
     stacked_values: list[np.ndarray] = []

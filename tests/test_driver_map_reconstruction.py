@@ -58,6 +58,38 @@ def test_trimmed_map_reconstruction_rejects_single_bright_outlier(tmp_path, monk
     assert trimmed_map[0, 0] == pytest.approx(10.0)
 
 
+def test_trimmed_map_reconstruction_fails_before_large_memory_allocation(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+    monkeypatch.setenv("MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB", "0.000000001")
+
+    paths = []
+    for index, value in enumerate([10, 250]):
+        path = tmp_path / f"frame_{index:03d}.png"
+        Image.fromarray(np.full((8, 8), value, dtype=np.uint8)).save(path)
+        paths.append(path)
+
+    with pytest.raises(MemoryError, match="trimmed belt-map reconstruction"):
+        accumulate_belt_map(
+            paths=paths,
+            samples=[0, 1],
+            region=(0, 0, 8, 8),
+            velocity=0.0,
+            reference_phase=0.0,
+            model_period=8.0,
+            map_height=8,
+            previous_belt_map=None,
+            mask_threshold=5.0,
+            mask_mode="positive",
+            mask_grow_threshold=2.0,
+            mask_dilation_px=0,
+            mask_margin_px=0,
+            mask_min_area_px=1,
+            pass_label="test",
+            map_trim_fraction=0.25,
+        )
+
+
 def test_non_fractional_map_accumulation_uses_nearest_row_assignment():
     frame = np.asarray([[10.0], [100.0]], dtype=np.float64)
     valid = np.ones(frame.shape, dtype=bool)
