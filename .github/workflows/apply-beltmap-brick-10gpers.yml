@@ -65,11 +65,6 @@ on:
         required: true
         type: string
         default: "500"
-      map_reconstruction_trim_fraction:
-        description: "Symmetric per-pixel trim fraction for belt-map reconstruction. 0 uses streaming arithmetic mean and avoids high memory use."
-        required: true
-        type: string
-        default: "0"
       map_mask_iterations:
         description: "Particle-mask refinement iterations while building the belt map"
         required: true
@@ -236,7 +231,6 @@ jobs:
           MAX_FRAMES: ${{ inputs.max_frames }}
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
-          MAP_RECONSTRUCTION_TRIM_FRACTION: ${{ inputs.map_reconstruction_trim_fraction }}
           MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
           MAP_PARTICLE_MASK_MODE: ${{ inputs.map_particle_mask_mode }}
           MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
@@ -317,7 +311,6 @@ jobs:
               "max_frames": int(os.environ["MAX_FRAMES"]),
               "frame_stride": int(os.environ["FRAME_STRIDE"]),
               "map_sample_frames": int(os.environ["MAP_SAMPLE_FRAMES"]),
-              "map_reconstruction_trim_fraction": float(os.environ["MAP_RECONSTRUCTION_TRIM_FRACTION"]),
               "map_mask_iterations": int(os.environ["MAP_MASK_ITERATIONS"]),
               "detection_shape_gates": os.environ["DETECTION_SHAPE_GATES"],
               "map_particle_mask_mode": os.environ["MAP_PARTICLE_MASK_MODE"],
@@ -494,7 +487,6 @@ jobs:
           MAX_FRAMES: ${{ inputs.max_frames }}
           FRAME_STRIDE: ${{ inputs.frame_stride }}
           MAP_SAMPLE_FRAMES: ${{ inputs.map_sample_frames }}
-          MAP_RECONSTRUCTION_TRIM_FRACTION: ${{ inputs.map_reconstruction_trim_fraction }}
           MAP_MASK_ITERATIONS: ${{ inputs.map_mask_iterations }}
           MAP_PARTICLE_MASK_MODE: ${{ inputs.map_particle_mask_mode }}
           MAP_PARTICLE_MASK_THRESHOLD: ${{ inputs.map_particle_mask_threshold }}
@@ -644,7 +636,7 @@ jobs:
           lines.append("[map]")
           append_value(lines, "sample_frames", "MAP_SAMPLE_FRAMES")
           lines.append('sampling_strategy = "adaptive_phase_coverage"')
-          append_value(lines, "reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION")
+          lines.append('reconstruction_trim_fraction = "0"')
           lines.append('aggregation = "mean"')
           lines.append('robust_iterations = "1"')
           lines.append('robust_huber_delta = "3.0"')
