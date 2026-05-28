@@ -22,6 +22,7 @@ _SCIPY_NDIMAGE: Any = _IMPORT_UNCHECKED
 _SKIMAGE_MEASURE: Any = _IMPORT_UNCHECKED
 _VELOCITY_FIT_METHODS = {"linear", "theil_sen"}
 _TRACK_PREDICTION_HISTORY = 4
+_TRACK_FEATURE_HISTORY = 4
 _TRACK_AREA_COST_WEIGHT_PX = 0.5
 _TRACK_SIGNAL_COST_WEIGHT_PX = 0.25
 _TRACK_FEATURE_LOG_RATIO_CAP = log(4.0)
@@ -396,17 +397,16 @@ def _association_feature_cost_matrix(
 ) -> FloatArray:
     costs = np.zeros((len(candidate_track_ids), len(detections)), dtype=np.float64)
     for track_index, track_id in enumerate(candidate_track_ids):
-        last = tracks[track_id][-1]
-        last_signal = _detection_signal(last)
+        track_area, track_signal = _track_feature_reference(tracks[track_id])
         for detection_index, detection in enumerate(detections):
-            area_ratio = _positive_ratio(float(last.area_px), float(detection.area_px))
+            area_ratio = _positive_ratio(track_area, float(detection.area_px))
             if area_ratio is not None:
                 costs[track_index, detection_index] += (
                     _TRACK_AREA_COST_WEIGHT_PX
                     * min(abs(log(area_ratio)), _TRACK_FEATURE_LOG_RATIO_CAP)
                 )
 
-            signal_ratio = _positive_ratio(last_signal, _detection_signal(detection))
+            signal_ratio = _positive_ratio(track_signal, _detection_signal(detection))
             if signal_ratio is not None:
                 costs[track_index, detection_index] += (
                     _TRACK_SIGNAL_COST_WEIGHT_PX
@@ -416,6 +416,29 @@ def _association_feature_cost_matrix(
         costs,
         config.max_match_distance_px * _TRACK_FEATURE_COST_MAX_GATE_FRACTION,
     )
+
+
+def _track_feature_reference(
+    track: Sequence[ParticleDetection],
+) -> tuple[float | None, float | None]:
+    recent = track[-_TRACK_FEATURE_HISTORY:]
+    areas = [
+        float(detection.area_px)
+        for detection in recent
+        if detection.area_px > 0 and np.isfinite(detection.area_px)
+    ]
+    signals = [
+        signal
+        for signal in (_detection_signal(detection) for detection in recent)
+        if signal is not None
+    ]
+    area = None if not areas else float(np.median(np.asarray(areas, dtype=np.float64)))
+    signal = (
+        None
+        if not signals
+        else float(np.median(np.asarray(signals, dtype=np.float64)))
+    )
+    return area, signal
 
 
 def _positive_ratio(first: float | None, second: float | None) -> float | None:
