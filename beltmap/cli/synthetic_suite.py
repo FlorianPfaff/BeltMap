@@ -14,7 +14,15 @@ from PIL import Image
 CASES = {
     "baseline": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "weak_texture": {"texture": 0.25, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
-    "illumination_drift": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 15.0, "particles": 1, "velocity": 2.0},
+    "illumination_drift": {
+        "texture": 1.0,
+        "particle_signal": 80.0,
+        "noise": 2.0,
+        "illumination": 15.0,
+        "particles": 1,
+        "velocity": 2.0,
+        "photometric": True,
+    },
     "faint_particles": {"texture": 1.0, "particle_signal": 25.0, "noise": 3.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "high_density": {"texture": 1.0, "particle_signal": 70.0, "noise": 2.0, "illumination": 0.0, "particles": 5, "velocity": 2.0},
     "negative_velocity": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": -2.0},
@@ -37,7 +45,10 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
     np.save(root / "true_belt_map.npy", belt_map)
     boxes_by_frame: list[list[dict[str, float | str]]] = []
     velocity = float(params["velocity"])
-    particle_motion_step_px = max(1.0, abs(velocity) * 0.7)
+    particle_motion_step_px = math.copysign(
+        max(1.0, abs(velocity) * 0.7),
+        velocity if velocity != 0 else 1.0,
+    )
     particle_vertical_period_px = height - 8
     for frame_index in range(frames):
         phase = (-velocity * frame_index) % period
@@ -74,6 +85,9 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
         "width": width,
         "belt_period_px": period,
         "true_belt_velocity_y_px_per_frame": velocity,
+        "particle_shift_y_px_per_frame": particle_motion_step_px,
+        "true_particle_velocity_y_px_per_frame": particle_motion_step_px,
+        "true_velocity_ratio_y": None if velocity == 0 else particle_motion_step_px / velocity,
         "true_phase_px_by_frame": [float((-velocity * frame_index) % period) for frame_index in range(frames)],
         "true_belt_map_npy": "true_belt_map.npy",
         "frames": [{"frame_index": i, "boxes": boxes} for i, boxes in enumerate(boxes_by_frame)],
@@ -81,7 +95,16 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
     (root / "synthetic_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
-def write_config(root: Path, *, frames: int, velocity: float, period: int) -> Path:
+def write_config(
+    root: Path,
+    *,
+    frames: int,
+    velocity: float,
+    period: int,
+    photometric_enabled: bool = False,
+    track_filter_min_length: int = 3,
+) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
     config = f"""[paths]
 image_dir = {json.dumps(str(root / "images"))}
 output_dir = {json.dumps(str(root / "outputs"))}
@@ -98,8 +121,14 @@ period_px = {period}
 threshold = 3.0
 min_area_px = 2
 
+[photometric]
+enabled = {str(photometric_enabled).lower()}
+
 [tracking]
 min_track_length = 2
+
+[track_filter]
+min_length = {track_filter_min_length}
 
 [map]
 sample_frames = {frames}
@@ -138,7 +167,13 @@ def main(argv: list[str] | None = None) -> int:
         root = args.output_root / case
         root.mkdir(parents=True, exist_ok=True)
         render_case(case, root, frames=args.frames, height=args.height, width=args.width, period=args.period, seed=args.seed)
-        config_path = write_config(root, frames=args.frames, velocity=float(CASES[case]["velocity"]), period=args.period)
+        config_path = write_config(
+            root,
+            frames=args.frames,
+            velocity=float(CASES[case]["velocity"]),
+            period=args.period,
+            photometric_enabled=bool(CASES[case].get("photometric", False)),
+        )
         manifest.append({"case": case, "root": str(root), "config": str(config_path), "truth": str(root / "synthetic_metadata.json")})
         if args.execute:
             subprocess.run(
