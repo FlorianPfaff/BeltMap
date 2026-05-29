@@ -1,6 +1,8 @@
 import json
 import sys
 
+import pytest
+
 from beltmap.cli import synthetic_suite
 from beltmap.cli.synthetic_suite import main, render_case
 
@@ -16,6 +18,8 @@ def test_render_case_splits_event_ids_at_particle_wraps(tmp_path):
 
     assert metadata["height"] == 16
     assert metadata["width"] == 24
+    assert metadata["true_particle_velocity_y_px_per_frame"] == pytest.approx(1.4)
+    assert metadata["true_velocity_ratio_y"] == pytest.approx(0.7)
     assert len(event_ids) > 1
     assert all(":" in event_id for event_id in event_ids)
 
