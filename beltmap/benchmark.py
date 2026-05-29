@@ -572,10 +572,11 @@ def compare_events(
 
 
 def event_metrics(
-    detection_rows: list[dict[str, str]],
+    prediction_rows: list[dict[str, str]],
     truth: dict[str, Any],
     *,
     iou_threshold: float = 0.25,
+    prediction_source: str = "detections.csv",
 ) -> dict[str, Any]:
     """Compute event-level precision/recall against synthetic particle events."""
 
@@ -588,7 +589,7 @@ def event_metrics(
         iou_threshold=iou_threshold,
     )
     predicted_events = build_events_from_boxes(
-        predicted_event_boxes(detection_rows),
+        predicted_event_boxes(prediction_rows),
         prefix="pred",
         iou_threshold=iou_threshold,
     )
@@ -630,6 +631,8 @@ def event_metrics(
     return {
         "available": bool(truth_events or predicted_events),
         "iou_threshold": iou_threshold,
+        "prediction_source": prediction_source,
+        "prediction_rows": len(prediction_rows),
         "truth_events": len(truth_events),
         "predicted_events": len(predicted_events),
         "matched_events": true_positives,
@@ -862,6 +865,7 @@ def compute_benchmark_metrics(
     truth = read_json(truth_path)
     phase_rows = read_csv_rows(output_dir / "phase_estimates.csv")
     detection_rows = read_csv_rows(output_dir / "detections.csv")
+    track_rows = read_csv_rows(output_dir / "tracks.csv")
     velocity_rows = read_csv_rows(output_dir / "velocities.csv")
     metadata_path = output_dir / "metadata.json"
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
@@ -900,7 +904,12 @@ def compute_benchmark_metrics(
         "phase": phase_metrics(phase_rows, truth),
         "belt_map": map_metrics(output_dir, truth_path, truth),
         "detections": detection_metrics(detection_rows, truth, iou_threshold=iou_threshold),
-        "events": event_metrics(detection_rows, truth, iou_threshold=iou_threshold),
+        "events": event_metrics(
+            track_rows or detection_rows,
+            truth,
+            iou_threshold=iou_threshold,
+            prediction_source="tracks.csv" if track_rows else "detections.csv",
+        ),
         "velocity": velocity_metrics(velocity_rows, truth),
         "runtime": runtime_metrics(output_dir),
     }
@@ -965,6 +974,7 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| event precision | {format_value(events.get('precision'))} |",
             f"| event recall | {format_value(events.get('recall'))} |",
             f"| event F1 | {format_value(events.get('f1'))} |",
+            f"| event prediction source | {format_value(events.get('prediction_source'))} |",
             f"| matched events | {format_value(events.get('matched_events'))} |",
             f"| truth events | {format_value(events.get('truth_events'))} |",
             f"| predicted events | {format_value(events.get('predicted_events'))} |",
@@ -983,8 +993,9 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             "- Belt-map RMSE is minimized over cyclic vertical shifts, so a constant phase offset",
             "  in the reconstructed map is not counted as a reconstruction error.",
             "- Detection scores use greedy per-frame IoU matching against synthetic particle boxes.",
-            "- Event scores first group per-frame truth and predicted boxes into temporally linked",
-            "  particle events, then greedily match events with at least one IoU-qualified frame.",
+            "- Event scores use `tracks.csv` when present, falling back to `detections.csv`",
+            "  for older outputs without track rows. Rows without event IDs are linked into",
+            "  particle events before greedy event matching.",
             "- Velocity metrics use the representative output track with the most detections.",
             "",
         ]
