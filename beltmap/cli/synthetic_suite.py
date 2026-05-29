@@ -105,6 +105,9 @@ def write_config(
     tracking_max_frame_gap: float = 2.0,
     tracking_velocity_fit_method: str = "theil_sen",
     detection_min_area_px: int = 4,
+    detection_split_merged_components: bool = True,
+    detection_split_min_projection_gap_px: int = 1,
+    detection_split_min_component_area_px: int = 4,
     track_filter_min_length: int = 3,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -123,6 +126,9 @@ period_px = {period}
 [detection]
 threshold = 3.0
 min_area_px = {detection_min_area_px}
+split_merged_components = {str(detection_split_merged_components).lower()}
+split_min_projection_gap_px = {detection_split_min_projection_gap_px}
+split_min_component_area_px = {detection_split_min_component_area_px}
 
 [photometric]
 enabled = {str(photometric_enabled).lower()}
