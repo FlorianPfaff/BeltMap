@@ -122,6 +122,59 @@ def make_synthetic_benchmark_case(tmp_path: Path) -> tuple[Path, Path]:
         ],
         ["track_id", "n_detections", "velocity_y_px_per_frame", "velocity_ratio_y"],
     )
+    write_csv(
+        output_dir / "tracks.csv",
+        [
+            {
+                "track_id": 0,
+                "track_detection_index": 0,
+                "frame_index": 0,
+                "image": "frame_000.png",
+                "bbox_top": 1,
+                "bbox_left": 1,
+                "bbox_bottom": 3,
+                "bbox_right": 3,
+                "y": 1.5,
+                "x": 1.5,
+            },
+            {
+                "track_id": 0,
+                "track_detection_index": 1,
+                "frame_index": 1,
+                "image": "frame_001.png",
+                "bbox_top": 2,
+                "bbox_left": 1,
+                "bbox_bottom": 4,
+                "bbox_right": 3,
+                "y": 2.5,
+                "x": 1.5,
+            },
+            {
+                "track_id": 0,
+                "track_detection_index": 2,
+                "frame_index": 2,
+                "image": "frame_002.png",
+                "bbox_top": 3,
+                "bbox_left": 1,
+                "bbox_bottom": 5,
+                "bbox_right": 3,
+                "y": 3.5,
+                "x": 1.5,
+            },
+        ],
+        [
+            "track_id",
+            "track_detection_index",
+            "frame_index",
+            "image",
+            "bbox_top",
+            "bbox_left",
+            "bbox_bottom",
+            "bbox_right",
+            "y",
+            "x",
+        ],
+    )
     (output_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -270,6 +323,8 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     assert metrics["events"]["precision"] == pytest.approx(1.0)
     assert metrics["events"]["recall"] == pytest.approx(1.0)
     assert metrics["events"]["f1"] == pytest.approx(1.0)
+    assert metrics["events"]["prediction_source"] == "tracks.csv"
+    assert metrics["events"]["prediction_rows"] == 3
     assert metrics["events"]["truth_events"] == 1
     assert metrics["events"]["predicted_events"] == 1
     assert metrics["events"]["matched_events"] == 1
@@ -278,6 +333,36 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     assert metrics["velocity"]["velocity_ratio_error"] == pytest.approx(0.025)
     assert metrics["runtime"]["frames_per_second"] == pytest.approx(2.0)
     assert metrics["runtime"]["peak_rss_mb"] == pytest.approx(123.4)
+
+
+def test_compute_benchmark_metrics_scores_events_from_tracks_when_available(tmp_path):
+    output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
+    with (output_dir / "tracks.csv").open(newline="", encoding="utf-8") as handle:
+        track_rows = list(csv.DictReader(handle))
+    track_rows[-1]["track_id"] = "1"
+    write_csv(output_dir / "tracks.csv", track_rows, list(track_rows[0]))
+
+    metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
+
+    assert metrics["detections"]["f1"] == pytest.approx(1.0)
+    assert metrics["events"]["prediction_source"] == "tracks.csv"
+    assert metrics["events"]["truth_events"] == 1
+    assert metrics["events"]["predicted_events"] == 2
+    assert metrics["events"]["matched_events"] == 1
+    assert metrics["events"]["precision"] == pytest.approx(0.5)
+    assert metrics["events"]["recall"] == pytest.approx(1.0)
+    assert metrics["events"]["f1"] == pytest.approx(2 / 3)
+
+
+def test_compute_benchmark_metrics_falls_back_to_detection_events_without_tracks(tmp_path):
+    output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
+    (output_dir / "tracks.csv").unlink()
+
+    metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
+
+    assert metrics["events"]["prediction_source"] == "detections.csv"
+    assert metrics["events"]["predicted_events"] == 1
+    assert metrics["events"]["f1"] == pytest.approx(1.0)
 
 
 def test_event_metrics_distinguishes_frame_coverage_from_event_recall():

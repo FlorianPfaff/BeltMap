@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -140,8 +141,22 @@ def main(argv: list[str] | None = None) -> int:
         config_path = write_config(root, frames=args.frames, velocity=float(CASES[case]["velocity"]), period=args.period)
         manifest.append({"case": case, "root": str(root), "config": str(config_path), "truth": str(root / "synthetic_metadata.json")})
         if args.execute:
-            subprocess.run(["beltmap-apply", "--config", str(config_path)], check=True)
-            subprocess.run(["beltmap-benchmark", "--output-dir", str(root / "outputs"), "--truth-path", str(root / "synthetic_metadata.json")], check=True)
+            subprocess.run(
+                [sys.executable, "-m", "beltmap.cli.apply", "--config", str(config_path)],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "beltmap.cli.benchmark",
+                    "--output-dir",
+                    str(root / "outputs"),
+                    "--truth-path",
+                    str(root / "synthetic_metadata.json"),
+                ],
+                check=True,
+            )
     args.output_root.mkdir(parents=True, exist_ok=True)
     manifest_path = args.output_root / "synthetic_suite_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
