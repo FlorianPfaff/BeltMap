@@ -4,6 +4,8 @@ from pathlib import Path
 
 from PIL import Image
 
+import beltmap.visual_qc as visual_qc
+from beltmap.tracking import ParticleTrack
 from beltmap.visual_qc import generate_visual_qc
 
 
@@ -91,3 +93,62 @@ def test_generate_visual_qc_writes_histogram_coverage_and_overlays(tmp_path):
         for path in paths:
             assert path.is_file()
             assert path.stat().st_size > 0
+
+
+def test_visual_qc_tracks_use_pyrecest_tracker(monkeypatch):
+    calls = {}
+    records = visual_qc.group_detections_by_frame(
+        visual_qc.parse_detection_records(
+            [
+                {
+                    "frame_index": 0,
+                    "label": 1,
+                    "y": 2.0,
+                    "x": 3.0,
+                    "bbox_top": 1,
+                    "bbox_left": 2,
+                    "bbox_bottom": 4,
+                    "bbox_right": 5,
+                },
+                {
+                    "frame_index": 2,
+                    "label": 1,
+                    "y": 4.0,
+                    "x": 3.0,
+                    "bbox_top": 3,
+                    "bbox_left": 2,
+                    "bbox_bottom": 6,
+                    "bbox_right": 5,
+                },
+            ]
+        )
+    )
+
+    def fake_track_particle_detections(detections, *, config, frame_indices):
+        calls["detections"] = detections
+        calls["config"] = config
+        calls["frame_indices"] = frame_indices
+        return [
+            ParticleTrack(
+                track_id=0,
+                detections=tuple(item for frame in detections for item in frame),
+            )
+        ]
+
+    monkeypatch.setattr(
+        visual_qc,
+        "track_particle_detections",
+        fake_track_particle_detections,
+    )
+
+    tracks = visual_qc.reconstruct_tracks(
+        records,
+        max_match_distance_px=8.0,
+        max_frame_gap=2.0,
+    )
+
+    assert len(tracks) == 1
+    assert calls["frame_indices"] == [0, 2]
+    assert calls["config"].max_match_distance_px == 8.0
+    assert calls["config"].max_frame_gap == 2.0
+    assert [detection.frame_index for detection in calls["detections"][1]] == [2.0]

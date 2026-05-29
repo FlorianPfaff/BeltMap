@@ -102,7 +102,7 @@ def append_visual_qc_section(report_path: Path, artifacts: VisualQcArtifacts) ->
             "- `belt_map_coverage.png` is nominal phase-trajectory coverage, not the exact accumulation mask.",
             "- `overlay_contact_sheet.png` pairs detection and track overlays for quick review.",
             "- `detections_overlay_sample_*.png` overlays current-frame boxes and centroids on residual previews.",
-            "- `tracks_overlay_sample_*.png` reconstructs simple nearest-neighbor tracks for visual sanity checks.",
+            "- `tracks_overlay_sample_*.png` reconstructs PyRecEst-backed tracks for visual sanity checks.",
             "",
         ]
     )
