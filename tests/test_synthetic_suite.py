@@ -108,7 +108,7 @@ def test_write_config_allows_short_tracking_gaps_and_robust_velocity_fit(tmp_pat
     assert 'velocity_fit_method = "theil_sen"' in config
 
 
-def test_illumination_drift_suite_enables_photometric_correction(tmp_path):
+def test_illumination_drift_suite_enables_photometric_and_map_offset_correction(tmp_path):
     result = main(
         [
             "--output-root",
@@ -132,6 +132,7 @@ def test_illumination_drift_suite_enables_photometric_correction(tmp_path):
 
     assert result == 0
     assert "enabled = true" in config
+    assert "frame_median_offset_correction = true" in config
 
 
 def test_execute_uses_current_python_modules(tmp_path, monkeypatch):

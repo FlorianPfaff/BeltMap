@@ -26,6 +26,7 @@ MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
 MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV = "MAP_ADAPTIVE_CANDIDATE_FRAMES"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV = "MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB"
+MAP_FRAME_MEDIAN_OFFSET_CORRECTION_ENV = "MAP_FRAME_MEDIAN_OFFSET_CORRECTION"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
     "smoothed_correction_px", "refined_phase_px", "loss", "score",
@@ -172,6 +173,7 @@ def build_belt_map(
     sampling_strategy: str = "uniform",
     map_trim_fraction: float | None = None,
     fractional_splat: bool = True,
+    frame_median_offset_correction: bool = False,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
@@ -193,6 +195,7 @@ def build_belt_map(
         sampling_strategy=sampling_strategy,
         map_trim_fraction=map_trim_fraction,
         fractional_splat=fractional_splat,
+        frame_median_offset_correction=frame_median_offset_correction,
         phase_feedback_config=phase_feedback_config,
     )
     if result.phase_refinement_rows:
@@ -226,6 +229,7 @@ def build_belt_map_result(
     sampling_strategy: str | None = None,
     map_trim_fraction: float | None = None,
     fractional_splat: bool = True,
+    frame_median_offset_correction: bool = False,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
@@ -289,6 +293,7 @@ def build_belt_map_result(
         robust_huber_delta=robust_huber_delta,
         robust_min_scale=robust_min_scale,
         fractional_splat=fractional_splat,
+        frame_median_offset_correction=frame_median_offset_correction,
         sample_strategy=sampling_strategy,
         adaptive_candidate_frames=map_adaptive_candidate_frames,
         phase_refinement_iterations=cfg.iterations,
@@ -311,6 +316,7 @@ def build_belt_map_result(
         mask_min_area_px=mask_min_area_px,
         map_trim_fraction=map_trim_fraction,
         fractional_splat=fractional_splat,
+        frame_median_offset_correction=frame_median_offset_correction,
         pass_label="initial",
     )
     phase_by_frame: np.ndarray | None = None
@@ -351,6 +357,7 @@ def build_belt_map_result(
                 mask_min_area_px=mask_min_area_px,
                 map_trim_fraction=map_trim_fraction,
                 fractional_splat=fractional_splat,
+                frame_median_offset_correction=frame_median_offset_correction,
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
             )
@@ -381,6 +388,7 @@ def build_belt_map_result(
             mask_min_area_px=mask_min_area_px,
             map_trim_fraction=map_trim_fraction,
             fractional_splat=fractional_splat,
+            frame_median_offset_correction=frame_median_offset_correction,
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
         )
@@ -412,6 +420,7 @@ def build_belt_map_result(
                 pass_label=f"huber-{iteration}",
                 map_trim_fraction=map_trim_fraction,
                 fractional_splat=fractional_splat,
+                frame_median_offset_correction=frame_median_offset_correction,
                 phase_by_frame=phase_by_frame,
                 robust_reference_belt_map=belt_map,
                 robust_huber_delta=robust_huber_delta,
@@ -455,6 +464,7 @@ def accumulate_belt_map(
     pass_label: str,
     map_trim_fraction: float = 0.0,
     fractional_splat: bool = True,
+    frame_median_offset_correction: bool = False,
     phase_by_frame: Sequence[float] | Mapping[int, float] | None = None,
     robust_reference_belt_map: np.ndarray | None = None,
     robust_huber_delta: float = 3.0,
@@ -506,8 +516,24 @@ def accumulate_belt_map(
     stacked_weights: list[np.ndarray] = []
     masked_pixels = 0
     contributed_pixels = 0
+    median_reference = (
+        _sample_frame_median_reference(paths=paths, samples=samples, region=region)
+        if frame_median_offset_correction
+        else None
+    )
+    if frame_median_offset_correction:
+        emit(
+            "belt_map",
+            "using frame-median offset correction for map accumulation",
+            pass_label=pass_label,
+            median_reference=median_reference,
+        )
     for sample_number, index in enumerate(samples, start=1):
         frame = crop(read_gray(paths[index]), region).astype(np.float64, copy=False)
+        if median_reference is not None:
+            frame_median = _finite_median(frame)
+            if frame_median is not None:
+                frame = frame - (frame_median - median_reference)
         phase = _phase_for_frame(
             index,
             velocity=velocity,
@@ -641,6 +667,30 @@ def accumulate_belt_map(
         "observed_pixels": int(np.count_nonzero(known_pixels)),
         "total_pixels": int(weights.size),
     }
+
+
+def _sample_frame_median_reference(
+    *,
+    paths: Sequence,
+    samples: Sequence[int],
+    region: tuple[int, int, int, int],
+) -> float | None:
+    medians = []
+    for index in samples:
+        frame = crop(read_gray(paths[index]), region)
+        median = _finite_median(frame)
+        if median is not None:
+            medians.append(median)
+    if not medians:
+        return None
+    return float(np.median(np.asarray(medians, dtype=np.float64)))
+
+
+def _finite_median(values: np.ndarray) -> float | None:
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return None
+    return float(np.median(finite))
 
 
 def _trim_belt_map_accumulators(

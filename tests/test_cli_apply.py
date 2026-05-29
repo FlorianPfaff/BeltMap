@@ -108,6 +108,7 @@ max_velocity_ratio_y = 1.05
 max_abs_x_velocity_px_per_frame = 12.5
 
 [map]
+frame_median_offset_correction = true
 particle_mask_mode = "hysteresis_abs"
 particle_mask_threshold = 4.0
 particle_mask_grow_threshold = 1.5
@@ -191,6 +192,7 @@ max_abs_px = 6
         "MAP_PARTICLE_MASK_MODE": "hysteresis_abs",
         "MAP_PARTICLE_MASK_THRESHOLD": "4",
         "MAP_AGGREGATION": "huber",
+        "MAP_FRAME_MEDIAN_OFFSET_CORRECTION": "1",
         "MAP_ROBUST_HUBER_DELTA": "2.5",
         "MAP_ROBUST_ITERATIONS": "2",
         "MAP_ROBUST_MIN_SCALE": "0.75",
@@ -444,6 +446,7 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["paths"]["output_dir"] == "outputs"
     assert parsed["belt"]["region"] == [0, 220, 1330, 1800]
     assert parsed["belt"]["velocity_px_per_frame"] == "auto"
+    assert parsed["map"]["frame_median_offset_correction"] is False
     assert parsed["map"]["particle_mask_mode"] == "positive"
     assert parsed["map"]["particle_mask_grow_threshold"] == 2.0
     assert parsed["map"]["particle_mask_dilation_px"] == 0

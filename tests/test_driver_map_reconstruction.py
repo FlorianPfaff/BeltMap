@@ -62,6 +62,46 @@ def test_trimmed_map_reconstruction_rejects_single_bright_outlier(tmp_path, monk
     assert trimmed_map[0, 0] == pytest.approx(10.0)
 
 
+def test_frame_median_offset_correction_aligns_additive_illumination(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    base = np.asarray([[50, 60], [70, 80]], dtype=np.uint8)
+    paths = []
+    for index, offset in enumerate([-10, 0, 20]):
+        path = tmp_path / f"frame_{index:03d}.png"
+        _write_gray_array(path, base.astype(np.int16) + offset)
+        paths.append(path)
+
+    common_kwargs = dict(
+        paths=paths,
+        samples=[0, 1, 2],
+        region=(0, 0, 2, 2),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=2.0,
+        map_height=2,
+        previous_belt_map=None,
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+    )
+
+    mean_map, _mean_coverage = accumulate_belt_map(**common_kwargs)
+    corrected_map, corrected_coverage = accumulate_belt_map(
+        **common_kwargs,
+        frame_median_offset_correction=True,
+    )
+
+    np.testing.assert_allclose(corrected_map, base.astype(np.float32))
+    assert corrected_coverage["contributed_pixels"] == 12
+    assert np.mean(np.abs(corrected_map - base)) < np.mean(np.abs(mean_map - base))
+
+
 def test_trimmed_map_reconstruction_fails_before_large_memory_allocation(tmp_path, monkeypatch):
     monkeypatch.setattr(rt, "OUT", tmp_path / "out")
     monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
