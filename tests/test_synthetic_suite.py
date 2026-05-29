@@ -65,6 +65,20 @@ def test_write_config_uses_short_suite_track_filter(tmp_path):
     assert "min_length = 3" in config
 
 
+def test_write_config_uses_particle_sized_detection_area_gate(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert "[detection]" in config
+    assert "min_area_px = 4" in config
+
+
 def test_write_config_allows_short_tracking_gaps_and_robust_velocity_fit(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
