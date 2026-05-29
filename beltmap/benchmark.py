@@ -781,8 +781,8 @@ def choose_velocity_row(velocity_rows: list[dict[str, str]], true_ratio: float |
     return max(velocity_rows, key=key)
 
 
-def velocity_metrics(velocity_rows: list[dict[str, str]], truth: dict[str, Any]) -> dict[str, Any]:
-    """Compare estimated track velocity against synthetic particle truth."""
+def truth_velocity_values(truth: dict[str, Any]) -> tuple[float | None, float | None]:
+    """Return synthetic truth particle velocity and belt-relative ratio."""
 
     true_velocity = finite_float(
         truth.get(
@@ -799,12 +799,26 @@ def velocity_metrics(velocity_rows: list[dict[str, str]], truth: dict[str, Any])
     true_ratio = finite_float(truth.get("true_velocity_ratio_y"))
     if true_ratio is None and true_velocity is not None and true_belt_velocity not in (None, 0):
         true_ratio = true_velocity / true_belt_velocity
+    return true_velocity, true_ratio
+
+
+def velocity_metrics(
+    velocity_rows: list[dict[str, str]],
+    truth: dict[str, Any],
+    *,
+    prediction_source: str = "velocities.csv",
+    missing_reason: str | None = None,
+) -> dict[str, Any]:
+    """Compare estimated track velocity against synthetic particle truth."""
+
+    true_velocity, true_ratio = truth_velocity_values(truth)
 
     representative = choose_velocity_row(velocity_rows, true_ratio)
     if representative is None:
         return {
             "available": False,
-            "reason": "No velocity rows found",
+            "reason": missing_reason or "No velocity rows found",
+            "prediction_source": prediction_source,
             "truth_velocity_y_px_per_frame": true_velocity,
             "truth_velocity_ratio_y": true_ratio,
             "velocity_rows": 0,
@@ -814,6 +828,7 @@ def velocity_metrics(velocity_rows: list[dict[str, str]], truth: dict[str, Any])
     estimated_ratio = finite_float(representative.get("velocity_ratio_y"))
     return {
         "available": estimated_velocity is not None or estimated_ratio is not None,
+        "prediction_source": prediction_source,
         "velocity_rows": len(velocity_rows),
         "representative_track_id": finite_int(representative.get("track_id")),
         "representative_track_detections": finite_int(representative.get("n_detections")),
@@ -880,6 +895,8 @@ def compute_benchmark_metrics(
     filtered_tracks_path = output_dir / "filtered_tracks.csv"
     filtered_track_rows = read_csv_rows(filtered_tracks_path)
     velocity_rows = read_csv_rows(output_dir / "velocities.csv")
+    filtered_velocities_path = output_dir / "filtered_velocities.csv"
+    filtered_velocity_rows = read_csv_rows(filtered_velocities_path)
     metadata_path = output_dir / "metadata.json"
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
     truth_rows = truth_particle_rows(truth)
@@ -936,7 +953,21 @@ def compute_benchmark_metrics(
                 prediction_source="filtered_tracks.csv",
             )
         ),
-        "velocity": velocity_metrics(velocity_rows, truth),
+        "velocity": velocity_metrics(velocity_rows, truth, prediction_source="velocities.csv"),
+        "filtered_velocity": (
+            velocity_metrics(
+                filtered_velocity_rows,
+                truth,
+                prediction_source="filtered_velocities.csv",
+            )
+            if filtered_velocities_path.is_file()
+            else velocity_metrics(
+                [],
+                truth,
+                prediction_source="filtered_velocities.csv",
+                missing_reason=f"Missing {filtered_velocities_path}",
+            )
+        ),
         "runtime": runtime_metrics(output_dir),
     }
 
@@ -962,6 +993,7 @@ def markdown_report(metrics: dict[str, Any]) -> str:
     events = metrics["events"]
     filtered_events = metrics.get("filtered_events", {})
     velocity = metrics["velocity"]
+    filtered_velocity = metrics.get("filtered_velocity", {})
     runtime = metrics["runtime"]
 
     lines = [
@@ -1012,8 +1044,14 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| mean event temporal IoU | {format_value(events.get('mean_temporal_iou'))} |",
             f"| mean event truth-frame coverage | {format_value(events.get('mean_truth_frame_coverage'))} |",
             f"| mean event latency [frames] | {format_value(events.get('mean_latency_frames'))} |",
+            f"| velocity prediction source | {format_value(velocity.get('prediction_source'))} |",
+            f"| velocity rows | {format_value(velocity.get('velocity_rows'))} |",
             f"| velocity y error [px/frame] | {format_value(velocity.get('velocity_y_error_px_per_frame'))} |",
             f"| velocity-ratio error | {format_value(velocity.get('velocity_ratio_error'))} |",
+            f"| filtered velocity prediction source | {format_value(filtered_velocity.get('prediction_source'))} |",
+            f"| filtered velocity rows | {format_value(filtered_velocity.get('velocity_rows'))} |",
+            f"| filtered velocity y error [px/frame] | {format_value(filtered_velocity.get('velocity_y_error_px_per_frame'))} |",
+            f"| filtered velocity-ratio error | {format_value(filtered_velocity.get('velocity_ratio_error'))} |",
             f"| elapsed [s] | {format_value(runtime.get('elapsed_s'))} |",
             f"| frames/s | {format_value(runtime.get('frames_per_second'))} |",
             f"| peak RSS [MB] | {format_value(runtime.get('peak_rss_mb'))} |",
@@ -1029,6 +1067,8 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             "  `filtered_tracks.csv` when the driver wrote final accepted track rows.",
             "  Rows without event IDs are linked into particle events before greedy event matching.",
             "- Velocity metrics use the representative output track with the most detections.",
+            "  Filtered velocity metrics separately use `filtered_velocities.csv` when the",
+            "  driver wrote final accepted velocity rows.",
             "",
         ]
     )
@@ -1038,7 +1078,9 @@ def markdown_report(metrics: dict[str, Any]) -> str:
         ("phase", phase),
         ("detections", detections),
         ("events", events),
+        ("filtered events", filtered_events),
         ("velocity", velocity),
+        ("filtered velocity", filtered_velocity),
         ("runtime", runtime),
     ]
     missing = [
