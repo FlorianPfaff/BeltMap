@@ -516,24 +516,27 @@ def accumulate_belt_map(
     stacked_weights: list[np.ndarray] = []
     masked_pixels = 0
     contributed_pixels = 0
+    offset_reference_map = previous_belt_map
+    if offset_reference_map is None:
+        offset_reference_map = robust_reference_belt_map
+    use_residual_offset_correction = (
+        frame_median_offset_correction and offset_reference_map is not None
+    )
     median_reference = (
         _sample_frame_median_reference(paths=paths, samples=samples, region=region)
-        if frame_median_offset_correction
+        if frame_median_offset_correction and not use_residual_offset_correction
         else None
     )
     if frame_median_offset_correction:
         emit(
             "belt_map",
-            "using frame-median offset correction for map accumulation",
+            "using frame offset correction for map accumulation",
             pass_label=pass_label,
             median_reference=median_reference,
+            residual_reference_map=use_residual_offset_correction,
         )
     for sample_number, index in enumerate(samples, start=1):
         frame = crop(read_gray(paths[index]), region).astype(np.float64, copy=False)
-        if median_reference is not None:
-            frame_median = _finite_median(frame)
-            if frame_median is not None:
-                frame = frame - (frame_median - median_reference)
         phase = _phase_for_frame(
             index,
             velocity=velocity,
@@ -541,10 +544,20 @@ def accumulate_belt_map(
             model_period=model_period,
             phase_by_frame=phase_by_frame,
         )
-        valid = np.ones(frame.shape, dtype=bool)
         expected = None
+        if use_residual_offset_correction:
+            expected = render_belt_view(offset_reference_map, phase, crop_height)
+            frame_offset = _finite_median(frame - expected)
+            if frame_offset is not None:
+                frame = frame - frame_offset
+        elif median_reference is not None:
+            frame_median = _finite_median(frame)
+            if frame_median is not None:
+                frame = frame - (frame_median - median_reference)
+        valid = np.ones(frame.shape, dtype=bool)
         if use_particle_mask:
-            expected = render_belt_view(previous_belt_map, phase, crop_height)
+            if expected is None:
+                expected = render_belt_view(previous_belt_map, phase, crop_height)
             residual = generate_residual_image(frame, expected, config=residual_config)
             particle_mask = detect_map_particle_mask(
                 residual,

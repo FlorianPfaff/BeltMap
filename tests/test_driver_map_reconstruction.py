@@ -102,6 +102,44 @@ def test_frame_median_offset_correction_aligns_additive_illumination(tmp_path, m
     assert np.mean(np.abs(corrected_map - base)) < np.mean(np.abs(mean_map - base))
 
 
+def test_frame_median_offset_correction_uses_residual_median_with_reference_map(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    base = np.asarray([[50, 65], [70, 90]], dtype=np.uint8)
+    paths = []
+    for index, offset in enumerate([-10, 5, 25]):
+        path = tmp_path / f"frame_{index:03d}.png"
+        _write_gray_array(path, base.astype(np.int16) + offset)
+        paths.append(path)
+
+    corrected_map, coverage = accumulate_belt_map(
+        paths=paths,
+        samples=[0, 1, 2],
+        region=(0, 0, 2, 2),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=2.0,
+        map_height=2,
+        previous_belt_map=base.astype(np.float32),
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+        frame_median_offset_correction=True,
+    )
+
+    np.testing.assert_allclose(corrected_map, base.astype(np.float32))
+    assert coverage["masked_pixels"] == 0
+    assert coverage["contributed_pixels"] == 12
+
+
 def test_trimmed_map_reconstruction_fails_before_large_memory_allocation(tmp_path, monkeypatch):
     monkeypatch.setattr(rt, "OUT", tmp_path / "out")
     monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
