@@ -651,6 +651,17 @@ def event_metrics(
     }
 
 
+def unavailable_event_metrics(*, reason: str, prediction_source: str) -> dict[str, Any]:
+    """Return an unavailable event-metric section with stable metadata fields."""
+
+    return {
+        "available": False,
+        "reason": reason,
+        "prediction_source": prediction_source,
+        "prediction_rows": 0,
+    }
+
+
 def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]]:
     """Group synthetic particle boxes by source frame."""
 
@@ -866,6 +877,8 @@ def compute_benchmark_metrics(
     phase_rows = read_csv_rows(output_dir / "phase_estimates.csv")
     detection_rows = read_csv_rows(output_dir / "detections.csv")
     track_rows = read_csv_rows(output_dir / "tracks.csv")
+    filtered_tracks_path = output_dir / "filtered_tracks.csv"
+    filtered_track_rows = read_csv_rows(filtered_tracks_path)
     velocity_rows = read_csv_rows(output_dir / "velocities.csv")
     metadata_path = output_dir / "metadata.json"
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
@@ -910,6 +923,19 @@ def compute_benchmark_metrics(
             iou_threshold=iou_threshold,
             prediction_source="tracks.csv" if track_rows else "detections.csv",
         ),
+        "filtered_events": (
+            event_metrics(
+                filtered_track_rows,
+                truth,
+                iou_threshold=iou_threshold,
+                prediction_source="filtered_tracks.csv",
+            )
+            if filtered_tracks_path.is_file()
+            else unavailable_event_metrics(
+                reason=f"Missing {filtered_tracks_path}",
+                prediction_source="filtered_tracks.csv",
+            )
+        ),
         "velocity": velocity_metrics(velocity_rows, truth),
         "runtime": runtime_metrics(output_dir),
     }
@@ -934,6 +960,7 @@ def markdown_report(metrics: dict[str, Any]) -> str:
     belt_map = metrics["belt_map"]
     detections = metrics["detections"]
     events = metrics["events"]
+    filtered_events = metrics.get("filtered_events", {})
     velocity = metrics["velocity"]
     runtime = metrics["runtime"]
 
@@ -978,6 +1005,10 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| matched events | {format_value(events.get('matched_events'))} |",
             f"| truth events | {format_value(events.get('truth_events'))} |",
             f"| predicted events | {format_value(events.get('predicted_events'))} |",
+            f"| filtered event F1 | {format_value(filtered_events.get('f1'))} |",
+            f"| filtered event prediction source | {format_value(filtered_events.get('prediction_source'))} |",
+            f"| filtered matched events | {format_value(filtered_events.get('matched_events'))} |",
+            f"| filtered predicted events | {format_value(filtered_events.get('predicted_events'))} |",
             f"| mean event temporal IoU | {format_value(events.get('mean_temporal_iou'))} |",
             f"| mean event truth-frame coverage | {format_value(events.get('mean_truth_frame_coverage'))} |",
             f"| mean event latency [frames] | {format_value(events.get('mean_latency_frames'))} |",
@@ -994,8 +1025,9 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             "  in the reconstructed map is not counted as a reconstruction error.",
             "- Detection scores use greedy per-frame IoU matching against synthetic particle boxes.",
             "- Event scores use `tracks.csv` when present, falling back to `detections.csv`",
-            "  for older outputs without track rows. Rows without event IDs are linked into",
-            "  particle events before greedy event matching.",
+            "  for older outputs without track rows. Filtered event scores separately use",
+            "  `filtered_tracks.csv` when the driver wrote final accepted track rows.",
+            "  Rows without event IDs are linked into particle events before greedy event matching.",
             "- Velocity metrics use the representative output track with the most detections.",
             "",
         ]
