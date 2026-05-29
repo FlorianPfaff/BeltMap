@@ -34,8 +34,10 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
     image_dir.mkdir(parents=True, exist_ok=True)
     belt_map = make_belt_map(period, width, float(params["texture"]), rng)
     np.save(root / "true_belt_map.npy", belt_map)
-    boxes_by_frame: list[list[dict[str, float]]] = []
+    boxes_by_frame: list[list[dict[str, float | str]]] = []
     velocity = float(params["velocity"])
+    particle_motion_step_px = max(1.0, abs(velocity) * 0.7)
+    particle_vertical_period_px = height - 8
     for frame_index in range(frames):
         phase = (-velocity * frame_index) % period
         rows = (np.arange(height, dtype=np.float64) + phase) % period
@@ -44,20 +46,31 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
         w1 = rows - row0
         frame = (1.0 - w1[:, None]) * belt_map[row0] + w1[:, None] * belt_map[row1]
         frame += float(params["illumination"]) * math.sin(2 * math.pi * frame_index / max(frames, 1))
-        boxes: list[dict[str, float]] = []
+        boxes: list[dict[str, float | str]] = []
         for particle in range(int(params["particles"])):
-            top = int((8 + particle * 17 + frame_index * max(1.0, abs(velocity) * 0.7)) % (height - 8))
+            vertical_position = 8 + particle * 17 + frame_index * particle_motion_step_px
+            top = int(vertical_position % particle_vertical_period_px)
             left = int((12 + particle * 29) % (width - 8))
             bottom = top + 5
             right = left + 6
             frame[top:bottom, left:right] += float(params["particle_signal"])
-            boxes.append({"top": top, "left": left, "bottom": bottom, "right": right, "event_id": particle})
+            pass_index = int(vertical_position // particle_vertical_period_px)
+            boxes.append(
+                {
+                    "top": top,
+                    "left": left,
+                    "bottom": bottom,
+                    "right": right,
+                    "event_id": f"{particle}:{pass_index}",
+                }
+            )
         frame += rng.normal(scale=float(params["noise"]), size=frame.shape)
         Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)).save(image_dir / f"frame_{frame_index:04d}.png")
         boxes_by_frame.append(boxes)
     metadata = {
         "case": case,
-        "height": period,
+        "height": height,
+        "width": width,
         "belt_period_px": period,
         "true_belt_velocity_y_px_per_frame": velocity,
         "true_phase_px_by_frame": [float((-velocity * frame_index) % period) for frame_index in range(frames)],
