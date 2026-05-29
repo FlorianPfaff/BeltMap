@@ -334,6 +334,9 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(0.05)
     assert metrics["velocity"]["velocity_ratio_error"] == pytest.approx(0.025)
     assert metrics["velocity"]["prediction_source"] == "velocities.csv"
+    assert metrics["velocity"]["truth_matched_track_id"] == 0
+    assert metrics["velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(0.05)
+    assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(0.025)
     assert metrics["filtered_velocity"]["available"] is False
     assert metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
     assert metrics["runtime"]["frames_per_second"] == pytest.approx(2.0)
@@ -442,6 +445,9 @@ def test_compute_benchmark_metrics_reports_filtered_velocity_metrics(tmp_path):
     assert metrics["filtered_velocity"]["representative_track_id"] == 7
     assert metrics["filtered_velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(-0.1)
     assert metrics["filtered_velocity"]["velocity_ratio_error"] == pytest.approx(-0.05)
+    assert metrics["filtered_velocity"]["truth_matched_track_id"] == 7
+    assert metrics["filtered_velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(-0.1)
+    assert metrics["filtered_velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(-0.05)
 
 
 def test_compute_benchmark_metrics_reports_empty_filtered_velocity_file(tmp_path):
@@ -458,6 +464,44 @@ def test_compute_benchmark_metrics_reports_empty_filtered_velocity_file(tmp_path
     assert metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
     assert metrics["filtered_velocity"]["reason"] == "No velocity rows found"
     assert metrics["filtered_velocity"]["velocity_rows"] == 0
+
+
+def test_compute_benchmark_metrics_reports_truth_matched_velocity(tmp_path):
+    output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
+    velocity_rows = [
+        {
+            "track_id": 10,
+            "n_detections": 100,
+            "velocity_y_px_per_frame": 0.1,
+            "velocity_ratio_y": 0.05,
+        },
+        {
+            "track_id": 11,
+            "n_detections": 2,
+            "velocity_y_px_per_frame": 1.01,
+            "velocity_ratio_y": 0.505,
+        },
+    ]
+    write_csv(
+        output_dir / "velocities.csv",
+        velocity_rows,
+        ["track_id", "n_detections", "velocity_y_px_per_frame", "velocity_ratio_y"],
+    )
+    write_csv(
+        output_dir / "filtered_velocities.csv",
+        velocity_rows,
+        ["track_id", "n_detections", "velocity_y_px_per_frame", "velocity_ratio_y"],
+    )
+
+    metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
+
+    assert metrics["velocity"]["representative_track_id"] == 10
+    assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(-0.9)
+    assert metrics["velocity"]["truth_matched_track_id"] == 11
+    assert metrics["velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(0.01)
+    assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(0.005)
+    assert metrics["filtered_velocity"]["representative_track_id"] == 10
+    assert metrics["filtered_velocity"]["truth_matched_track_id"] == 11
 
 
 def test_event_metrics_distinguishes_frame_coverage_from_event_recall():
