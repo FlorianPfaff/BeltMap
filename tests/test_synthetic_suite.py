@@ -51,6 +51,20 @@ def test_write_config_can_enable_photometric_correction(tmp_path):
     assert "enabled = true" in config
 
 
+def test_write_config_uses_short_suite_track_filter(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert "[track_filter]" in config
+    assert "min_length = 3" in config
+
+
 def test_illumination_drift_suite_enables_photometric_correction(tmp_path):
     result = main(
         [
