@@ -14,7 +14,15 @@ from PIL import Image
 CASES = {
     "baseline": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "weak_texture": {"texture": 0.25, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
-    "illumination_drift": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 15.0, "particles": 1, "velocity": 2.0},
+    "illumination_drift": {
+        "texture": 1.0,
+        "particle_signal": 80.0,
+        "noise": 2.0,
+        "illumination": 15.0,
+        "particles": 1,
+        "velocity": 2.0,
+        "photometric": True,
+    },
     "faint_particles": {"texture": 1.0, "particle_signal": 25.0, "noise": 3.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "high_density": {"texture": 1.0, "particle_signal": 70.0, "noise": 2.0, "illumination": 0.0, "particles": 5, "velocity": 2.0},
     "negative_velocity": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": -2.0},
@@ -87,7 +95,15 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
     (root / "synthetic_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
-def write_config(root: Path, *, frames: int, velocity: float, period: int) -> Path:
+def write_config(
+    root: Path,
+    *,
+    frames: int,
+    velocity: float,
+    period: int,
+    photometric_enabled: bool = False,
+) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
     config = f"""[paths]
 image_dir = {json.dumps(str(root / "images"))}
 output_dir = {json.dumps(str(root / "outputs"))}
@@ -103,6 +119,9 @@ period_px = {period}
 [detection]
 threshold = 3.0
 min_area_px = 2
+
+[photometric]
+enabled = {str(photometric_enabled).lower()}
 
 [tracking]
 min_track_length = 2
@@ -144,7 +163,13 @@ def main(argv: list[str] | None = None) -> int:
         root = args.output_root / case
         root.mkdir(parents=True, exist_ok=True)
         render_case(case, root, frames=args.frames, height=args.height, width=args.width, period=args.period, seed=args.seed)
-        config_path = write_config(root, frames=args.frames, velocity=float(CASES[case]["velocity"]), period=args.period)
+        config_path = write_config(
+            root,
+            frames=args.frames,
+            velocity=float(CASES[case]["velocity"]),
+            period=args.period,
+            photometric_enabled=bool(CASES[case].get("photometric", False)),
+        )
         manifest.append({"case": case, "root": str(root), "config": str(config_path), "truth": str(root / "synthetic_metadata.json")})
         if args.execute:
             subprocess.run(
