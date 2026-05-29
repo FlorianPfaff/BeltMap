@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from math import hypot, log
 from typing import Any, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+
+# PyRecEst imports matplotlib during module import on some versions.  Default to
+# a non-GUI backend unless the caller has explicitly chosen one.
+os.environ.setdefault("MPLBACKEND", "Agg")
 from pyrecest.filters import GlobalNearestNeighbor
 
 from .detection import DETECTION_MODES, normalize_detection_mode
