@@ -1046,6 +1046,7 @@ def main() -> None:
     map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
+    map_frame_median_offset_correction = env_bool("MAP_FRAME_MEDIAN_OFFSET_CORRECTION", False)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     map_aggregation = os.getenv("MAP_AGGREGATION", "mean").strip().lower()
@@ -1186,6 +1187,7 @@ def main() -> None:
         map_particle_mask_grow_threshold=map_particle_mask_grow_threshold,
         map_particle_mask_dilation_px=map_particle_mask_dilation_px,
         map_fractional_splat=map_fractional_splat,
+        map_frame_median_offset_correction=map_frame_median_offset_correction,
         map_particle_mask_margin_px=map_particle_mask_margin_px,
         map_particle_mask_min_area_px=map_particle_mask_min_area_px,
         map_aggregation=map_aggregation,
@@ -1287,6 +1289,7 @@ def main() -> None:
             robust_huber_delta=map_robust_huber_delta,
             robust_min_scale=map_robust_min_scale,
             fractional_splat=map_fractional_splat,
+            frame_median_offset_correction=map_frame_median_offset_correction,
             phase_feedback_config=PhaseFeedbackConfig(
                 iterations=phase_refinement_iterations,
                 min_score=phase_refinement_min_score,
@@ -1871,6 +1874,7 @@ def main() -> None:
         "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
         "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
         "map_fractional_splat": map_fractional_splat,
+        "map_frame_median_offset_correction": map_frame_median_offset_correction,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
         "map_aggregation": map_aggregation,

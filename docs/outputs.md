@@ -441,6 +441,7 @@ Important fields:
 | `detection_max_bbox_aspect_ratio` | ratio | Optional maximum component bounding-box aspect ratio, or `null` when disabled. |
 | `detection_min_bbox_extent` | fraction | Optional minimum component extent, or `null` when disabled. |
 | `map_mask_iterations` | count | Number of particle-mask refinement iterations used for map building. |
+| `map_frame_median_offset_correction` | bool | Whether sampled frames were median-offset normalized during map reconstruction. |
 | `map_particle_mask_threshold` | z | Threshold used for particle masking during map reconstruction. |
 | `map_particle_mask_margin_px` | px | Bounding-box margin used when excluding particle pixels from the map. |
 | `map_particle_mask_min_area_px` | px | Minimum component area used for map-building particle masks. |

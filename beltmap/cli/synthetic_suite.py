@@ -22,6 +22,7 @@ CASES = {
         "particles": 1,
         "velocity": 2.0,
         "photometric": True,
+        "map_frame_median_offset_correction": True,
     },
     "faint_particles": {"texture": 1.0, "particle_signal": 25.0, "noise": 3.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "high_density": {"texture": 1.0, "particle_signal": 70.0, "noise": 2.0, "illumination": 0.0, "particles": 5, "velocity": 2.0},
@@ -109,6 +110,7 @@ def write_config(
     detection_split_min_projection_gap_px: int = 1,
     detection_split_min_component_area_px: int = 4,
     track_filter_min_length: int = 3,
+    map_frame_median_offset_correction: bool = False,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     config = f"""[paths]
@@ -143,6 +145,7 @@ min_length = {track_filter_min_length}
 
 [map]
 sample_frames = {frames}
+frame_median_offset_correction = {str(map_frame_median_offset_correction).lower()}
 mask_iterations = 1
 particle_mask_threshold = 3.0
 particle_mask_margin_px = 2
@@ -184,6 +187,9 @@ def main(argv: list[str] | None = None) -> int:
             velocity=float(CASES[case]["velocity"]),
             period=args.period,
             photometric_enabled=bool(CASES[case].get("photometric", False)),
+            map_frame_median_offset_correction=bool(
+                CASES[case].get("map_frame_median_offset_correction", False)
+            ),
         )
         manifest.append({"case": case, "root": str(root), "config": str(config_path), "truth": str(root / "synthetic_metadata.json")})
         if args.execute:
