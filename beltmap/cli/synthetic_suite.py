@@ -37,7 +37,10 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
     np.save(root / "true_belt_map.npy", belt_map)
     boxes_by_frame: list[list[dict[str, float | str]]] = []
     velocity = float(params["velocity"])
-    particle_motion_step_px = max(1.0, abs(velocity) * 0.7)
+    particle_motion_step_px = math.copysign(
+        max(1.0, abs(velocity) * 0.7),
+        velocity if velocity != 0 else 1.0,
+    )
     particle_vertical_period_px = height - 8
     for frame_index in range(frames):
         phase = (-velocity * frame_index) % period

@@ -24,6 +24,18 @@ def test_render_case_splits_event_ids_at_particle_wraps(tmp_path):
     assert all(":" in event_id for event_id in event_ids)
 
 
+def test_render_case_signs_particle_velocity_with_belt_direction(tmp_path):
+    root = tmp_path / "synthetic"
+
+    render_case("negative_velocity", root, frames=8, height=16, width=24, period=16, seed=4)
+
+    metadata = json.loads((root / "synthetic_metadata.json").read_text(encoding="utf-8"))
+
+    assert metadata["true_belt_velocity_y_px_per_frame"] == pytest.approx(-2.0)
+    assert metadata["true_particle_velocity_y_px_per_frame"] == pytest.approx(-1.4)
+    assert metadata["true_velocity_ratio_y"] == pytest.approx(0.7)
+
+
 def test_execute_uses_current_python_modules(tmp_path, monkeypatch):
     calls = []
 
