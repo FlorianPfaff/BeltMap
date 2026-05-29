@@ -148,7 +148,7 @@ sample_frames = {frames}
 frame_median_offset_correction = {str(map_frame_median_offset_correction).lower()}
 mask_iterations = 1
 particle_mask_threshold = 3.0
-particle_mask_margin_px = 2
+particle_mask_margin_px = 1
 particle_mask_min_area_px = 2
 
 [registration]
