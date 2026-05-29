@@ -94,6 +94,19 @@ def test_write_config_splits_dense_synthetic_components(tmp_path):
     assert "split_min_component_area_px = 4" in config
 
 
+def test_write_config_uses_tight_synthetic_map_mask_margin(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert "particle_mask_margin_px = 1" in config
+
+
 def test_write_config_allows_short_tracking_gaps_and_robust_velocity_fit(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
