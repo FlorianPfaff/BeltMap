@@ -9,6 +9,13 @@ from typing import Any, Iterable
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .tracking import (
+    ParticleDetection,
+    ParticleTrack,
+    ParticleTrackingConfig,
+    track_particle_detections,
+)
+
 
 @dataclass(frozen=True)
 class VisualQcArtifacts:
@@ -29,14 +36,6 @@ class DetectionRecord:
     bbox_left: float
     bbox_bottom: float
     bbox_right: float
-
-
-@dataclass
-class SimpleTrack:
-    """Small reconstructed track used only for validation overlays."""
-
-    track_id: int
-    points: list[tuple[int, float, float]]
 
 
 TRACK_COLORS = [
@@ -326,60 +325,50 @@ def draw_detection_overlays(
     return created
 
 
+def _particle_detection_from_record(record: DetectionRecord, *, label: int) -> ParticleDetection:
+    width = max(0.0, record.bbox_right - record.bbox_left)
+    height = max(0.0, record.bbox_bottom - record.bbox_top)
+    area = max(
+        1,
+        int(round(width * height)),
+    )
+    return ParticleDetection(
+        frame_index=float(record.frame_index),
+        label=label,
+        y=record.y,
+        x=record.x,
+        area_px=area,
+        bbox_top=int(round(record.bbox_top)),
+        bbox_left=int(round(record.bbox_left)),
+        bbox_bottom=int(round(record.bbox_bottom)),
+        bbox_right=int(round(record.bbox_right)),
+    )
+
+
 def reconstruct_tracks(
     detections_by_frame: dict[int, list[DetectionRecord]],
     *,
     max_match_distance_px: float,
-    max_frame_gap: int = 2,
-) -> list[SimpleTrack]:
-    """Reconstruct simple tracks for overlay-only visual sanity checking."""
+    max_frame_gap: float = 2.0,
+) -> list[ParticleTrack]:
+    """Reconstruct overlay tracks with the same PyRecEst-backed tracker as the driver."""
 
-    tracks: dict[int, SimpleTrack] = {}
-    active: dict[int, SimpleTrack] = {}
-    next_track_id = 0
-
-    for frame_index in sorted(detections_by_frame):
-        detections = detections_by_frame[frame_index]
-        candidates: list[tuple[float, int, int]] = []
-        for track_id, track in active.items():
-            last_frame, last_x, last_y = track.points[-1]
-            gap = frame_index - last_frame
-            if gap < 1 or gap > max_frame_gap:
-                continue
-            for detection_index, detection in enumerate(detections):
-                distance = float(np.hypot(detection.x - last_x, detection.y - last_y))
-                candidates.append((distance, track_id, detection_index))
-
-        matched_tracks: set[int] = set()
-        matched_detections: set[int] = set()
-        for distance, track_id, detection_index in sorted(candidates):
-            if distance > max_match_distance_px:
-                break
-            if track_id in matched_tracks or detection_index in matched_detections:
-                continue
-            detection = detections[detection_index]
-            active[track_id].points.append((frame_index, detection.x, detection.y))
-            matched_tracks.add(track_id)
-            matched_detections.add(detection_index)
-
-        new_active = {
-            track_id: track
-            for track_id, track in active.items()
-            if frame_index - track.points[-1][0] < max_frame_gap
-        }
-        for detection_index, detection in enumerate(detections):
-            if detection_index in matched_detections:
-                continue
-            track = SimpleTrack(
-                track_id=next_track_id,
-                points=[(frame_index, detection.x, detection.y)],
-            )
-            tracks[next_track_id] = track
-            new_active[next_track_id] = track
-            next_track_id += 1
-        active = new_active
-
-    return [tracks[key] for key in sorted(tracks)]
+    frame_indices = sorted(detections_by_frame)
+    detections = [
+        [
+            _particle_detection_from_record(record, label=index + 1)
+            for index, record in enumerate(detections_by_frame[frame_index])
+        ]
+        for frame_index in frame_indices
+    ]
+    return track_particle_detections(
+        detections,
+        config=ParticleTrackingConfig(
+            max_match_distance_px=max_match_distance_px,
+            max_frame_gap=max_frame_gap,
+        ),
+        frame_indices=frame_indices,
+    )
 
 
 def draw_track_overlays(
@@ -387,7 +376,7 @@ def draw_track_overlays(
     *,
     preview_paths: dict[int, Path],
     detections_by_frame: dict[int, list[DetectionRecord]],
-    tracks: list[SimpleTrack],
+    tracks: list[ParticleTrack],
 ) -> list[Path]:
     """Overlay reconstructed track polylines on residual preview frames."""
 
@@ -396,7 +385,11 @@ def draw_track_overlays(
         image = Image.open(preview_path).convert("RGB")
         draw = ImageDraw.Draw(image)
         for track in tracks:
-            visible = [(x, y) for f, x, y in track.points if f <= frame_index]
+            visible = [
+                (detection.x, detection.y)
+                for detection in track.detections
+                if detection.frame_index <= frame_index
+            ]
             if len(visible) < 2:
                 continue
             color = TRACK_COLORS[track.track_id % len(TRACK_COLORS)]
