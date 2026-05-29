@@ -781,6 +781,37 @@ def choose_velocity_row(velocity_rows: list[dict[str, str]], true_ratio: float |
     return max(velocity_rows, key=key)
 
 
+def choose_truth_matched_velocity_row(
+    velocity_rows: list[dict[str, str]],
+    *,
+    true_velocity: float | None,
+    true_ratio: float | None,
+) -> dict[str, str] | None:
+    """Choose the velocity row closest to synthetic truth."""
+
+    if not velocity_rows or (true_velocity is None and true_ratio is None):
+        return None
+
+    def penalties(row: dict[str, str]) -> tuple[float, float, int] | None:
+        detections = finite_int(row.get("n_detections")) or 0
+        velocity = finite_float(row.get("velocity_y_px_per_frame"))
+        ratio = finite_float(row.get("velocity_ratio_y"))
+        ratio_penalty = abs(ratio - true_ratio) if ratio is not None and true_ratio is not None else math.inf
+        velocity_penalty = abs(velocity - true_velocity) if velocity is not None and true_velocity is not None else math.inf
+        if math.isinf(ratio_penalty) and math.isinf(velocity_penalty):
+            return None
+        return ratio_penalty, velocity_penalty, -detections
+
+    candidates = [
+        (penalty, row)
+        for row in velocity_rows
+        if (penalty := penalties(row)) is not None
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[0])[1]
+
+
 def truth_velocity_values(truth: dict[str, Any]) -> tuple[float | None, float | None]:
     """Return synthetic truth particle velocity and belt-relative ratio."""
 
@@ -826,6 +857,13 @@ def velocity_metrics(
 
     estimated_velocity = finite_float(representative.get("velocity_y_px_per_frame"))
     estimated_ratio = finite_float(representative.get("velocity_ratio_y"))
+    truth_matched = choose_truth_matched_velocity_row(
+        velocity_rows,
+        true_velocity=true_velocity,
+        true_ratio=true_ratio,
+    )
+    matched_velocity = None if truth_matched is None else finite_float(truth_matched.get("velocity_y_px_per_frame"))
+    matched_ratio = None if truth_matched is None else finite_float(truth_matched.get("velocity_ratio_y"))
     return {
         "available": estimated_velocity is not None or estimated_ratio is not None,
         "prediction_source": prediction_source,
@@ -838,6 +876,12 @@ def velocity_metrics(
         "truth_velocity_ratio_y": true_ratio,
         "estimated_velocity_ratio_y": estimated_ratio,
         "velocity_ratio_error": None if true_ratio is None or estimated_ratio is None else float(estimated_ratio - true_ratio),
+        "truth_matched_track_id": None if truth_matched is None else finite_int(truth_matched.get("track_id")),
+        "truth_matched_track_detections": None if truth_matched is None else finite_int(truth_matched.get("n_detections")),
+        "truth_matched_velocity_y_px_per_frame": matched_velocity,
+        "truth_matched_velocity_y_error_px_per_frame": None if true_velocity is None or matched_velocity is None else float(matched_velocity - true_velocity),
+        "truth_matched_velocity_ratio_y": matched_ratio,
+        "truth_matched_velocity_ratio_error": None if true_ratio is None or matched_ratio is None else float(matched_ratio - true_ratio),
     }
 
 
@@ -1048,10 +1092,14 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| velocity rows | {format_value(velocity.get('velocity_rows'))} |",
             f"| velocity y error [px/frame] | {format_value(velocity.get('velocity_y_error_px_per_frame'))} |",
             f"| velocity-ratio error | {format_value(velocity.get('velocity_ratio_error'))} |",
+            f"| truth-matched velocity y error [px/frame] | {format_value(velocity.get('truth_matched_velocity_y_error_px_per_frame'))} |",
+            f"| truth-matched velocity-ratio error | {format_value(velocity.get('truth_matched_velocity_ratio_error'))} |",
             f"| filtered velocity prediction source | {format_value(filtered_velocity.get('prediction_source'))} |",
             f"| filtered velocity rows | {format_value(filtered_velocity.get('velocity_rows'))} |",
             f"| filtered velocity y error [px/frame] | {format_value(filtered_velocity.get('velocity_y_error_px_per_frame'))} |",
             f"| filtered velocity-ratio error | {format_value(filtered_velocity.get('velocity_ratio_error'))} |",
+            f"| filtered truth-matched velocity y error [px/frame] | {format_value(filtered_velocity.get('truth_matched_velocity_y_error_px_per_frame'))} |",
+            f"| filtered truth-matched velocity-ratio error | {format_value(filtered_velocity.get('truth_matched_velocity_ratio_error'))} |",
             f"| elapsed [s] | {format_value(runtime.get('elapsed_s'))} |",
             f"| frames/s | {format_value(runtime.get('frames_per_second'))} |",
             f"| peak RSS [MB] | {format_value(runtime.get('peak_rss_mb'))} |",
@@ -1069,6 +1117,9 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             "- Velocity metrics use the representative output track with the most detections.",
             "  Filtered velocity metrics separately use `filtered_velocities.csv` when the",
             "  driver wrote final accepted velocity rows.",
+            "- Truth-matched velocity metrics separately score the velocity row closest to",
+            "  synthetic truth, so dominant-track bias and best available velocity accuracy",
+            "  are both visible.",
             "",
         ]
     )
