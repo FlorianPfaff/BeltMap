@@ -102,6 +102,8 @@ def write_config(
     velocity: float,
     period: int,
     photometric_enabled: bool = False,
+    tracking_max_frame_gap: float = 2.0,
+    tracking_velocity_fit_method: str = "theil_sen",
     track_filter_min_length: int = 3,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -126,6 +128,8 @@ enabled = {str(photometric_enabled).lower()}
 
 [tracking]
 min_track_length = 2
+max_frame_gap = {tracking_max_frame_gap}
+velocity_fit_method = {json.dumps(tracking_velocity_fit_method)}
 
 [track_filter]
 min_length = {track_filter_min_length}
