@@ -67,6 +67,7 @@ beltmap-postrun-audit = "beltmap.cli.postrun_audit:main"
 beltmap-map-uncertainty = "beltmap.cli.map_uncertainty:main"
 beltmap-suggest-label-frames = "beltmap.cli.suggest_label_frames:main"
 beltmap-quality-contract = "beltmap.cli.quality_contract:main"
+beltmap-prepare-zenodo = "beltmap.cli.prepare_zenodo_dataset:main"
 
 [project.optional-dependencies]
 test = [

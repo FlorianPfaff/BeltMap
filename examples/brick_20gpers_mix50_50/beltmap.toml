@@ -1,0 +1,115 @@
+[paths]
+image_dir = "data/images"
+output_dir = "outputs"
+
+[frames]
+max_frames = 0
+stride = 1
+
+[belt]
+region = [0, 220, 1330, 1800]
+velocity_px_per_frame = 59.3
+velocity_frame_unit = "source_frame"
+period_px = 14723
+
+[detection]
+threshold = 4.5
+mode = "positive"
+low_threshold = 2.0
+min_area_px = 4
+max_area_px = 0
+min_bbox_width_px = 3
+min_bbox_height_px = 3
+max_bbox_aspect_ratio = 4.0
+min_bbox_extent = 0.15
+split_merged_components = true
+split_min_projection_gap_px = 1
+split_min_component_area_px = 4
+
+[tracking]
+min_track_length = 3
+max_frame_gap = 2
+velocity_fit_method = "theil_sen"
+
+[track_filter]
+min_length = 5
+min_velocity_ratio_y = 0.0
+max_velocity_ratio_y = 1.1
+max_abs_x_velocity_px_per_frame = 0.0
+
+[map]
+sample_frames = 500
+sampling_strategy = "adaptive_phase_coverage"
+reconstruction_trim_fraction = 0.0
+mask_iterations = 2
+fractional_splat = true
+sample_strategy = "phase_coverage"
+adaptive_candidate_frames = 3000
+aggregation = "huber"
+robust_iterations = 1
+frame_median_offset_correction = true
+particle_mask_mode = "hysteresis_abs"
+particle_mask_threshold = 4.0
+particle_mask_grow_threshold = 1.5
+particle_mask_dilation_px = 8
+particle_mask_margin_px = 16
+particle_mask_min_area_px = 8
+
+[static_background]
+sample_frames = 500
+mask_threshold = 4.0
+mask_margin_px = 16
+mask_min_area_px = 4
+
+[photometric]
+enabled = true
+trim_fraction = 0.05
+max_iterations = 3
+min_pixels = 10000
+
+[static_noise]
+sample_frames = 500
+min_scale = 0.5
+mask_threshold = 4.0
+mask_margin_px = 16
+mask_min_area_px = 4
+
+[recurrent_artifact]
+min_revolutions = 3
+margin_px = 4
+max_overlap_fraction = 0.3
+mode = "soft"
+soft_penalty_weight = 1.0
+
+[registration]
+search_radius_px = 12.0
+search_step_px = 0.5
+subpixel_refinement = true
+robust_normalization = true
+
+[phase_refinement]
+iterations = 1
+min_score = 0.0
+max_abs_correction_px = 4
+smoothing_window_frames = 25
+
+[phase_drift]
+enabled = true
+smoothing_alpha = 0.15
+min_score = 0.05
+max_abs_residual_correction_px = 4
+max_abs_px = 8
+
+[phase_smoothing]
+window_frames = 25
+min_score = 0.05
+max_abs_correction_px = 4
+min_support = 3
+
+[progress]
+interval_frames = 25
+partial_output_interval_frames = 250
+
+[debug]
+residual_preview_frames = 3
+residual_preview_interval_frames = 0
