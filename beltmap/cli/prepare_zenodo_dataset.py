@@ -6,14 +6,16 @@ import json
 import shutil
 import sys
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlparse
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 CHUNK_SIZE = 1024 * 1024
 DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "datasets"
 ZENODO_RECORD_API = "https://zenodo.org/api/records/{record_id}"
-ZENODO_RECORD_FILE_URL = "https://zenodo.org/records/{record_id}/files/{filename}?download=1"
+ZENODO_RECORD_FILE_URL = (
+    "https://zenodo.org/records/{record_id}/files/{filename}?download=1"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,7 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--url", help="Zenodo file URL or local zip path.")
-    source.add_argument("--record-id", help="Zenodo record ID containing the zip file.")
+    source.add_argument(
+        "--record-id",
+        help="Zenodo record ID containing the zip file.",
+    )
     parser.add_argument(
         "--record-file-glob",
         default="*.zip",
@@ -156,7 +161,11 @@ def select_record_file(
         raise ValueError("Zenodo record metadata does not contain a files list")
 
     if file_name:
-        matches = [file_info for file_info in files if record_file_name(file_info) == file_name]
+        matches = [
+            file_info
+            for file_info in files
+            if record_file_name(file_info) == file_name
+        ]
     else:
         matches = [
             file_info
@@ -246,13 +255,46 @@ def ensure_cached_zip(
             tmp_zip.unlink()
 
 
+def normalized_member_path(member: ZipInfo) -> PurePosixPath:
+    name = member.filename.replace("\\", "/")
+    if not name or "\x00" in name:
+        raise ValueError("dataset archive contains an empty or invalid path")
+    member_path = PurePosixPath(name)
+    if member_path.is_absolute() or any(
+        part in {"", ".", ".."} for part in member_path.parts
+    ):
+        raise ValueError(f"dataset archive contains unsafe path: {member.filename}")
+    return member_path
+
+
+def safe_extract_zip(archive: ZipFile, destination: Path) -> None:
+    root = destination.resolve()
+    for member in archive.infolist():
+        member_path = normalized_member_path(member)
+        target = (destination / Path(*member_path.parts)).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(
+                f"dataset archive contains unsafe path: {member.filename}"
+            ) from exc
+
+        if member.is_dir() or member.filename.endswith(("/", "\\")):
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member) as source, target.open("wb") as output:
+            shutil.copyfileobj(source, output, CHUNK_SIZE)
+
+
 def extract_cached_zip(*, cache_zip: Path, cache_images: Path) -> None:
     cache_tmp = cache_images.with_name(cache_images.name + ".tmp")
     remove_path(cache_tmp)
     cache_tmp.mkdir(parents=True, exist_ok=True)
     try:
         with ZipFile(cache_zip) as archive:
-            archive.extractall(cache_tmp)
+            safe_extract_zip(archive, cache_tmp)
         if not directory_has_files(cache_tmp):
             raise ValueError(f"dataset archive did not contain files: {cache_zip}")
         remove_path(cache_images)
