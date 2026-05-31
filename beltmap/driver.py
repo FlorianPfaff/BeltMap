@@ -31,7 +31,13 @@ from . import (
     track_particle_detections,
 )
 from . import _driver_runtime as rt
-from .advanced_quality import apply_gain_offset, robust_gain_offset
+from .advanced_quality import (
+    apply_gain_offset,
+    robust_gain_offset,
+    smooth_phase_velocity,
+    theil_sen_slope,
+    unwrap_periodic,
+)
 from .detection import detect_particles_from_residual_hysteresis, normalize_detection_mode
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
@@ -77,6 +83,11 @@ PHASE_FIELDS = [
     "frame_index", "image", "phase_px", "phase_fraction", "phase_rad",
     "predicted_phase_px", "correction_px", "phase_drift_px", "loss", "score", "method",
 ]
+PHASE_ESTIMATION_MODES = {
+    "motion_model",
+    "registration",
+    "smoothed_registration",
+}
 VELOCITY_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
     "velocity_y_px_per_frame", "velocity_x_px_per_frame", "speed_px_per_frame",
@@ -339,6 +350,128 @@ def write_detection_outputs(detections_by_frame: list, detection_rows: list[dict
 
 def write_phase_outputs(phase_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_estimates.csv", phase_rows, PHASE_FIELDS)
+
+
+def normalize_phase_estimation_mode(value: str) -> str:
+    """Return the phase source used during residual rendering."""
+
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        "nominal": "motion_model",
+        "fixed": "motion_model",
+        "fixed_nominal_velocity": "motion_model",
+        "motion_model": "motion_model",
+        "registration": "registration",
+        "texture_registration": "registration",
+        "smoothed": "smoothed_registration",
+        "smoothed_registration": "smoothed_registration",
+        "texture_smoothed": "smoothed_registration",
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        choices = ", ".join(sorted(PHASE_ESTIMATION_MODES))
+        raise ValueError(
+            f"PHASE_ESTIMATION_MODE must be one of {choices}; got {value!r}"
+        ) from exc
+
+
+def motion_model_phase_estimate(
+    motion_model: BeltMotionModel,
+    *,
+    frame_index: float,
+) -> PhaseEstimate:
+    """Build an explicit nominal phase estimate to bypass registration."""
+
+    phase = motion_model.phase_at(frame_index)
+    return PhaseEstimate(
+        phase_px=phase,
+        frame_index=frame_index,
+        predicted_phase_px=phase,
+        method="motion_model",
+    )
+
+
+def nominal_phase_estimates(
+    paths: list[Path],
+    motion_model: BeltMotionModel,
+) -> dict[int, PhaseEstimate]:
+    return {
+        index: motion_model_phase_estimate(motion_model, frame_index=float(index))
+        for index, _path in enumerate(paths)
+    }
+
+
+def texture_phase_velocity_summary(
+    phase_rows: list[dict],
+    *,
+    period_px: float,
+    nominal_velocity_px_per_frame: float,
+) -> dict[str, float | str | int | None]:
+    """Estimate belt velocity from registered phase rows for diagnostics."""
+
+    frames: list[float] = []
+    phases: list[float] = []
+    scores: list[float] = []
+    methods: list[str] = []
+    for row in phase_rows:
+        try:
+            frame = float(row["frame_index"])
+            phase = float(row["phase_px"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        frames.append(frame)
+        phases.append(phase)
+        try:
+            score = float(row.get("score", ""))
+        except (TypeError, ValueError):
+            score = float("nan")
+        scores.append(score)
+        methods.append(str(row.get("method", "")))
+    if len(frames) < 2:
+        return {
+            "texture_phase_velocity_status": "insufficient_phase_rows",
+            "texture_phase_velocity_samples": len(frames),
+        }
+    if not any("registration" in method for method in methods):
+        return {
+            "texture_phase_velocity_status": "not_texture_registered",
+            "texture_phase_velocity_samples": len(frames),
+        }
+    frame_arr = np.asarray(frames, dtype=np.float64)
+    phase_arr = np.asarray(phases, dtype=np.float64)
+    score_arr = np.asarray(scores, dtype=np.float64)
+    unwrapped = unwrap_periodic(phase_arr, period_px)
+    velocity = -theil_sen_slope(frame_arr, unwrapped)
+    smoothed = smooth_phase_velocity(
+        phase_arr,
+        period_px=period_px,
+        scores=score_arr if np.isfinite(score_arr).any() else None,
+    )
+    smoothed_velocity = np.asarray(
+        smoothed["velocity_px_per_frame"],
+        dtype=np.float64,
+    )
+    finite_smoothed = smoothed_velocity[np.isfinite(smoothed_velocity)]
+    median_smoothed: float | None = (
+        float(np.median(finite_smoothed))
+        if finite_smoothed.size
+        else None
+    )
+    return {
+        "texture_phase_velocity_status": "ok",
+        "texture_phase_velocity_samples": len(frames),
+        "texture_phase_velocity_px_per_frame": float(velocity),
+        "texture_phase_velocity_error_px_per_frame": float(
+            velocity - nominal_velocity_px_per_frame
+        ),
+        "texture_phase_smoothed_velocity_px_per_frame": median_smoothed,
+        "texture_phase_smoothed_velocity_error_px_per_frame": (
+            float(median_smoothed - nominal_velocity_px_per_frame)
+            if median_smoothed is not None
+            else None
+        ),
+    }
 
 
 def write_phase_refinement_outputs(phase_refinement_rows: list[dict]) -> None:
@@ -1177,6 +1310,9 @@ def main() -> None:
         subpixel_refinement=env_bool("REGISTRATION_SUBPIXEL_REFINEMENT", True),
         robust_normalization=env_bool("REGISTRATION_ROBUST_NORMALIZATION", True),
     )
+    phase_estimation_mode = normalize_phase_estimation_mode(
+        os.getenv("PHASE_ESTIMATION_MODE", "registration")
+    )
     phase_drift_config = PhaseDriftConfig(
         enabled=env_bool("PHASE_DRIFT_ENABLED", True),
         smoothing_alpha=rt.env_float("PHASE_DRIFT_SMOOTHING_ALPHA", 0.15, minimum=0.0),
@@ -1281,6 +1417,7 @@ def main() -> None:
         registration_search_step_px=registration_config.search_step_px,
         registration_subpixel_refinement=registration_config.subpixel_refinement,
         registration_robust_normalization=registration_config.robust_normalization,
+        phase_estimation_mode=phase_estimation_mode,
         phase_drift_enabled=phase_drift_config.enabled,
         phase_drift_smoothing_alpha=phase_drift_config.smoothing_alpha,
         phase_drift_min_score=phase_drift_config.min_score,
@@ -1417,6 +1554,22 @@ def main() -> None:
             source_phase_estimates_csv=reuse_phase_estimates_path,
             phase_estimates=len(reused_phase_estimates),
         )
+    nominal_estimates = (
+        nominal_phase_estimates(paths, motion_model)
+        if reused_phase_estimates is None and phase_estimation_mode == "motion_model"
+        else None
+    )
+    base_phase_estimates = (
+        reused_phase_estimates
+        if reused_phase_estimates is not None
+        else nominal_estimates
+    )
+    if nominal_estimates is not None:
+        rt.emit(
+            "detect",
+            "using nominal motion-model phases without texture registration",
+            phase_estimates=len(nominal_estimates),
+        )
     static_background_map: np.ndarray | None = None
     if reuse_static_background_path is not None:
         static_background_map = np.load(reuse_static_background_path)
@@ -1445,7 +1598,7 @@ def main() -> None:
             belt_map=belt_map,
             motion_model=motion_model,
             region=region,
-            phase_estimates=reused_phase_estimates,
+            phase_estimates=base_phase_estimates,
             registration_config=registration_config,
             residual_config=residual_config,
             sample_frames=static_background_sample_frames,
@@ -1494,7 +1647,7 @@ def main() -> None:
             belt_map=belt_map,
             motion_model=motion_model,
             region=region,
-            phase_estimates=reused_phase_estimates,
+            phase_estimates=base_phase_estimates,
             registration_config=registration_config,
             residual_config=residual_config,
             sample_frames=static_noise_sample_frames,
@@ -1556,7 +1709,7 @@ def main() -> None:
     phase_px_by_frame: list[float] = []
     smoothed_phase_estimates = (
         None
-        if reused_phase_estimates is not None
+        if base_phase_estimates is not None
         else estimate_smoothed_phase_sequence(
             paths=paths,
             region=region,
@@ -1578,15 +1731,19 @@ def main() -> None:
     for frame_index, path in enumerate(paths):
         frame = rt.crop(rt.read_gray(path), region)
         phase_estimate = (
-            reused_phase_estimates[frame_index]
-            if reused_phase_estimates is not None
+            base_phase_estimates[frame_index]
+            if base_phase_estimates is not None
             else (
                 smoothed_phase_estimates[frame_index]
                 if smoothed_phase_estimates is not None
                 else None
             )
         )
-        if phase_estimate is None and phase_drift_config.enabled:
+        if (
+            phase_estimate is None
+            and phase_estimation_mode != "motion_model"
+            and phase_drift_config.enabled
+        ):
             nominal_phase = motion_model.phase_at(float(frame_index))
             predicted_phase = phase_drift_filter.predict(nominal_phase)
             phase_estimate = refine_phase_by_registration(
@@ -1909,6 +2066,16 @@ def main() -> None:
         track_filter_max_abs_x_velocity_px_per_frame=track_filter_config.max_abs_x_velocity_px_per_frame,
     )
 
+    phase_estimate_source = (
+        "loaded"
+        if reused_phase_estimates is not None
+        else phase_estimation_mode
+    )
+    phase_velocity_metadata = texture_phase_velocity_summary(
+        phase_rows,
+        period_px=float(map_height),
+        nominal_velocity_px_per_frame=belt_velocity,
+    )
     metadata = {
         "n_images": len(paths),
         "discovered_frame_count": discovered_frame_count,
@@ -2007,7 +2174,8 @@ def main() -> None:
         "recurrent_artifact_pixels": recurrent_artifact_pixels,
         "n_recurrent_artifact_rejected": recurrent_artifact_rejected,
         "reuse_metadata_path": "" if reuse_metadata_path is None else str(reuse_metadata_path),
-        "phase_estimate_source": "loaded" if reused_phase_estimates is not None else "registration",
+        "phase_estimation_mode": phase_estimation_mode,
+        "phase_estimate_source": phase_estimate_source,
         "n_phase_refinement_rows": len(phase_refinement_rows),
         "n_phase_refinement_used": sum(1 for row in phase_refinement_rows if row.get("used_for_refinement")),
         "n_phase_estimates": len(phase_rows),
@@ -2024,6 +2192,7 @@ def main() -> None:
         "auto_velocity_pair_shifts": pair_shifts,
         "elapsed_s": rt.elapsed_s(),
     }
+    metadata.update(phase_velocity_metadata)
     metadata_path = rt.OUT / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     rt.emit("done", "finished BeltMap image driver", metadata_json=metadata_path)

@@ -169,6 +169,7 @@ underscores.
 | `registration.search_step_px` | `REGISTRATION_SEARCH_STEP_PX` | `--registration-search-step-px` | `0.5` | px | Local phase-registration candidate spacing. Must be positive. |
 | `registration.subpixel_refinement` | `REGISTRATION_SUBPIXEL_REFINEMENT` | `--registration-subpixel-refinement` / `--no-registration-subpixel-refinement` | `true` | bool | Refine the best phase-registration offset with a local quadratic fit. |
 | `registration.robust_normalization` | `REGISTRATION_ROBUST_NORMALIZATION` | `--registration-robust-normalization` / `--no-registration-robust-normalization` | `true` | bool | Normalize high-pass registration images by a robust MAD scale. |
+| `phase.estimation_mode` | `PHASE_ESTIMATION_MODE` | `--phase-estimation-mode` | `registration` | mode | Phase source for residual rendering. `motion_model` uses only the nominal belt velocity, `registration` registers each frame to the belt texture, and `smoothed_registration` is for runs that also enable `phase_smoothing.window_frames`. |
 | `phase_drift.enabled` | `PHASE_DRIFT_ENABLED` | `--phase-drift-enabled` / `--no-phase-drift-enabled` | `true` | bool | Enable online residual phase-drift compensation during detection. |
 | `phase_drift.smoothing_alpha` | `PHASE_DRIFT_SMOOTHING_ALPHA` | `--phase-drift-smoothing-alpha` | `0.15` | alpha | Exponential smoothing factor for accepted drift updates. |
 | `phase_drift.min_score` | `PHASE_DRIFT_MIN_SCORE` | `--phase-drift-min-score` | `0.05` | score | Minimum registration score accepted by the online phase-drift filter. |
@@ -245,8 +246,13 @@ path: first register all frames, then smooth accepted correction estimates with
 the existing robust local-linear smoother, then render residuals from those
 smoothed phases. This increases runtime because frames are read once for phase
 planning and once for residual rendering, so keep it disabled for quick sweeps.
+Use `phase.estimation_mode = "motion_model"` when you need a strict nominal
+velocity baseline without texture registration.
 
 ```toml
+[phase]
+estimation_mode = "smoothed_registration"
+
 [phase_smoothing]
 window_frames = 25
 min_score = 0.05

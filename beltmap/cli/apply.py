@@ -110,6 +110,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("registration_search_step_px", "REGISTRATION_SEARCH_STEP_PX", "float", (("registration_search_step_px",), ("registration", "search_step_px")), "Phase-registration search step in pixels.", "PX"),
     ("registration_subpixel_refinement", "REGISTRATION_SUBPIXEL_REFINEMENT", "bool", (("registration_subpixel_refinement",), ("registration", "subpixel_refinement")), "Refine the best phase-registration offset with a local quadratic fit.", None),
     ("registration_robust_normalization", "REGISTRATION_ROBUST_NORMALIZATION", "bool", (("registration_robust_normalization",), ("registration", "robust_normalization")), "Normalize registration images by a robust MAD scale instead of standard deviation.", None),
+    ("phase_estimation_mode", "PHASE_ESTIMATION_MODE", "path", (("phase_estimation_mode",), ("phase", "estimation_mode")), "Phase source for residual rendering: motion_model, registration, or smoothed_registration.", "MODE"),
     ("phase_refinement_iterations", "PHASE_REFINEMENT_ITERATIONS", "int", (("phase_refinement_iterations",), ("phase_refinement", "iterations")), "Phase-feedback map-refinement iterations. Use 0 to disable.", "N"),
     ("phase_refinement_min_score", "PHASE_REFINEMENT_MIN_SCORE", "float", (("phase_refinement_min_score",), ("phase_refinement", "min_score")), "Minimum registration score accepted for phase-feedback refinement.", "SCORE"),
     ("phase_refinement_max_abs_correction_px", "PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX", "float", (("phase_refinement_max_abs_correction_px",), ("phase_refinement", "max_abs_correction_px")), "Maximum absolute registration correction accepted for phase-feedback refinement. Use 0 to disable this gate.", "PX"),
@@ -280,6 +281,9 @@ search_radius_px = 8.0
 search_step_px = 0.5
 subpixel_refinement = true
 robust_normalization = true
+
+[phase]
+estimation_mode = "registration"
 
 [phase_refinement]
 iterations = 0
