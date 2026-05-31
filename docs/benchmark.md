@@ -48,6 +48,9 @@ bash examples/synthetic_sequence/run.sh
   reconstructed belt map and the true synthetic belt map.
 - `detections`: greedy per-frame IoU matching against synthetic particle boxes,
   with precision, recall, F1, IoU, and centroid-error statistics.
+- `events`: track/event precision, recall, F1, temporal coverage, and
+  `track_fragmentation`, the number of extra predicted event fragments per
+  truth event.
 - `velocity`: representative-track vertical velocity and velocity-ratio errors.
 - `runtime`: elapsed time, throughput, and peak resident memory when available.
 
@@ -55,6 +58,37 @@ Phase errors are circular because the belt coordinate wraps modulo the belt
 period. Belt-map RMSE is minimized over cyclic vertical shifts so a constant
 phase offset in the reconstructed map is not counted as a texture-reconstruction
 error.
+
+## Threshold sweeps
+
+Use `beltmap-sweep` with `--benchmark-truth-path` to turn a parameter grid into
+curve data. For detection thresholds, each row is one operating point:
+
+```bash
+beltmap-sweep \
+  --base-config outputs/synthetic_suite/faint_particles/beltmap.toml \
+  --param detection.threshold=1.5,2.0,2.5,3.0,3.5,4.0 \
+  --output-root outputs/threshold_sweep/faint_particles \
+  --execute \
+  --benchmark-truth-path outputs/synthetic_suite/faint_particles/synthetic_metadata.json
+```
+
+This writes:
+
+```text
+outputs/threshold_sweep/faint_particles/
+  sweep_manifest.json
+  sweep_metrics.csv
+  sweep_metrics.json
+  sweep_report.md
+```
+
+`sweep_metrics.csv` includes detection precision/recall/F1, false positives per
+frame, event F1, filtered event F1, track fragmentation, velocity bias, phase
+RMSE, and map RMSE. Plot these columns as precision-recall, F1-vs-threshold,
+false-positives-vs-recall, fragmentation-vs-threshold, and
+velocity-bias-vs-threshold curves. This is stronger evidence than reporting one
+F1 value at one arbitrary threshold.
 
 ## Why synthetic first?
 

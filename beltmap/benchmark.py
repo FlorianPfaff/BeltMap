@@ -623,6 +623,18 @@ def event_metrics(
     else:
         f1 = 2 * precision * recall / (precision + recall)
 
+    fragments_by_truth = {truth_index: 0 for truth_index in range(len(truth_events))}
+    for _score, _pred_index, truth_index, _comparison in candidates:
+        fragments_by_truth[truth_index] += 1
+    extra_fragments = sum(max(0, count - 1) for count in fragments_by_truth.values())
+    fragmented_truth_events = sum(1 for count in fragments_by_truth.values() if count > 1)
+    mean_fragments = (
+        None
+        if not truth_events
+        else float(np.mean(np.asarray(list(fragments_by_truth.values()), dtype=np.float64)))
+    )
+    track_fragmentation = None if not truth_events else float(extra_fragments / len(truth_events))
+
     def mean_field(name: str) -> float | None:
         values = [finite_float(match.get(name)) for match in matches]
         finite = [value for value in values if value is not None]
@@ -638,6 +650,10 @@ def event_metrics(
         "matched_events": true_positives,
         "false_positive_events": false_positives,
         "false_negative_events": false_negatives,
+        "fragmented_truth_events": fragmented_truth_events,
+        "extra_fragment_events": extra_fragments,
+        "mean_fragments_per_truth_event": mean_fragments,
+        "track_fragmentation": track_fragmentation,
         "precision": None if precision is None else float(precision),
         "recall": None if recall is None else float(recall),
         "f1": None if f1 is None else float(f1),
@@ -1081,10 +1097,12 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| matched events | {format_value(events.get('matched_events'))} |",
             f"| truth events | {format_value(events.get('truth_events'))} |",
             f"| predicted events | {format_value(events.get('predicted_events'))} |",
+            f"| event track fragmentation | {format_value(events.get('track_fragmentation'))} |",
             f"| filtered event F1 | {format_value(filtered_events.get('f1'))} |",
             f"| filtered event prediction source | {format_value(filtered_events.get('prediction_source'))} |",
             f"| filtered matched events | {format_value(filtered_events.get('matched_events'))} |",
             f"| filtered predicted events | {format_value(filtered_events.get('predicted_events'))} |",
+            f"| filtered event track fragmentation | {format_value(filtered_events.get('track_fragmentation'))} |",
             f"| mean event temporal IoU | {format_value(events.get('mean_temporal_iou'))} |",
             f"| mean event truth-frame coverage | {format_value(events.get('mean_truth_frame_coverage'))} |",
             f"| mean event latency [frames] | {format_value(events.get('mean_latency_frames'))} |",

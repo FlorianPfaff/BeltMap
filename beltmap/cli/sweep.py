@@ -1,17 +1,51 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import itertools
 import json
+import math
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
+
+from beltmap.benchmark import generate_benchmark_report, read_json
 
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
+
+
+SWEEP_METRIC_FIELDS = [
+    "run_index",
+    "output_dir",
+    "overrides",
+    "detection_threshold",
+    "detection_low_threshold",
+    "detection_precision",
+    "detection_recall",
+    "detection_f1",
+    "false_positives_per_frame",
+    "event_precision",
+    "event_recall",
+    "event_f1",
+    "filtered_event_precision",
+    "filtered_event_recall",
+    "filtered_event_f1",
+    "track_fragmentation",
+    "filtered_track_fragmentation",
+    "fragmented_truth_events",
+    "mean_fragments_per_truth_event",
+    "velocity_y_error_px_per_frame",
+    "truth_matched_velocity_y_error_px_per_frame",
+    "filtered_velocity_y_error_px_per_frame",
+    "filtered_truth_matched_velocity_y_error_px_per_frame",
+    "phase_rmse_px",
+    "map_rmse_gray",
+]
 
 
 def parse_scalar(value: str) -> Any:
@@ -49,6 +83,15 @@ def set_dotted(data: dict[str, Any], dotted_key: str, value: Any) -> None:
     target[keys[-1]] = value
 
 
+def get_dotted(data: dict[str, Any], dotted_key: str) -> Any:
+    target: Any = data
+    for key in dotted_key.split("."):
+        if not isinstance(target, dict) or key not in target:
+            return None
+        target = target[key]
+    return target
+
+
 def toml_value(value: Any) -> str:
     if value is None:
         return '""'
@@ -83,6 +126,160 @@ def write_toml(data: dict[str, Any], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def finite_number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def section_value(metrics: dict[str, Any], section: str, key: str) -> Any:
+    data = metrics.get(section)
+    if not isinstance(data, dict):
+        return None
+    return data.get(key)
+
+
+def false_positives_per_frame(metrics: dict[str, Any]) -> float | None:
+    false_positives = finite_number(section_value(metrics, "detections", "false_positives"))
+    frame_count = finite_number(section_value(metrics, "case", "frames"))
+    if frame_count in (None, 0):
+        frame_count = finite_number(section_value(metrics, "runtime", "frames"))
+    if frame_count in (None, 0):
+        frame_count = finite_number(section_value(metrics, "run", "n_images"))
+    if false_positives is None or frame_count in (None, 0):
+        return None
+    return float(false_positives / frame_count)
+
+
+def compact_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def benchmark_summary_row(
+    *,
+    run_index: int,
+    output_dir: Path,
+    config: dict[str, Any],
+    overrides: dict[str, Any],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "run_index": run_index,
+        "output_dir": str(output_dir),
+        "overrides": compact_json(overrides),
+        "detection_threshold": get_dotted(config, "detection.threshold"),
+        "detection_low_threshold": get_dotted(config, "detection.low_threshold"),
+        "detection_precision": section_value(metrics, "detections", "precision"),
+        "detection_recall": section_value(metrics, "detections", "recall"),
+        "detection_f1": section_value(metrics, "detections", "f1"),
+        "false_positives_per_frame": false_positives_per_frame(metrics),
+        "event_precision": section_value(metrics, "events", "precision"),
+        "event_recall": section_value(metrics, "events", "recall"),
+        "event_f1": section_value(metrics, "events", "f1"),
+        "filtered_event_precision": section_value(metrics, "filtered_events", "precision"),
+        "filtered_event_recall": section_value(metrics, "filtered_events", "recall"),
+        "filtered_event_f1": section_value(metrics, "filtered_events", "f1"),
+        "track_fragmentation": section_value(metrics, "events", "track_fragmentation"),
+        "filtered_track_fragmentation": section_value(
+            metrics,
+            "filtered_events",
+            "track_fragmentation",
+        ),
+        "fragmented_truth_events": section_value(metrics, "events", "fragmented_truth_events"),
+        "mean_fragments_per_truth_event": section_value(
+            metrics,
+            "events",
+            "mean_fragments_per_truth_event",
+        ),
+        "velocity_y_error_px_per_frame": section_value(
+            metrics,
+            "velocity",
+            "velocity_y_error_px_per_frame",
+        ),
+        "truth_matched_velocity_y_error_px_per_frame": section_value(
+            metrics,
+            "velocity",
+            "truth_matched_velocity_y_error_px_per_frame",
+        ),
+        "filtered_velocity_y_error_px_per_frame": section_value(
+            metrics,
+            "filtered_velocity",
+            "velocity_y_error_px_per_frame",
+        ),
+        "filtered_truth_matched_velocity_y_error_px_per_frame": section_value(
+            metrics,
+            "filtered_velocity",
+            "truth_matched_velocity_y_error_px_per_frame",
+        ),
+        "phase_rmse_px": section_value(metrics, "phase", "rmse_px"),
+        "map_rmse_gray": section_value(metrics, "belt_map", "rmse_gray"),
+    }
+
+
+def csv_value(value: Any) -> Any:
+    return "" if value is None else value
+
+
+def write_summary_csv(rows: list[dict[str, Any]], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SWEEP_METRIC_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: csv_value(row.get(field)) for field in SWEEP_METRIC_FIELDS})
+
+
+def write_summary_json(rows: list[dict[str, Any]], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+
+def markdown_value(value: Any) -> str:
+    if value is None or value == "":
+        return "n/a"
+    if isinstance(value, float):
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def write_summary_report(rows: list[dict[str, Any]], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# BeltMap benchmark sweep",
+        "",
+        "Each row is one executed parameter-sweep run scored against synthetic truth.",
+        "The table is intended for precision-recall, F1-threshold, FP-recall,",
+        "fragmentation-threshold, and velocity-bias-threshold plots.",
+        "",
+        "| Run | Threshold | Precision | Recall | F1 | FP/frame | Event F1 | Track fragmentation | Velocity bias | Map RMSE |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    markdown_value(row.get("run_index")),
+                    markdown_value(row.get("detection_threshold")),
+                    markdown_value(row.get("detection_precision")),
+                    markdown_value(row.get("detection_recall")),
+                    markdown_value(row.get("detection_f1")),
+                    markdown_value(row.get("false_positives_per_frame")),
+                    markdown_value(row.get("event_f1")),
+                    markdown_value(row.get("track_fragmentation")),
+                    markdown_value(row.get("truth_matched_velocity_y_error_px_per_frame")),
+                    markdown_value(row.get("map_rmse_gray")),
+                ]
+            )
+            + " |"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="beltmap-sweep",
@@ -92,6 +289,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--param", action="append", default=[], help="Dotted key and comma-separated values, e.g. detection.threshold=3.5,4.0.")
     parser.add_argument("--output-root", type=Path, default=Path("outputs/sweeps"), help="Directory for generated run configs and outputs.")
     parser.add_argument("--execute", action="store_true", help="Run beltmap-apply and beltmap-validate for each generated config.")
+    parser.add_argument("--benchmark-truth-path", type=Path, help="Synthetic truth JSON. When set, benchmark each run and write sweep metrics.")
+    parser.add_argument("--benchmark-iou-threshold", type=float, default=0.25, help="IoU threshold for synthetic benchmark matching. Default: 0.25.")
+    parser.add_argument("--summary-csv", type=Path, help="Benchmark sweep CSV path. Default: OUTPUT_ROOT/sweep_metrics.csv.")
+    parser.add_argument("--summary-json", type=Path, help="Benchmark sweep JSON path. Default: OUTPUT_ROOT/sweep_metrics.json.")
+    parser.add_argument("--summary-report", type=Path, help="Benchmark sweep Markdown report path. Default: OUTPUT_ROOT/sweep_report.md.")
     return parser
 
 
@@ -101,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     params = [parse_param(item) for item in args.param]
     args.output_root.mkdir(parents=True, exist_ok=True)
     manifest: list[dict[str, Any]] = []
+    summary_rows: list[dict[str, Any]] = []
     keys = [key for key, _values in params]
     value_grid = itertools.product(*(values for _key, values in params)) if params else [()]
     for run_index, values in enumerate(value_grid):
@@ -115,11 +318,31 @@ def main(argv: list[str] | None = None) -> int:
         write_toml(config, config_path)
         manifest.append({"run_index": run_index, "config": str(config_path), "output_dir": str(run_dir), "overrides": overrides})
         if args.execute:
-            subprocess.run(["beltmap-apply", "--config", str(config_path)], check=True)
+            subprocess.run([sys.executable, "-m", "beltmap.cli.apply", "--config", str(config_path)], check=True)
             if shutil.which("beltmap-validate"):
                 subprocess.run(["beltmap-validate", "--output-dir", str(run_dir)], check=True)
+        if args.benchmark_truth_path is not None:
+            artifacts = generate_benchmark_report(
+                output_dir=run_dir,
+                truth_path=args.benchmark_truth_path,
+                iou_threshold=args.benchmark_iou_threshold,
+            )
+            metrics = read_json(artifacts.metrics)
+            summary_rows.append(
+                benchmark_summary_row(
+                    run_index=run_index,
+                    output_dir=run_dir,
+                    config=config,
+                    overrides=overrides,
+                    metrics=metrics,
+                )
+            )
     manifest_path = args.output_root / "sweep_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if summary_rows:
+        write_summary_csv(summary_rows, args.summary_csv or args.output_root / "sweep_metrics.csv")
+        write_summary_json(summary_rows, args.summary_json or args.output_root / "sweep_metrics.json")
+        write_summary_report(summary_rows, args.summary_report or args.output_root / "sweep_report.md")
     print(manifest_path)
     return 0
 

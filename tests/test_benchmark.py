@@ -547,6 +547,46 @@ def test_event_metrics_distinguishes_frame_coverage_from_event_recall():
     assert metrics["mean_latency_frames"] == pytest.approx(1.0)
 
 
+def test_event_metrics_reports_track_fragmentation():
+    truth = {
+        "particles": [
+            {"event_id": "a", "frame_index": 0, "top": 1, "left": 1, "bottom": 3, "right": 3},
+            {"event_id": "a", "frame_index": 1, "top": 2, "left": 1, "bottom": 4, "right": 3},
+        ]
+    }
+    detections = [
+        {
+            "track_id": "fragment-0",
+            "frame_index": "0",
+            "bbox_top": "1",
+            "bbox_left": "1",
+            "bbox_bottom": "3",
+            "bbox_right": "3",
+            "y": "1.5",
+            "x": "1.5",
+        },
+        {
+            "track_id": "fragment-1",
+            "frame_index": "1",
+            "bbox_top": "2",
+            "bbox_left": "1",
+            "bbox_bottom": "4",
+            "bbox_right": "3",
+            "y": "2.5",
+            "x": "1.5",
+        },
+    ]
+
+    metrics = event_metrics(detections, truth, iou_threshold=0.25)
+
+    assert metrics["truth_events"] == 1
+    assert metrics["predicted_events"] == 2
+    assert metrics["fragmented_truth_events"] == 1
+    assert metrics["extra_fragment_events"] == 1
+    assert metrics["mean_fragments_per_truth_event"] == pytest.approx(2.0)
+    assert metrics["track_fragmentation"] == pytest.approx(1.0)
+
+
 def test_generate_benchmark_report_writes_json_and_markdown(tmp_path):
     output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
 
