@@ -50,6 +50,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("photometric_trim_fraction", "PHOTOMETRIC_TRIM_FRACTION", "float", (("photometric_trim_fraction",), ("photometric", "trim_fraction")), "Fraction of largest photometric-fit residuals trimmed on each iteration.", "FRACTION"),
     ("photometric_max_iterations", "PHOTOMETRIC_MAX_ITERATIONS", "int", (("photometric_max_iterations",), ("photometric", "max_iterations")), "Maximum robust photometric gain/offset fitting iterations.", "N"),
     ("photometric_min_pixels", "PHOTOMETRIC_MIN_PIXELS", "int", (("photometric_min_pixels",), ("photometric", "min_pixels")), "Minimum valid pixels required for a photometric gain/offset fit.", "N"),
+    ("detection_local_illumination_correction", "DETECTION_LOCAL_ILLUMINATION_CORRECTION", "bool", (("detection_local_illumination_correction",), ("detection", "local_illumination_correction")), "Apply local residual-median illumination correction before final detection.", None),
+    ("detection_local_illumination_tile_px", "DETECTION_LOCAL_ILLUMINATION_TILE_PX", "int", (("detection_local_illumination_tile_px",), ("detection", "local_illumination_tile_px")), "Tile size used for local illumination correction before final detection.", "PX"),
     ("min_track_length", "MIN_TRACK_LENGTH", "int", (("min_track_length",), ("tracking", "min_track_length")), "Minimum detections per track for velocity estimates.", "N"),
     ("max_match_distance_px", "MAX_MATCH_DISTANCE_PX", "float", (("max_match_distance_px",), ("tracking", "max_match_distance_px")), "Optional tracking match distance. Omit to derive it from belt speed.", "PX"),
     ("tracking_max_frame_gap", "TRACKING_MAX_FRAME_GAP", "float", (("tracking_max_frame_gap",), ("tracking", "max_frame_gap")), "Maximum selected-frame gap allowed when linking detections into one track.", "FRAMES"),
@@ -67,6 +69,8 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("map_reconstruction_trim_fraction", "MAP_RECONSTRUCTION_TRIM_FRACTION", "float", (("map_reconstruction_trim_fraction",), ("map", "reconstruction_trim_fraction")), "Symmetric per-pixel trim fraction for robust belt-map reconstruction. Use 0 for the arithmetic mean.", "FRACTION"),
     ("map_fractional_splat", "MAP_FRACTIONAL_SPLAT", "bool", (("map_fractional_splat",), ("map", "fractional_splat")), "Use fractional row weights when accumulating belt-map pixels.", None),
     ("map_frame_median_offset_correction", "MAP_FRAME_MEDIAN_OFFSET_CORRECTION", "bool", (("map_frame_median_offset_correction",), ("map", "frame_median_offset_correction")), "Normalize sampled frames by a robust median brightness offset before belt-map accumulation.", None),
+    ("map_local_illumination_correction", "MAP_LOCAL_ILLUMINATION_CORRECTION", "bool", (("map_local_illumination_correction",), ("map", "local_illumination_correction")), "Estimate and subtract a low-frequency additive illumination field during map accumulation.", None),
+    ("map_local_illumination_tile_px", "MAP_LOCAL_ILLUMINATION_TILE_PX", "int", (("map_local_illumination_tile_px",), ("map", "local_illumination_tile_px")), "Tile size used for local residual-median illumination correction.", "PX"),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
     ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
     ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, negative, absolute, or hysteresis_abs.", "MODE"),
@@ -189,6 +193,8 @@ min_bbox_extent = 0.0
 split_merged_components = false
 split_min_projection_gap_px = 2
 split_min_component_area_px = 0
+local_illumination_correction = false
+local_illumination_tile_px = 64
 
 [residual]
 noise_radius_px = 15
@@ -222,6 +228,8 @@ adaptive_candidate_frames = 0
 reconstruction_trim_fraction = 0.0
 fractional_splat = true
 frame_median_offset_correction = false
+local_illumination_correction = false
+local_illumination_tile_px = 64
 mask_iterations = 1
 # Set explicitly in templates; omit or leave empty to follow detection.mode.
 particle_mask_mode = "positive"

@@ -27,6 +27,8 @@ MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV = "MAP_ADAPTIVE_CANDIDATE_FRAMES"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV = "MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB"
 MAP_FRAME_MEDIAN_OFFSET_CORRECTION_ENV = "MAP_FRAME_MEDIAN_OFFSET_CORRECTION"
+MAP_LOCAL_ILLUMINATION_CORRECTION_ENV = "MAP_LOCAL_ILLUMINATION_CORRECTION"
+MAP_LOCAL_ILLUMINATION_TILE_PX_ENV = "MAP_LOCAL_ILLUMINATION_TILE_PX"
 PHASE_REFINEMENT_FIELDS = [
     "iteration", "frame_index", "predicted_phase_px", "raw_correction_px",
     "smoothed_correction_px", "refined_phase_px", "loss", "score",
@@ -174,6 +176,8 @@ def build_belt_map(
     map_trim_fraction: float | None = None,
     fractional_splat: bool = True,
     frame_median_offset_correction: bool = False,
+    local_illumination_correction: bool = False,
+    local_illumination_tile_px: int = 64,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
@@ -196,6 +200,8 @@ def build_belt_map(
         map_trim_fraction=map_trim_fraction,
         fractional_splat=fractional_splat,
         frame_median_offset_correction=frame_median_offset_correction,
+        local_illumination_correction=local_illumination_correction,
+        local_illumination_tile_px=local_illumination_tile_px,
         phase_feedback_config=phase_feedback_config,
     )
     if result.phase_refinement_rows:
@@ -230,6 +236,8 @@ def build_belt_map_result(
     map_trim_fraction: float | None = None,
     fractional_splat: bool = True,
     frame_median_offset_correction: bool = False,
+    local_illumination_correction: bool = False,
+    local_illumination_tile_px: int = 64,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
@@ -249,6 +257,8 @@ def build_belt_map_result(
         raise ValueError("robust_huber_delta must be positive")
     if robust_min_scale <= 0:
         raise ValueError("robust_min_scale must be positive")
+    if local_illumination_tile_px < 1:
+        raise ValueError("local_illumination_tile_px must be positive")
     cfg = _validate_phase_feedback_config(
         phase_feedback_config if phase_feedback_config is not None else _env_phase_feedback_config()
     )
@@ -294,6 +304,8 @@ def build_belt_map_result(
         robust_min_scale=robust_min_scale,
         fractional_splat=fractional_splat,
         frame_median_offset_correction=frame_median_offset_correction,
+        local_illumination_correction=local_illumination_correction,
+        local_illumination_tile_px=local_illumination_tile_px,
         sample_strategy=sampling_strategy,
         adaptive_candidate_frames=map_adaptive_candidate_frames,
         phase_refinement_iterations=cfg.iterations,
@@ -317,6 +329,8 @@ def build_belt_map_result(
         map_trim_fraction=map_trim_fraction,
         fractional_splat=fractional_splat,
         frame_median_offset_correction=frame_median_offset_correction,
+        local_illumination_correction=local_illumination_correction,
+        local_illumination_tile_px=local_illumination_tile_px,
         pass_label="initial",
     )
     phase_by_frame: np.ndarray | None = None
@@ -358,6 +372,8 @@ def build_belt_map_result(
                 map_trim_fraction=map_trim_fraction,
                 fractional_splat=fractional_splat,
                 frame_median_offset_correction=frame_median_offset_correction,
+                local_illumination_correction=local_illumination_correction,
+                local_illumination_tile_px=local_illumination_tile_px,
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
             )
@@ -389,6 +405,8 @@ def build_belt_map_result(
             map_trim_fraction=map_trim_fraction,
             fractional_splat=fractional_splat,
             frame_median_offset_correction=frame_median_offset_correction,
+            local_illumination_correction=local_illumination_correction,
+            local_illumination_tile_px=local_illumination_tile_px,
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
         )
@@ -421,6 +439,8 @@ def build_belt_map_result(
                 map_trim_fraction=map_trim_fraction,
                 fractional_splat=fractional_splat,
                 frame_median_offset_correction=frame_median_offset_correction,
+                local_illumination_correction=local_illumination_correction,
+                local_illumination_tile_px=local_illumination_tile_px,
                 phase_by_frame=phase_by_frame,
                 robust_reference_belt_map=belt_map,
                 robust_huber_delta=robust_huber_delta,
@@ -465,6 +485,8 @@ def accumulate_belt_map(
     map_trim_fraction: float = 0.0,
     fractional_splat: bool = True,
     frame_median_offset_correction: bool = False,
+    local_illumination_correction: bool = False,
+    local_illumination_tile_px: int = 64,
     phase_by_frame: Sequence[float] | Mapping[int, float] | None = None,
     robust_reference_belt_map: np.ndarray | None = None,
     robust_huber_delta: float = 3.0,
@@ -483,6 +505,8 @@ def accumulate_belt_map(
         raise ValueError("robust_huber_delta must be positive")
     if use_huber_weights and robust_min_scale <= 0:
         raise ValueError("robust_min_scale must be positive")
+    if local_illumination_tile_px < 1:
+        raise ValueError("local_illumination_tile_px must be positive")
     if not 0.0 <= map_trim_fraction < 0.5:
         raise ValueError(
             f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be in [0, 0.5), "
@@ -519,21 +543,30 @@ def accumulate_belt_map(
     offset_reference_map = previous_belt_map
     if offset_reference_map is None:
         offset_reference_map = robust_reference_belt_map
+    use_local_illumination_correction = (
+        local_illumination_correction and offset_reference_map is not None
+    )
     use_residual_offset_correction = (
-        frame_median_offset_correction and offset_reference_map is not None
+        frame_median_offset_correction
+        and offset_reference_map is not None
+        and not use_local_illumination_correction
     )
     median_reference = (
         _sample_frame_median_reference(paths=paths, samples=samples, region=region)
-        if frame_median_offset_correction and not use_residual_offset_correction
+        if frame_median_offset_correction
+        and not use_residual_offset_correction
+        and not use_local_illumination_correction
         else None
     )
-    if frame_median_offset_correction:
+    if frame_median_offset_correction or local_illumination_correction:
         emit(
             "belt_map",
-            "using frame offset correction for map accumulation",
+            "using illumination correction for map accumulation",
             pass_label=pass_label,
             median_reference=median_reference,
             residual_reference_map=use_residual_offset_correction,
+            local_illumination_correction=use_local_illumination_correction,
+            local_illumination_tile_px=local_illumination_tile_px,
         )
     for sample_number, index in enumerate(samples, start=1):
         frame = crop(read_gray(paths[index]), region).astype(np.float64, copy=False)
@@ -545,7 +578,33 @@ def accumulate_belt_map(
             phase_by_frame=phase_by_frame,
         )
         expected = None
-        if use_residual_offset_correction:
+        valid = np.ones(frame.shape, dtype=bool)
+        particle_mask_applied = False
+        if use_local_illumination_correction:
+            expected = render_belt_view(offset_reference_map, phase, crop_height)
+            residual = generate_residual_image(frame, expected, config=residual_config)
+            field_valid = np.asarray(residual.mask, dtype=bool)
+            if use_particle_mask:
+                particle_mask = detect_map_particle_mask(
+                    residual,
+                    mode=mask_mode,
+                    threshold=mask_threshold,
+                    grow_threshold=mask_grow_threshold,
+                    dilation_px=mask_dilation_px,
+                    margin_px=mask_margin_px,
+                    min_area_px=mask_min_area_px,
+                )
+                valid &= ~particle_mask
+                field_valid &= ~particle_mask
+                masked_pixels += int(np.count_nonzero(particle_mask))
+                particle_mask_applied = True
+            illumination_field = estimate_local_illumination_field(
+                frame - expected,
+                field_valid,
+                tile_px=local_illumination_tile_px,
+            )
+            frame = frame - illumination_field
+        elif use_residual_offset_correction:
             expected = render_belt_view(offset_reference_map, phase, crop_height)
             frame_offset = _finite_median(frame - expected)
             if frame_offset is not None:
@@ -554,8 +613,7 @@ def accumulate_belt_map(
             frame_median = _finite_median(frame)
             if frame_median is not None:
                 frame = frame - (frame_median - median_reference)
-        valid = np.ones(frame.shape, dtype=bool)
-        if use_particle_mask:
+        if use_particle_mask and not particle_mask_applied:
             if expected is None:
                 expected = render_belt_view(previous_belt_map, phase, crop_height)
             residual = generate_residual_image(frame, expected, config=residual_config)
@@ -704,6 +762,73 @@ def _finite_median(values: np.ndarray) -> float | None:
     if finite.size == 0:
         return None
     return float(np.median(finite))
+
+
+def estimate_local_illumination_field(
+    residual: np.ndarray,
+    valid: np.ndarray,
+    *,
+    tile_px: int,
+) -> np.ndarray:
+    """Return a low-frequency additive residual field from tile medians."""
+
+    values = np.asarray(residual, dtype=np.float64)
+    valid_mask = np.asarray(valid, dtype=bool) & np.isfinite(values)
+    if values.ndim != 2:
+        raise ValueError("residual must be a 2-D array")
+    if valid_mask.shape != values.shape:
+        raise ValueError("valid must have the same shape as residual")
+    if tile_px < 1:
+        raise ValueError("tile_px must be positive")
+    if not np.any(valid_mask):
+        return np.zeros(values.shape, dtype=np.float64)
+
+    height, width = values.shape
+    y_starts = list(range(0, height, tile_px))
+    x_starts = list(range(0, width, tile_px))
+    tile_values = np.empty((len(y_starts), len(x_starts)), dtype=np.float64)
+    global_median = float(np.median(values[valid_mask]))
+    for y_index, y0 in enumerate(y_starts):
+        y1 = min(height, y0 + tile_px)
+        for x_index, x0 in enumerate(x_starts):
+            x1 = min(width, x0 + tile_px)
+            tile_mask = valid_mask[y0:y1, x0:x1]
+            if np.any(tile_mask):
+                tile_values[y_index, x_index] = float(
+                    np.median(values[y0:y1, x0:x1][tile_mask])
+                )
+            else:
+                tile_values[y_index, x_index] = global_median
+
+    x_centers = np.asarray(
+        [0.5 * (x0 + min(width, x0 + tile_px) - 1) for x0 in x_starts],
+        dtype=np.float64,
+    )
+    y_centers = np.asarray(
+        [0.5 * (y0 + min(height, y0 + tile_px) - 1) for y0 in y_starts],
+        dtype=np.float64,
+    )
+    x_full = np.arange(width, dtype=np.float64)
+    y_full = np.arange(height, dtype=np.float64)
+    row_fields = np.empty((len(y_starts), width), dtype=np.float64)
+    for y_index in range(len(y_starts)):
+        row_fields[y_index] = np.interp(
+            x_full,
+            x_centers,
+            tile_values[y_index],
+            left=tile_values[y_index, 0],
+            right=tile_values[y_index, -1],
+        )
+    field = np.empty(values.shape, dtype=np.float64)
+    for x_index in range(width):
+        field[:, x_index] = np.interp(
+            y_full,
+            y_centers,
+            row_fields[:, x_index],
+            left=row_fields[0, x_index],
+            right=row_fields[-1, x_index],
+        )
+    return field
 
 
 def _trim_belt_map_accumulators(

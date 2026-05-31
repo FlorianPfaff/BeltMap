@@ -26,6 +26,19 @@ CASES = {
         "photometric": True,
         "map_frame_median_offset_correction": True,
     },
+    "local_illumination_drift": {
+        "texture": 1.0,
+        "particle_signal": 80.0,
+        "noise": 2.0,
+        "illumination": 0.0,
+        "local_illumination": 24.0,
+        "particles": 1,
+        "velocity": 2.0,
+        "photometric": True,
+        "map_frame_median_offset_correction": True,
+        "map_local_illumination_correction": True,
+        "map_local_illumination_tile_px": 16,
+    },
     "faint_particles": {"texture": 1.0, "particle_signal": 25.0, "noise": 3.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "high_density": {"texture": 1.0, "particle_signal": 70.0, "noise": 2.0, "illumination": 0.0, "particles": 5, "velocity": 2.0},
     "negative_velocity": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": -2.0},
@@ -61,6 +74,13 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
         w1 = rows - row0
         frame = (1.0 - w1[:, None]) * belt_map[row0] + w1[:, None] * belt_map[row1]
         frame += float(params["illumination"]) * math.sin(2 * math.pi * frame_index / max(frames, 1))
+        local_illumination = float(params.get("local_illumination", 0.0))
+        if local_illumination:
+            phase_fraction = 2 * math.pi * frame_index / max(frames, 1)
+            yy = np.linspace(-1.0, 1.0, height, dtype=np.float64)[:, None]
+            xx = np.linspace(-1.0, 1.0, width, dtype=np.float64)[None, :]
+            field_pattern = 0.55 * xx + 0.35 * yy + 0.25 * xx * yy
+            frame += local_illumination * math.sin(phase_fraction) * field_pattern
         boxes: list[dict[str, float | str]] = []
         for particle in range(int(params["particles"])):
             vertical_position = 8 + particle * 17 + frame_index * particle_motion_step_px
@@ -113,6 +133,8 @@ def write_config(
     detection_split_min_component_area_px: int = 4,
     track_filter_min_length: int = 3,
     map_frame_median_offset_correction: bool = False,
+    map_local_illumination_correction: bool = False,
+    map_local_illumination_tile_px: int = 64,
     map_particle_mask_mode: str = "positive",
     map_particle_mask_grow_threshold: float = 2.0,
     map_particle_mask_margin_px: int = 1,
@@ -124,6 +146,8 @@ def write_config(
         raise ValueError("map_particle_mask_grow_threshold must be non-negative")
     if map_particle_mask_margin_px < 0:
         raise ValueError("map_particle_mask_margin_px must be non-negative")
+    if map_local_illumination_tile_px < 1:
+        raise ValueError("map_local_illumination_tile_px must be positive")
     root.mkdir(parents=True, exist_ok=True)
     config = f"""[paths]
 image_dir = {json.dumps(str(root / "images"))}
@@ -158,6 +182,8 @@ min_length = {track_filter_min_length}
 [map]
 sample_frames = {frames}
 frame_median_offset_correction = {str(map_frame_median_offset_correction).lower()}
+local_illumination_correction = {str(map_local_illumination_correction).lower()}
+local_illumination_tile_px = {map_local_illumination_tile_px}
 mask_iterations = 1
 particle_mask_threshold = 3.0
 particle_mask_mode = {json.dumps(map_particle_mask_mode)}
@@ -186,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--map-particle-mask-mode", choices=MAP_PARTICLE_MASK_MODES, default="positive")
     parser.add_argument("--map-particle-mask-grow-threshold", type=float, default=2.0)
     parser.add_argument("--map-particle-mask-margin-px", type=int, default=1)
+    parser.add_argument("--map-local-illumination-correction", action="store_true")
+    parser.add_argument("--map-local-illumination-tile-px", type=int, default=64)
     parser.add_argument("--execute", action="store_true", help="Run beltmap-apply and beltmap-benchmark after generating each case.")
     return parser
 
@@ -207,6 +235,16 @@ def main(argv: list[str] | None = None) -> int:
             map_frame_median_offset_correction=bool(
                 CASES[case].get("map_frame_median_offset_correction", False)
             ),
+            map_local_illumination_correction=(
+                args.map_local_illumination_correction
+                or bool(CASES[case].get("map_local_illumination_correction", False))
+            ),
+            map_local_illumination_tile_px=int(
+                CASES[case].get(
+                    "map_local_illumination_tile_px",
+                    args.map_local_illumination_tile_px,
+                )
+            ),
             map_particle_mask_mode=args.map_particle_mask_mode,
             map_particle_mask_grow_threshold=args.map_particle_mask_grow_threshold,
             map_particle_mask_margin_px=args.map_particle_mask_margin_px,
@@ -220,6 +258,16 @@ def main(argv: list[str] | None = None) -> int:
                 "map_particle_mask_mode": args.map_particle_mask_mode,
                 "map_particle_mask_grow_threshold": args.map_particle_mask_grow_threshold,
                 "map_particle_mask_margin_px": args.map_particle_mask_margin_px,
+                "map_local_illumination_correction": (
+                    args.map_local_illumination_correction
+                    or bool(CASES[case].get("map_local_illumination_correction", False))
+                ),
+                "map_local_illumination_tile_px": int(
+                    CASES[case].get(
+                        "map_local_illumination_tile_px",
+                        args.map_local_illumination_tile_px,
+                    )
+                ),
             }
         )
         if args.execute:

@@ -7,6 +7,7 @@ from beltmap._driver_map import (
     _accumulate_frame_linear,
     _accumulate_frame_nearest,
     accumulate_belt_map,
+    estimate_local_illumination_field,
     validate_map_trim_fraction,
 )
 
@@ -138,6 +139,62 @@ def test_frame_median_offset_correction_uses_residual_median_with_reference_map(
     np.testing.assert_allclose(corrected_map, base.astype(np.float32))
     assert coverage["masked_pixels"] == 0
     assert coverage["contributed_pixels"] == 12
+
+
+def test_local_illumination_field_interpolates_tile_medians():
+    residual = np.tile(np.asarray([-20.0, -10.0, 10.0, 20.0]), (4, 1))
+    valid = np.ones(residual.shape, dtype=bool)
+
+    field = estimate_local_illumination_field(residual, valid, tile_px=2)
+
+    assert field.shape == residual.shape
+    assert field[0, 0] == pytest.approx(-15.0)
+    assert field[0, -1] == pytest.approx(15.0)
+    assert np.all(np.diff(field[0]) >= 0)
+
+
+def test_local_illumination_correction_reduces_spatial_additive_field(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    base = np.full((4, 4), 100.0, dtype=np.float32)
+    local_field = np.tile(np.asarray([-20.0, -10.0, 10.0, 20.0]), (4, 1))
+    frame = base + local_field
+    path = tmp_path / "frame_000.png"
+    _write_gray_array(path, frame)
+
+    common_kwargs = dict(
+        paths=[path],
+        samples=[0],
+        region=(0, 0, 4, 4),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=4.0,
+        map_height=4,
+        previous_belt_map=base,
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+    )
+
+    uncorrected_map, _uncorrected_coverage = accumulate_belt_map(**common_kwargs)
+    corrected_map, corrected_coverage = accumulate_belt_map(
+        **common_kwargs,
+        local_illumination_correction=True,
+        local_illumination_tile_px=2,
+    )
+
+    assert corrected_coverage["contributed_pixels"] == 16
+    assert np.mean(np.abs(corrected_map - base)) < np.mean(
+        np.abs(uncorrected_map - base)
+    )
 
 
 def test_trimmed_map_reconstruction_fails_before_large_memory_allocation(tmp_path, monkeypatch):
