@@ -43,7 +43,6 @@ sampling_strategy = "adaptive_phase_coverage"
 reconstruction_trim_fraction = 0.0
 mask_iterations = 2
 fractional_splat = true
-sample_strategy = "phase_coverage"
 adaptive_candidate_frames = 3000
 aggregation = "huber"
 robust_iterations = 1
