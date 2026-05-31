@@ -36,7 +36,9 @@ def test_main_extracts_local_zip_and_writes_manifest(tmp_path: Path) -> None:
     )
 
     assert result == 0
-    assert (tmp_path / "data" / "images" / "images" / "frame_000001.bmp").read_bytes() == b"fake-image"
+    assert (
+        tmp_path / "data" / "images" / "images" / "frame_000001.bmp"
+    ).read_bytes() == b"fake-image"
     assert (tmp_path / "data" / "images_Test.zip").exists()
 
     manifest = json.loads(
@@ -50,7 +52,35 @@ def test_main_extracts_local_zip_and_writes_manifest(tmp_path: Path) -> None:
     assert manifest["extracted_bytes"] == len(b"fake-image")
 
 
-def test_record_id_resolution_uses_selected_record_file(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_cached_zip_rejects_path_traversal(tmp_path: Path) -> None:
+    source_zip = tmp_path / "unsafe.zip"
+    with ZipFile(source_zip, "w") as archive:
+        archive.writestr("../outside.txt", b"unsafe")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        prep.extract_cached_zip(
+            cache_zip=source_zip,
+            cache_images=tmp_path / "cache" / "unsafe",
+        )
+
+    assert not (tmp_path / "outside.txt").exists()
+
+
+def test_extract_cached_zip_rejects_absolute_paths(tmp_path: Path) -> None:
+    source_zip = tmp_path / "absolute.zip"
+    with ZipFile(source_zip, "w") as archive:
+        archive.writestr("/absolute.txt", b"unsafe")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        prep.extract_cached_zip(
+            cache_zip=source_zip,
+            cache_images=tmp_path / "cache" / "absolute",
+        )
+
+
+def test_record_id_resolution_uses_selected_record_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_fetch_json(url: str) -> dict[str, object]:
         assert url == "https://zenodo.org/api/records/7801882"
         return {
