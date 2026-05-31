@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import shutil
 import sys
 import urllib.request
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from zipfile import ZipFile
 
 CHUNK_SIZE = 1024 * 1024
 DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "datasets"
+ZENODO_RECORD_API = "https://zenodo.org/api/records/{record_id}"
+ZENODO_RECORD_FILE_URL = "https://zenodo.org/records/{record_id}/files/{filename}?download=1"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,7 +24,18 @@ def build_parser() -> argparse.ArgumentParser:
             "atomically, and expose it through data/images."
         ),
     )
-    parser.add_argument("--url", required=True, help="Zenodo file URL or local zip path.")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", help="Zenodo file URL or local zip path.")
+    source.add_argument("--record-id", help="Zenodo record ID containing the zip file.")
+    parser.add_argument(
+        "--record-file-glob",
+        default="*.zip",
+        help="Glob used with --record-id to select the archive file. Default: *.zip",
+    )
+    parser.add_argument(
+        "--record-file-name",
+        help="Exact file name used with --record-id; overrides --record-file-glob.",
+    )
     parser.add_argument(
         "--dataset-name",
         required=True,
@@ -96,6 +110,105 @@ def local_source_path(url: str) -> Path | None:
     return None
 
 
+def request_url(url: str) -> urllib.request.Request:
+    return urllib.request.Request(
+        url,
+        headers={"User-Agent": "BeltMap dataset preparation"},
+    )
+
+
+def fetch_json(url: str) -> dict[str, object]:
+    with urllib.request.urlopen(request_url(url), timeout=60) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def record_file_name(file_info: object) -> str:
+    if not isinstance(file_info, dict):
+        raise ValueError(f"invalid Zenodo file metadata entry: {file_info!r}")
+    key = file_info.get("key")
+    if isinstance(key, str) and key:
+        return key
+    filename = file_info.get("filename")
+    if isinstance(filename, str) and filename:
+        return filename
+    raise ValueError(f"Zenodo file metadata entry has no file name: {file_info!r}")
+
+
+def record_file_size(file_info: object) -> int:
+    if not isinstance(file_info, dict):
+        return 0
+    size = file_info.get("size")
+    if isinstance(size, int):
+        return size
+    if isinstance(size, str) and size.isdigit():
+        return int(size)
+    return 0
+
+
+def select_record_file(
+    metadata: dict[str, object],
+    *,
+    file_name: str | None,
+    file_glob: str,
+) -> str:
+    files = metadata.get("files")
+    if not isinstance(files, list):
+        raise ValueError("Zenodo record metadata does not contain a files list")
+
+    if file_name:
+        matches = [file_info for file_info in files if record_file_name(file_info) == file_name]
+    else:
+        matches = [
+            file_info
+            for file_info in files
+            if fnmatch.fnmatch(record_file_name(file_info), file_glob)
+        ]
+
+    if not matches:
+        selector = file_name if file_name else file_glob
+        available = ", ".join(record_file_name(file_info) for file_info in files)
+        raise ValueError(
+            f"Zenodo record file selector {selector!r} matched no files. "
+            f"Available files: {available}"
+        )
+    if len(matches) > 1:
+        matches = sorted(matches, key=record_file_size, reverse=True)
+        largest_size = record_file_size(matches[0])
+        if sum(record_file_size(match) == largest_size for match in matches) > 1:
+            names = ", ".join(record_file_name(file_info) for file_info in matches)
+            raise ValueError(
+                "Zenodo record file selector matched multiple same-size files: "
+                f"{names}; pass --record-file-name"
+            )
+    return record_file_name(matches[0])
+
+
+def resolve_source_url(
+    *,
+    url: str | None,
+    record_id: str | None,
+    record_file_name_arg: str | None,
+    record_file_glob: str,
+) -> tuple[str, str | None]:
+    if url is not None:
+        return url, None
+    if record_id is None:
+        raise ValueError("either --url or --record-id is required")
+
+    api_url = ZENODO_RECORD_API.format(record_id=record_id)
+    metadata = fetch_json(api_url)
+    file_name = select_record_file(
+        metadata,
+        file_name=record_file_name_arg,
+        file_glob=record_file_glob,
+    )
+    source_url = ZENODO_RECORD_FILE_URL.format(
+        record_id=record_id,
+        filename=quote(file_name, safe=""),
+    )
+    return source_url, file_name
+
+
 def download_or_copy(url: str, destination: Path) -> None:
     source = local_source_path(url)
     if source is not None:
@@ -104,11 +217,7 @@ def download_or_copy(url: str, destination: Path) -> None:
         shutil.copy2(source, destination)
         return
 
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "BeltMap dataset preparation"},
-    )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request_url(url), timeout=60) as response:
         with destination.open("wb") as output:
             shutil.copyfileobj(response, output, CHUNK_SIZE)
 
@@ -179,6 +288,8 @@ def write_manifest(
     *,
     manifest_path: Path,
     source_url: str,
+    source_record_id: str | None,
+    source_record_file: str | None,
     dataset_name: str,
     cache_images: Path,
     cache_zip: Path,
@@ -189,6 +300,8 @@ def write_manifest(
     manifest = {
         "dataset_name": dataset_name,
         "source_url": source_url,
+        "source_record_id": source_record_id,
+        "source_record_file": source_record_file,
         "cache_images": str(cache_images),
         "cache_zip": str(cache_zip),
         "image_link": str(image_link),
@@ -206,6 +319,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         dataset_name = validate_dataset_name(args.dataset_name)
+        source_url, source_record_file = resolve_source_url(
+            url=args.url,
+            record_id=args.record_id,
+            record_file_name_arg=args.record_file_name,
+            record_file_glob=args.record_file_glob,
+        )
         cache_root = args.cache_root.expanduser()
         cache_images = cache_root / dataset_name
         cache_zip = cache_root / f"{dataset_name}.zip"
@@ -213,7 +332,10 @@ def main(argv: list[str] | None = None) -> int:
         zip_link = args.zip_link
 
         print(f"Dataset name: {dataset_name}")
-        print(f"Source URL: {args.url}")
+        print(f"Source URL: {source_url}")
+        if args.record_id is not None:
+            print(f"Zenodo record ID: {args.record_id}")
+            print(f"Zenodo record file: {source_record_file}")
         print(f"Cache root: {cache_root}")
         print(f"Extracted cache: {cache_images}")
         print(f"Zip cache: {cache_zip}")
@@ -229,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Local extracted dataset cache miss or empty: {cache_images}")
             ensure_cached_zip(
-                url=args.url,
+                url=source_url,
                 cache_zip=cache_zip,
                 force_download=args.force_download,
             )
@@ -246,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.manifest_path is not None:
             write_manifest(
                 manifest_path=args.manifest_path,
-                source_url=args.url,
+                source_url=source_url,
+                source_record_id=args.record_id,
+                source_record_file=source_record_file,
                 dataset_name=dataset_name,
                 cache_images=cache_images,
                 cache_zip=cache_zip,
