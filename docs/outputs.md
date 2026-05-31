@@ -308,7 +308,7 @@ Columns:
 | `correction_px` | px | Registration offset added to the predicted phase. |
 | `loss` | 1 | Trimmed mean-square registration loss; empty if no registration loss was computed. |
 | `score` | 1 | Dimensionless registration score; empty if no registration score was computed. |
-| `method` | text | Phase-estimation method, usually `registration` for image-driver residuals. |
+| `method` | text | Phase-estimation method, such as `motion_model`, `registration`, or `registration_smoothed`. |
 
 Notes:
 
@@ -470,6 +470,9 @@ Important fields:
 | `recurrent_artifact_pixels` | px | Number of belt-coordinate pixels marked as recurrent artifacts. |
 | `n_recurrent_artifact_rejected` | count | Number of first-pass detections rejected by recurrent artifact suppression. |
 | `n_phase_estimates` | count | Number of rows written to `phase_estimates.csv`. |
+| `phase_estimation_mode` | mode | Configured phase source: `motion_model`, `registration`, or `smoothed_registration`. |
+| `texture_phase_velocity_px_per_frame` | px/frame | Robust belt velocity estimated from the phase trajectory, when at least two phase rows are available. |
+| `texture_phase_smoothed_velocity_px_per_frame` | px/frame | Median velocity from the phase/velocity smoother used as a diagnostic consistency check. |
 | `n_detections` | count | Number of rows written to `detections.csv`. |
 | `n_tracks` | count | Number of particle tracks created by the tracker. |
 | `n_velocity_estimates` | count | Number of rows written to `velocities.csv`. |

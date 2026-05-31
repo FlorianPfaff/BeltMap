@@ -304,8 +304,8 @@ def smooth_phase_velocity(
             state = transition @ state
             covariance = transition @ covariance @ transition.T + process
         measurement_var = (measurement_noise_px / weights[index]) ** 2
-        innovation = measurement - float(observation @ state)
-        innovation_var = float(observation @ covariance @ observation.T + measurement_var)
+        innovation = measurement - float((observation @ state)[0])
+        innovation_var = float((observation @ covariance @ observation.T)[0, 0] + measurement_var)
         kalman_gain = covariance @ observation.T / innovation_var
         state = state + (kalman_gain[:, 0] * innovation)
         covariance = (np.eye(2) - kalman_gain @ observation) @ covariance

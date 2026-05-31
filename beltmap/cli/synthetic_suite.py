@@ -12,6 +12,7 @@ from PIL import Image
 
 
 MAP_PARTICLE_MASK_MODES = ("positive", "negative", "absolute", "hysteresis_abs")
+PHASE_ESTIMATION_MODES = ("motion_model", "registration", "smoothed_registration")
 
 CASES = {
     "baseline": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
@@ -39,6 +40,20 @@ CASES = {
         "map_local_illumination_correction": True,
         "map_local_illumination_tile_px": 16,
     },
+    "phase_jitter": {
+        "texture": 1.0,
+        "particle_signal": 80.0,
+        "noise": 2.0,
+        "illumination": 0.0,
+        "particles": 1,
+        "velocity": 2.0,
+        "phase_jitter": 2.5,
+        "phase_estimation_mode": "smoothed_registration",
+        "phase_refinement_iterations": 1,
+        "phase_refinement_smoothing_window_frames": 5,
+        "phase_refinement_max_abs_correction_px": 4.0,
+        "phase_smoothing_window_frames": 5,
+    },
     "faint_particles": {"texture": 1.0, "particle_signal": 25.0, "noise": 3.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "high_density": {"texture": 1.0, "particle_signal": 70.0, "noise": 2.0, "illumination": 0.0, "particles": 5, "velocity": 2.0},
     "negative_velocity": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": -2.0},
@@ -65,9 +80,14 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
         max(1.0, abs(velocity) * 0.7),
         velocity if velocity != 0 else 1.0,
     )
+    phase_corrections = [
+        float(params.get("phase_jitter", 0.0))
+        * math.sin(2 * math.pi * frame_index / max(frames, 1))
+        for frame_index in range(frames)
+    ]
     particle_vertical_period_px = height - 8
     for frame_index in range(frames):
-        phase = (-velocity * frame_index) % period
+        phase = (-velocity * frame_index + phase_corrections[frame_index]) % period
         rows = (np.arange(height, dtype=np.float64) + phase) % period
         row0 = np.floor(rows).astype(int)
         row1 = (row0 + 1) % period
@@ -111,7 +131,14 @@ def render_case(case: str, root: Path, *, frames: int, height: int, width: int, 
         "particle_shift_y_px_per_frame": particle_motion_step_px,
         "true_particle_velocity_y_px_per_frame": particle_motion_step_px,
         "true_velocity_ratio_y": None if velocity == 0 else particle_motion_step_px / velocity,
-        "true_phase_px_by_frame": [float((-velocity * frame_index) % period) for frame_index in range(frames)],
+        "true_phase_px_by_frame": [
+            float((-velocity * frame_index + phase_corrections[frame_index]) % period)
+            for frame_index in range(frames)
+        ],
+        "true_nominal_phase_px_by_frame": [
+            float((-velocity * frame_index) % period) for frame_index in range(frames)
+        ],
+        "true_phase_correction_px_by_frame": phase_corrections,
         "true_belt_map_npy": "true_belt_map.npy",
         "frames": [{"frame_index": i, "boxes": boxes} for i, boxes in enumerate(boxes_by_frame)],
     }
@@ -138,6 +165,11 @@ def write_config(
     map_particle_mask_mode: str = "positive",
     map_particle_mask_grow_threshold: float = 2.0,
     map_particle_mask_margin_px: int = 1,
+    phase_estimation_mode: str = "registration",
+    phase_refinement_iterations: int = 0,
+    phase_refinement_smoothing_window_frames: int = 25,
+    phase_refinement_max_abs_correction_px: float = 0.0,
+    phase_smoothing_window_frames: int = 0,
 ) -> Path:
     if map_particle_mask_mode not in MAP_PARTICLE_MASK_MODES:
         choices = ", ".join(MAP_PARTICLE_MASK_MODES)
@@ -148,6 +180,17 @@ def write_config(
         raise ValueError("map_particle_mask_margin_px must be non-negative")
     if map_local_illumination_tile_px < 1:
         raise ValueError("map_local_illumination_tile_px must be positive")
+    if phase_estimation_mode not in PHASE_ESTIMATION_MODES:
+        choices = ", ".join(PHASE_ESTIMATION_MODES)
+        raise ValueError(f"phase_estimation_mode must be one of {choices}")
+    if phase_refinement_iterations < 0:
+        raise ValueError("phase_refinement_iterations must be non-negative")
+    if phase_refinement_smoothing_window_frames < 0:
+        raise ValueError("phase_refinement_smoothing_window_frames must be non-negative")
+    if phase_refinement_max_abs_correction_px < 0:
+        raise ValueError("phase_refinement_max_abs_correction_px must be non-negative")
+    if phase_smoothing_window_frames < 0:
+        raise ValueError("phase_smoothing_window_frames must be non-negative")
     root.mkdir(parents=True, exist_ok=True)
     config = f"""[paths]
 image_dir = {json.dumps(str(root / "images"))}
@@ -194,6 +237,17 @@ particle_mask_min_area_px = 2
 [registration]
 search_radius_px = 8.0
 search_step_px = 0.5
+
+[phase]
+estimation_mode = {json.dumps(phase_estimation_mode)}
+
+[phase_refinement]
+iterations = {phase_refinement_iterations}
+max_abs_correction_px = {phase_refinement_max_abs_correction_px}
+smoothing_window_frames = {phase_refinement_smoothing_window_frames}
+
+[phase_smoothing]
+window_frames = {phase_smoothing_window_frames}
 """
     path = root / "beltmap.toml"
     path.write_text(config, encoding="utf-8")
@@ -214,8 +268,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--map-particle-mask-margin-px", type=int, default=1)
     parser.add_argument("--map-local-illumination-correction", action="store_true")
     parser.add_argument("--map-local-illumination-tile-px", type=int, default=64)
+    parser.add_argument("--phase-estimation-mode", choices=PHASE_ESTIMATION_MODES)
+    parser.add_argument("--phase-refinement-iterations", type=int)
+    parser.add_argument("--phase-refinement-smoothing-window-frames", type=int)
+    parser.add_argument("--phase-refinement-max-abs-correction-px", type=float)
+    parser.add_argument("--phase-smoothing-window-frames", type=int)
     parser.add_argument("--execute", action="store_true", help="Run beltmap-apply and beltmap-benchmark after generating each case.")
     return parser
+
+
+def case_or_arg(params: dict, args, key: str, default):
+    value = getattr(args, key)
+    if value is not None:
+        return value
+    return params.get(key, default)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -223,24 +289,25 @@ def main(argv: list[str] | None = None) -> int:
     cases = args.case or sorted(CASES)
     manifest = []
     for case in cases:
+        params = CASES[case]
         root = args.output_root / case
         root.mkdir(parents=True, exist_ok=True)
         render_case(case, root, frames=args.frames, height=args.height, width=args.width, period=args.period, seed=args.seed)
         config_path = write_config(
             root,
             frames=args.frames,
-            velocity=float(CASES[case]["velocity"]),
+            velocity=float(params["velocity"]),
             period=args.period,
-            photometric_enabled=bool(CASES[case].get("photometric", False)),
+            photometric_enabled=bool(params.get("photometric", False)),
             map_frame_median_offset_correction=bool(
-                CASES[case].get("map_frame_median_offset_correction", False)
+                params.get("map_frame_median_offset_correction", False)
             ),
             map_local_illumination_correction=(
                 args.map_local_illumination_correction
-                or bool(CASES[case].get("map_local_illumination_correction", False))
+                or bool(params.get("map_local_illumination_correction", False))
             ),
             map_local_illumination_tile_px=int(
-                CASES[case].get(
+                params.get(
                     "map_local_illumination_tile_px",
                     args.map_local_illumination_tile_px,
                 )
@@ -248,6 +315,31 @@ def main(argv: list[str] | None = None) -> int:
             map_particle_mask_mode=args.map_particle_mask_mode,
             map_particle_mask_grow_threshold=args.map_particle_mask_grow_threshold,
             map_particle_mask_margin_px=args.map_particle_mask_margin_px,
+            phase_estimation_mode=str(
+                case_or_arg(params, args, "phase_estimation_mode", "registration")
+            ),
+            phase_refinement_iterations=int(
+                case_or_arg(params, args, "phase_refinement_iterations", 0)
+            ),
+            phase_refinement_smoothing_window_frames=int(
+                case_or_arg(
+                    params,
+                    args,
+                    "phase_refinement_smoothing_window_frames",
+                    25,
+                )
+            ),
+            phase_refinement_max_abs_correction_px=float(
+                case_or_arg(
+                    params,
+                    args,
+                    "phase_refinement_max_abs_correction_px",
+                    0.0,
+                )
+            ),
+            phase_smoothing_window_frames=int(
+                case_or_arg(params, args, "phase_smoothing_window_frames", 0)
+            ),
         )
         manifest.append(
             {
@@ -260,13 +352,38 @@ def main(argv: list[str] | None = None) -> int:
                 "map_particle_mask_margin_px": args.map_particle_mask_margin_px,
                 "map_local_illumination_correction": (
                     args.map_local_illumination_correction
-                    or bool(CASES[case].get("map_local_illumination_correction", False))
+                    or bool(params.get("map_local_illumination_correction", False))
                 ),
                 "map_local_illumination_tile_px": int(
-                    CASES[case].get(
+                    params.get(
                         "map_local_illumination_tile_px",
                         args.map_local_illumination_tile_px,
                     )
+                ),
+                "phase_estimation_mode": str(
+                    case_or_arg(params, args, "phase_estimation_mode", "registration")
+                ),
+                "phase_refinement_iterations": int(
+                    case_or_arg(params, args, "phase_refinement_iterations", 0)
+                ),
+                "phase_refinement_smoothing_window_frames": int(
+                    case_or_arg(
+                        params,
+                        args,
+                        "phase_refinement_smoothing_window_frames",
+                        25,
+                    )
+                ),
+                "phase_refinement_max_abs_correction_px": float(
+                    case_or_arg(
+                        params,
+                        args,
+                        "phase_refinement_max_abs_correction_px",
+                        0.0,
+                    )
+                ),
+                "phase_smoothing_window_frames": int(
+                    case_or_arg(params, args, "phase_smoothing_window_frames", 0)
                 ),
             }
         )

@@ -156,6 +156,9 @@ allow_full_frame = true
 subpixel_refinement = false
 robust_normalization = true
 
+[phase]
+estimation_mode = "motion_model"
+
 [phase_drift]
 enabled = true
 smoothing_alpha = 0.2
@@ -238,6 +241,7 @@ max_abs_px = 6
         "TRACK_FILTER_MIN_VELOCITY_RATIO_Y": "0.1",
         "REGISTRATION_ROBUST_NORMALIZATION": "1",
         "REGISTRATION_SUBPIXEL_REFINEMENT": "0",
+        "PHASE_ESTIMATION_MODE": "motion_model",
         "PHASE_DRIFT_ENABLED": "1",
         "PHASE_DRIFT_MAX_ABS_PX": "6",
         "PHASE_DRIFT_MAX_ABS_RESIDUAL_CORRECTION_PX": "3",
@@ -466,6 +470,7 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["robust_min_scale"] == 1.0
     assert parsed["detection"]["local_illumination_correction"] is False
     assert parsed["detection"]["local_illumination_tile_px"] == 64
+    assert parsed["phase"]["estimation_mode"] == "registration"
     assert parsed["static_noise"]["sample_frames"] == 0
     assert parsed["static_noise"]["mask_margin_px"] == 8
     assert parsed["static_background"]["sample_frames"] == 0

@@ -26,8 +26,11 @@ from beltmap.driver import (
     learn_static_residual_noise_map,
     load_phase_estimates,
     load_recurrent_artifact_map,
+    motion_model_phase_estimate,
+    normalize_phase_estimation_mode,
     phase_estimate_row,
     subtract_static_background,
+    texture_phase_velocity_summary,
     validate_reused_phase_estimates,
 )
 
@@ -124,6 +127,69 @@ def test_phase_estimate_row_reports_circular_coordinates():
     assert row["loss"] == 0.5
     assert row["score"] == 0.75
     assert row["method"] == "registration"
+
+
+def test_phase_estimation_mode_aliases_are_normalized():
+    assert normalize_phase_estimation_mode("nominal") == "motion_model"
+    assert normalize_phase_estimation_mode("texture-registration") == "registration"
+    assert normalize_phase_estimation_mode("smoothed") == "smoothed_registration"
+
+    with pytest.raises(ValueError, match="PHASE_ESTIMATION_MODE"):
+        normalize_phase_estimation_mode("unknown")
+
+
+def test_motion_model_phase_estimate_bypasses_registration():
+    model = BeltMotionModel(
+        image_velocity_px_per_frame=2.0,
+        period_px=20.0,
+        reference_phase_px=5.0,
+    )
+
+    estimate = motion_model_phase_estimate(model, frame_index=3.0)
+
+    assert estimate.phase_px == pytest.approx(19.0)
+    assert estimate.predicted_phase_px == pytest.approx(19.0)
+    assert estimate.correction_px == 0.0
+    assert estimate.method == "motion_model"
+
+
+def test_texture_phase_velocity_summary_estimates_phase_speed():
+    rows = [
+        {
+            "frame_index": index,
+            "phase_px": phase,
+            "score": "1.0",
+            "method": "registration",
+        }
+        for index, phase in enumerate([0.0, 98.0, 96.0, 94.0])
+    ]
+
+    summary = texture_phase_velocity_summary(
+        rows,
+        period_px=100.0,
+        nominal_velocity_px_per_frame=1.5,
+    )
+
+    assert summary["texture_phase_velocity_status"] == "ok"
+    assert summary["texture_phase_velocity_px_per_frame"] == pytest.approx(2.0)
+    assert summary["texture_phase_velocity_error_px_per_frame"] == pytest.approx(0.5)
+    assert summary["texture_phase_smoothed_velocity_px_per_frame"] is not None
+
+
+def test_texture_phase_velocity_summary_skips_nominal_phase_rows():
+    rows = [
+        {"frame_index": index, "phase_px": phase, "method": "motion_model"}
+        for index, phase in enumerate([0.0, 98.0, 96.0, 94.0])
+    ]
+
+    summary = texture_phase_velocity_summary(
+        rows,
+        period_px=100.0,
+        nominal_velocity_px_per_frame=2.0,
+    )
+
+    assert summary["texture_phase_velocity_status"] == "not_texture_registered"
+    assert "texture_phase_velocity_px_per_frame" not in summary
 
 
 def test_load_phase_estimates_for_reuse_mode(tmp_path):

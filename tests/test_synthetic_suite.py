@@ -36,6 +36,19 @@ def test_render_case_signs_particle_velocity_with_belt_direction(tmp_path):
     assert metadata["true_velocity_ratio_y"] == pytest.approx(0.7)
 
 
+def test_render_case_records_phase_jitter_truth(tmp_path):
+    root = tmp_path / "synthetic"
+
+    render_case("phase_jitter", root, frames=8, height=16, width=24, period=16, seed=4)
+
+    metadata = json.loads((root / "synthetic_metadata.json").read_text(encoding="utf-8"))
+
+    assert "true_nominal_phase_px_by_frame" in metadata
+    assert "true_phase_correction_px_by_frame" in metadata
+    assert max(abs(value) for value in metadata["true_phase_correction_px_by_frame"]) > 0
+    assert metadata["true_phase_px_by_frame"] != metadata["true_nominal_phase_px_by_frame"]
+
+
 def test_write_config_can_enable_photometric_correction(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
@@ -141,6 +154,29 @@ def test_write_config_can_enable_local_illumination_correction(tmp_path):
     assert "local_illumination_tile_px = 16" in config
 
 
+def test_write_config_can_enable_phase_texture_registration(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+        phase_estimation_mode="smoothed_registration",
+        phase_refinement_iterations=1,
+        phase_refinement_smoothing_window_frames=5,
+        phase_refinement_max_abs_correction_px=4.0,
+        phase_smoothing_window_frames=5,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert '[phase]' in config
+    assert 'estimation_mode = "smoothed_registration"' in config
+    assert "iterations = 1" in config
+    assert "max_abs_correction_px = 4.0" in config
+    assert "smoothing_window_frames = 5" in config
+    assert "window_frames = 5" in config
+
+
 def test_write_config_allows_short_tracking_gaps_and_robust_velocity_fit(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
@@ -210,6 +246,34 @@ def test_local_illumination_suite_enables_spatial_field_correction(tmp_path):
     assert "local_illumination_tile_px = 16" in config
 
 
+def test_phase_jitter_suite_enables_texture_phase_registration(tmp_path):
+    result = main(
+        [
+            "--output-root",
+            str(tmp_path / "suite"),
+            "--case",
+            "phase_jitter",
+            "--frames",
+            "2",
+            "--height",
+            "16",
+            "--width",
+            "24",
+            "--period",
+            "16",
+        ]
+    )
+
+    config = (
+        tmp_path / "suite" / "phase_jitter" / "beltmap.toml"
+    ).read_text(encoding="utf-8")
+
+    assert result == 0
+    assert 'estimation_mode = "smoothed_registration"' in config
+    assert "iterations = 1" in config
+    assert "smoothing_window_frames = 5" in config
+
+
 def test_main_records_map_particle_mask_ablation_controls(tmp_path):
     result = main(
         [
@@ -234,6 +298,16 @@ def test_main_records_map_particle_mask_ablation_controls(tmp_path):
             "--map-local-illumination-correction",
             "--map-local-illumination-tile-px",
             "12",
+            "--phase-estimation-mode",
+            "motion_model",
+            "--phase-refinement-iterations",
+            "2",
+            "--phase-refinement-smoothing-window-frames",
+            "3",
+            "--phase-refinement-max-abs-correction-px",
+            "2.5",
+            "--phase-smoothing-window-frames",
+            "4",
         ]
     )
 
@@ -252,11 +326,21 @@ def test_main_records_map_particle_mask_ablation_controls(tmp_path):
     assert "particle_mask_margin_px = 3" in config
     assert "local_illumination_correction = true" in config
     assert "local_illumination_tile_px = 12" in config
+    assert 'estimation_mode = "motion_model"' in config
+    assert "iterations = 2" in config
+    assert "max_abs_correction_px = 2.5" in config
+    assert "smoothing_window_frames = 3" in config
+    assert "window_frames = 4" in config
     assert manifest[0]["map_particle_mask_mode"] == "absolute"
     assert manifest[0]["map_particle_mask_grow_threshold"] == pytest.approx(1.75)
     assert manifest[0]["map_particle_mask_margin_px"] == 3
     assert manifest[0]["map_local_illumination_correction"] is True
     assert manifest[0]["map_local_illumination_tile_px"] == 12
+    assert manifest[0]["phase_estimation_mode"] == "motion_model"
+    assert manifest[0]["phase_refinement_iterations"] == 2
+    assert manifest[0]["phase_refinement_smoothing_window_frames"] == 3
+    assert manifest[0]["phase_refinement_max_abs_correction_px"] == pytest.approx(2.5)
+    assert manifest[0]["phase_smoothing_window_frames"] == 4
 
 
 def test_execute_uses_current_python_modules(tmp_path, monkeypatch):
