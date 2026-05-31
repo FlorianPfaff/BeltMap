@@ -11,6 +11,8 @@ import numpy as np
 from PIL import Image
 
 
+MAP_PARTICLE_MASK_MODES = ("positive", "negative", "absolute", "hysteresis_abs")
+
 CASES = {
     "baseline": {"texture": 1.0, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
     "weak_texture": {"texture": 0.25, "particle_signal": 80.0, "noise": 2.0, "illumination": 0.0, "particles": 1, "velocity": 2.0},
@@ -111,7 +113,17 @@ def write_config(
     detection_split_min_component_area_px: int = 4,
     track_filter_min_length: int = 3,
     map_frame_median_offset_correction: bool = False,
+    map_particle_mask_mode: str = "positive",
+    map_particle_mask_grow_threshold: float = 2.0,
+    map_particle_mask_margin_px: int = 1,
 ) -> Path:
+    if map_particle_mask_mode not in MAP_PARTICLE_MASK_MODES:
+        choices = ", ".join(MAP_PARTICLE_MASK_MODES)
+        raise ValueError(f"map_particle_mask_mode must be one of {choices}")
+    if map_particle_mask_grow_threshold < 0:
+        raise ValueError("map_particle_mask_grow_threshold must be non-negative")
+    if map_particle_mask_margin_px < 0:
+        raise ValueError("map_particle_mask_margin_px must be non-negative")
     root.mkdir(parents=True, exist_ok=True)
     config = f"""[paths]
 image_dir = {json.dumps(str(root / "images"))}
@@ -148,7 +160,9 @@ sample_frames = {frames}
 frame_median_offset_correction = {str(map_frame_median_offset_correction).lower()}
 mask_iterations = 1
 particle_mask_threshold = 3.0
-particle_mask_margin_px = 1
+particle_mask_mode = {json.dumps(map_particle_mask_mode)}
+particle_mask_grow_threshold = {map_particle_mask_grow_threshold}
+particle_mask_margin_px = {map_particle_mask_margin_px}
 particle_mask_min_area_px = 2
 
 [registration]
@@ -169,6 +183,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=64)
     parser.add_argument("--period", type=int, default=64)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--map-particle-mask-mode", choices=MAP_PARTICLE_MASK_MODES, default="positive")
+    parser.add_argument("--map-particle-mask-grow-threshold", type=float, default=2.0)
+    parser.add_argument("--map-particle-mask-margin-px", type=int, default=1)
     parser.add_argument("--execute", action="store_true", help="Run beltmap-apply and beltmap-benchmark after generating each case.")
     return parser
 
@@ -190,8 +207,21 @@ def main(argv: list[str] | None = None) -> int:
             map_frame_median_offset_correction=bool(
                 CASES[case].get("map_frame_median_offset_correction", False)
             ),
+            map_particle_mask_mode=args.map_particle_mask_mode,
+            map_particle_mask_grow_threshold=args.map_particle_mask_grow_threshold,
+            map_particle_mask_margin_px=args.map_particle_mask_margin_px,
         )
-        manifest.append({"case": case, "root": str(root), "config": str(config_path), "truth": str(root / "synthetic_metadata.json")})
+        manifest.append(
+            {
+                "case": case,
+                "root": str(root),
+                "config": str(config_path),
+                "truth": str(root / "synthetic_metadata.json"),
+                "map_particle_mask_mode": args.map_particle_mask_mode,
+                "map_particle_mask_grow_threshold": args.map_particle_mask_grow_threshold,
+                "map_particle_mask_margin_px": args.map_particle_mask_margin_px,
+            }
+        )
         if args.execute:
             subprocess.run(
                 [sys.executable, "-m", "beltmap.cli.apply", "--config", str(config_path)],

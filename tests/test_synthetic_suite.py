@@ -107,6 +107,24 @@ def test_write_config_uses_tight_synthetic_map_mask_margin(tmp_path):
     assert "particle_mask_margin_px = 1" in config
 
 
+def test_write_config_can_set_map_particle_mask_ablation_controls(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+        map_particle_mask_mode="hysteresis_abs",
+        map_particle_mask_grow_threshold=1.5,
+        map_particle_mask_margin_px=2,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert 'particle_mask_mode = "hysteresis_abs"' in config
+    assert "particle_mask_grow_threshold = 1.5" in config
+    assert "particle_mask_margin_px = 2" in config
+
+
 def test_write_config_allows_short_tracking_gaps_and_robust_velocity_fit(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
@@ -146,6 +164,48 @@ def test_illumination_drift_suite_enables_photometric_and_map_offset_correction(
     assert result == 0
     assert "enabled = true" in config
     assert "frame_median_offset_correction = true" in config
+
+
+def test_main_records_map_particle_mask_ablation_controls(tmp_path):
+    result = main(
+        [
+            "--output-root",
+            str(tmp_path / "suite"),
+            "--case",
+            "baseline",
+            "--frames",
+            "2",
+            "--height",
+            "16",
+            "--width",
+            "24",
+            "--period",
+            "16",
+            "--map-particle-mask-mode",
+            "absolute",
+            "--map-particle-mask-grow-threshold",
+            "1.75",
+            "--map-particle-mask-margin-px",
+            "3",
+        ]
+    )
+
+    config = (tmp_path / "suite" / "baseline" / "beltmap.toml").read_text(
+        encoding="utf-8"
+    )
+    manifest = json.loads(
+        (tmp_path / "suite" / "synthetic_suite_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result == 0
+    assert 'particle_mask_mode = "absolute"' in config
+    assert "particle_mask_grow_threshold = 1.75" in config
+    assert "particle_mask_margin_px = 3" in config
+    assert manifest[0]["map_particle_mask_mode"] == "absolute"
+    assert manifest[0]["map_particle_mask_grow_threshold"] == pytest.approx(1.75)
+    assert manifest[0]["map_particle_mask_margin_px"] == 3
 
 
 def test_execute_uses_current_python_modules(tmp_path, monkeypatch):
