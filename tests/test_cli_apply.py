@@ -89,6 +89,8 @@ min_bbox_width_px = 3
 min_bbox_height_px = 3
 max_bbox_aspect_ratio = 4.0
 min_bbox_extent = 0.15
+local_illumination_correction = true
+local_illumination_tile_px = 24
 
 [photometric]
 enabled = true
@@ -109,6 +111,8 @@ max_abs_x_velocity_px_per_frame = 12.5
 
 [map]
 frame_median_offset_correction = true
+local_illumination_correction = true
+local_illumination_tile_px = 32
 particle_mask_mode = "hysteresis_abs"
 particle_mask_threshold = 4.0
 particle_mask_grow_threshold = 1.5
@@ -180,6 +184,8 @@ max_abs_px = 6
         "DETECTION_MIN_BBOX_EXTENT": "0.15",
         "DETECTION_MIN_BBOX_HEIGHT_PX": "3",
         "DETECTION_MIN_BBOX_WIDTH_PX": "3",
+        "DETECTION_LOCAL_ILLUMINATION_CORRECTION": "1",
+        "DETECTION_LOCAL_ILLUMINATION_TILE_PX": "24",
         "PHOTOMETRIC_ENABLED": "1",
         "PHOTOMETRIC_MAX_ITERATIONS": "4",
         "PHOTOMETRIC_MIN_PIXELS": "512",
@@ -193,6 +199,8 @@ max_abs_px = 6
         "MAP_PARTICLE_MASK_THRESHOLD": "4",
         "MAP_AGGREGATION": "huber",
         "MAP_FRAME_MEDIAN_OFFSET_CORRECTION": "1",
+        "MAP_LOCAL_ILLUMINATION_CORRECTION": "1",
+        "MAP_LOCAL_ILLUMINATION_TILE_PX": "32",
         "MAP_ROBUST_HUBER_DELTA": "2.5",
         "MAP_ROBUST_ITERATIONS": "2",
         "MAP_ROBUST_MIN_SCALE": "0.75",
@@ -447,6 +455,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["belt"]["region"] == [0, 220, 1330, 1800]
     assert parsed["belt"]["velocity_px_per_frame"] == "auto"
     assert parsed["map"]["frame_median_offset_correction"] is False
+    assert parsed["map"]["local_illumination_correction"] is False
+    assert parsed["map"]["local_illumination_tile_px"] == 64
     assert parsed["map"]["particle_mask_mode"] == "positive"
     assert parsed["map"]["particle_mask_grow_threshold"] == 2.0
     assert parsed["map"]["particle_mask_dilation_px"] == 0
@@ -454,6 +464,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["robust_iterations"] == 1
     assert parsed["map"]["robust_huber_delta"] == 3.0
     assert parsed["map"]["robust_min_scale"] == 1.0
+    assert parsed["detection"]["local_illumination_correction"] is False
+    assert parsed["detection"]["local_illumination_tile_px"] == 64
     assert parsed["static_noise"]["sample_frames"] == 0
     assert parsed["static_noise"]["mask_margin_px"] == 8
     assert parsed["static_background"]["sample_frames"] == 0

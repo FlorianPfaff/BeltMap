@@ -125,6 +125,22 @@ def test_write_config_can_set_map_particle_mask_ablation_controls(tmp_path):
     assert "particle_mask_margin_px = 2" in config
 
 
+def test_write_config_can_enable_local_illumination_correction(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+        map_local_illumination_correction=True,
+        map_local_illumination_tile_px=16,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert "local_illumination_correction = true" in config
+    assert "local_illumination_tile_px = 16" in config
+
+
 def test_write_config_allows_short_tracking_gaps_and_robust_velocity_fit(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
@@ -166,6 +182,34 @@ def test_illumination_drift_suite_enables_photometric_and_map_offset_correction(
     assert "frame_median_offset_correction = true" in config
 
 
+def test_local_illumination_suite_enables_spatial_field_correction(tmp_path):
+    result = main(
+        [
+            "--output-root",
+            str(tmp_path / "suite"),
+            "--case",
+            "local_illumination_drift",
+            "--frames",
+            "2",
+            "--height",
+            "16",
+            "--width",
+            "24",
+            "--period",
+            "16",
+        ]
+    )
+
+    config = (
+        tmp_path / "suite" / "local_illumination_drift" / "beltmap.toml"
+    ).read_text(encoding="utf-8")
+
+    assert result == 0
+    assert "frame_median_offset_correction = true" in config
+    assert "local_illumination_correction = true" in config
+    assert "local_illumination_tile_px = 16" in config
+
+
 def test_main_records_map_particle_mask_ablation_controls(tmp_path):
     result = main(
         [
@@ -187,6 +231,9 @@ def test_main_records_map_particle_mask_ablation_controls(tmp_path):
             "1.75",
             "--map-particle-mask-margin-px",
             "3",
+            "--map-local-illumination-correction",
+            "--map-local-illumination-tile-px",
+            "12",
         ]
     )
 
@@ -203,9 +250,13 @@ def test_main_records_map_particle_mask_ablation_controls(tmp_path):
     assert 'particle_mask_mode = "absolute"' in config
     assert "particle_mask_grow_threshold = 1.75" in config
     assert "particle_mask_margin_px = 3" in config
+    assert "local_illumination_correction = true" in config
+    assert "local_illumination_tile_px = 12" in config
     assert manifest[0]["map_particle_mask_mode"] == "absolute"
     assert manifest[0]["map_particle_mask_grow_threshold"] == pytest.approx(1.75)
     assert manifest[0]["map_particle_mask_margin_px"] == 3
+    assert manifest[0]["map_local_illumination_correction"] is True
+    assert manifest[0]["map_local_illumination_tile_px"] == 12
 
 
 def test_execute_uses_current_python_modules(tmp_path, monkeypatch):

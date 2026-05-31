@@ -37,6 +37,8 @@ from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
     PhaseFeedbackConfig,
     build_belt_map_result,
+    detect_map_particle_mask,
+    estimate_local_illumination_field,
     expanded_detection_mask,
     map_sampling_strategy_from_env,
     sample_indices,
@@ -575,6 +577,59 @@ def apply_photometric_correction(
     return corrected, row
 
 
+def apply_local_illumination_correction(
+    *,
+    frame: np.ndarray,
+    residual: ResidualImage,
+    residual_config: ResidualConfig,
+    enabled: bool,
+    tile_px: int,
+    mask_threshold: float,
+    mask_mode: str,
+    mask_grow_threshold: float,
+    mask_dilation_px: int,
+    mask_margin_px: int,
+    mask_min_area_px: int,
+) -> ResidualImage:
+    """Subtract a low-frequency additive residual field before detection."""
+
+    if not enabled:
+        return residual
+    if tile_px < 1:
+        raise ValueError("local illumination tile size must be positive")
+
+    particle_mask = detect_map_particle_mask(
+        residual,
+        mode=mask_mode,
+        threshold=mask_threshold,
+        grow_threshold=mask_grow_threshold,
+        dilation_px=mask_dilation_px,
+        margin_px=mask_margin_px,
+        min_area_px=mask_min_area_px,
+    )
+    field_valid = np.asarray(residual.mask, dtype=bool) & ~particle_mask
+    illumination_field = estimate_local_illumination_field(
+        residual.raw,
+        field_valid,
+        tile_px=tile_px,
+    )
+    corrected_expected = residual.expected_background + illumination_field
+    corrected = generate_residual_image(
+        frame,
+        corrected_expected,
+        mask=residual.mask,
+        config=residual_config,
+    )
+    return ResidualImage(
+        raw=corrected.raw,
+        local_noise=corrected.local_noise,
+        normalized=corrected.normalized,
+        mask=corrected.mask,
+        expected_background=corrected.expected_background,
+        clean_render=residual.clean_render,
+    )
+
+
 def estimate_smoothed_phase_sequence(
     *,
     paths: list[Path],
@@ -1030,6 +1085,8 @@ def main() -> None:
         raise ValueError("PHOTOMETRIC_TRIM_FRACTION must be in [0, 0.5)")
     photometric_max_iterations = rt.env_int("PHOTOMETRIC_MAX_ITERATIONS", 3, minimum=1)
     photometric_min_pixels = rt.env_int("PHOTOMETRIC_MIN_PIXELS", 128, minimum=1)
+    detection_local_illumination_correction = env_bool("DETECTION_LOCAL_ILLUMINATION_CORRECTION", False)
+    detection_local_illumination_tile_px = rt.env_int("DETECTION_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1)
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=2)
     tracking_max_frame_gap = rt.env_float("TRACKING_MAX_FRAME_GAP", 1.0, minimum=1e-9)
     tracking_velocity_fit_method = os.getenv("TRACKING_VELOCITY_FIT_METHOD", "linear").strip().lower()
@@ -1047,6 +1104,8 @@ def main() -> None:
     map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
     map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
     map_frame_median_offset_correction = env_bool("MAP_FRAME_MEDIAN_OFFSET_CORRECTION", False)
+    map_local_illumination_correction = env_bool("MAP_LOCAL_ILLUMINATION_CORRECTION", False)
+    map_local_illumination_tile_px = rt.env_int("MAP_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
     map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
     map_aggregation = os.getenv("MAP_AGGREGATION", "mean").strip().lower()
@@ -1290,6 +1349,8 @@ def main() -> None:
             robust_min_scale=map_robust_min_scale,
             fractional_splat=map_fractional_splat,
             frame_median_offset_correction=map_frame_median_offset_correction,
+            local_illumination_correction=map_local_illumination_correction,
+            local_illumination_tile_px=map_local_illumination_tile_px,
             phase_feedback_config=PhaseFeedbackConfig(
                 iterations=phase_refinement_iterations,
                 min_score=phase_refinement_min_score,
@@ -1560,6 +1621,19 @@ def main() -> None:
         )
         if photometric_row is not None:
             photometric_rows.append(photometric_row)
+        residual = apply_local_illumination_correction(
+            frame=frame,
+            residual=residual,
+            residual_config=residual_config,
+            enabled=detection_local_illumination_correction,
+            tile_px=detection_local_illumination_tile_px,
+            mask_threshold=map_particle_mask_threshold,
+            mask_mode=map_particle_mask_mode,
+            mask_grow_threshold=map_particle_mask_grow_threshold,
+            mask_dilation_px=map_particle_mask_dilation_px,
+            mask_margin_px=map_particle_mask_margin_px,
+            mask_min_area_px=map_particle_mask_min_area_px,
+        )
         residual = subtract_static_background(
             residual,
             static_background_map,
@@ -1864,6 +1938,8 @@ def main() -> None:
         "photometric_trim_fraction": photometric_trim_fraction,
         "photometric_max_iterations": photometric_max_iterations,
         "photometric_min_pixels": photometric_min_pixels,
+        "detection_local_illumination_correction": detection_local_illumination_correction,
+        "detection_local_illumination_tile_px": detection_local_illumination_tile_px,
         "tracking_max_frame_gap": tracking_config.max_frame_gap,
         "tracking_velocity_fit_method": tracking_velocity_fit_method,
         "map_mask_iterations": map_mask_iterations,
@@ -1875,6 +1951,8 @@ def main() -> None:
         "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
         "map_fractional_splat": map_fractional_splat,
         "map_frame_median_offset_correction": map_frame_median_offset_correction,
+        "map_local_illumination_correction": map_local_illumination_correction,
+        "map_local_illumination_tile_px": map_local_illumination_tile_px,
         "map_particle_mask_margin_px": map_particle_mask_margin_px,
         "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
         "map_aggregation": map_aggregation,
