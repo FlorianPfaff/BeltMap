@@ -49,6 +49,8 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
                 "track_fragmentation": 0.25,
                 "fragmented_truth_events": 1,
                 "mean_fragments_per_truth_event": 1.25,
+                "birth_false_positive_rate": 0.25,
+                "missed_event_rate": 0.5,
             },
             "filtered_events": {
                 "precision": 1.0,
@@ -56,12 +58,30 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
                 "f1": 2 / 3,
                 "track_fragmentation": 0.0,
             },
+            "tracks": {
+                "mean_track_length": 2.5,
+                "median_track_length": 2.0,
+                "single_frame_tracks": 3,
+                "single_frame_track_fraction": 0.3,
+            },
+            "filtered_tracks": {
+                "mean_track_length": 4.0,
+                "median_track_length": 4.0,
+                "single_frame_tracks": 0,
+                "single_frame_track_fraction": 0.0,
+            },
             "velocity": {
                 "velocity_y_error_px_per_frame": -0.2,
+                "velocity_y_mean_abs_error_px_per_frame": 0.2,
+                "velocity_y_bias_px_per_frame": -0.15,
+                "velocity_y_error_std_px_per_frame": 0.05,
                 "truth_matched_velocity_y_error_px_per_frame": -0.1,
             },
             "filtered_velocity": {
                 "velocity_y_error_px_per_frame": -0.05,
+                "velocity_y_mean_abs_error_px_per_frame": 0.05,
+                "velocity_y_bias_px_per_frame": -0.04,
+                "velocity_y_error_std_px_per_frame": 0.01,
                 "truth_matched_velocity_y_error_px_per_frame": -0.02,
             },
             "phase": {"rmse_px": 0.125},
@@ -92,6 +112,10 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
     assert [row["detection_threshold"] for row in rows] == ["2.0", "3.0"]
     assert rows[0]["false_positives_per_frame"] == "0.2"
     assert rows[0]["track_fragmentation"] == "0.25"
+    assert rows[0]["single_frame_tracks"] == "3"
+    assert rows[0]["median_track_length"] == "2.0"
+    assert rows[0]["velocity_y_bias_px_per_frame"] == "-0.15"
+    assert rows[0]["birth_false_positive_rate"] == "0.25"
     assert rows[0]["truth_matched_velocity_y_error_px_per_frame"] == "-0.1"
     assert json.loads((tmp_path / "sweep" / "sweep_metrics.json").read_text(encoding="utf-8"))[1][
         "detection_precision"
@@ -99,3 +123,4 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
     report = (tmp_path / "sweep" / "sweep_report.md").read_text(encoding="utf-8")
     assert "FP/frame" in report
     assert "Track fragmentation" in report
+    assert "Single-frame tracks" in report

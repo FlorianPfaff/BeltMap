@@ -8,6 +8,7 @@ import sys
 import urllib.request
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlparse
+from urllib.request import url2pathname
 from zipfile import ZipFile, ZipInfo
 
 CHUNK_SIZE = 1024 * 1024
@@ -107,11 +108,14 @@ def remove_path(path: Path) -> None:
 
 
 def local_source_path(url: str) -> Path | None:
+    candidate = Path(url).expanduser()
+    if candidate.is_absolute() or candidate.exists():
+        return candidate
     parsed = urlparse(url)
     if parsed.scheme == "":
-        return Path(url).expanduser()
+        return candidate
     if parsed.scheme == "file":
-        return Path(unquote(parsed.path)).expanduser()
+        return Path(url2pathname(unquote(parsed.path))).expanduser()
     return None
 
 

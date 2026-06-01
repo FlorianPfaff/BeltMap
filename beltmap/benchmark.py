@@ -616,6 +616,8 @@ def event_metrics(
     false_negatives = len(truth_events) - true_positives
     precision = true_positives / len(predicted_events) if predicted_events else None
     recall = true_positives / len(truth_events) if truth_events else None
+    birth_false_positive_rate = false_positives / len(predicted_events) if predicted_events else None
+    missed_event_rate = false_negatives / len(truth_events) if truth_events else None
     if precision is None or recall is None:
         f1 = None
     elif precision + recall == 0:
@@ -654,6 +656,8 @@ def event_metrics(
         "extra_fragment_events": extra_fragments,
         "mean_fragments_per_truth_event": mean_fragments,
         "track_fragmentation": track_fragmentation,
+        "birth_false_positive_rate": None if birth_false_positive_rate is None else float(birth_false_positive_rate),
+        "missed_event_rate": None if missed_event_rate is None else float(missed_event_rate),
         "precision": None if precision is None else float(precision),
         "recall": None if recall is None else float(recall),
         "f1": None if f1 is None else float(f1),
@@ -664,6 +668,62 @@ def event_metrics(
         "mean_latency_frames": mean_field("latency_frames"),
         "mean_duration_error_frames": mean_field("duration_error_frames"),
         "matches": matches,
+    }
+
+
+def group_track_rows(track_rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    """Group track CSV rows by track identifier."""
+
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for index, row in enumerate(track_rows):
+        track_id = str(row.get("track_id", "")).strip()
+        if not track_id:
+            track_id = f"missing:{index}"
+        grouped.setdefault(track_id, []).append(row)
+    return grouped
+
+
+def track_metrics(
+    track_rows: list[dict[str, str]],
+    *,
+    prediction_source: str = "tracks.csv",
+) -> dict[str, Any]:
+    """Summarize PyRecEst track continuity from track-detection rows."""
+
+    grouped = group_track_rows(track_rows)
+    lengths = np.asarray([len(rows) for rows in grouped.values()], dtype=np.float64)
+    frame_spans: list[float] = []
+    for rows in grouped.values():
+        frames = [source_frame_index(row) for row in rows]
+        finite_frames = [frame for frame in frames if frame is not None]
+        if finite_frames:
+            frame_spans.append(float(max(finite_frames) - min(finite_frames) + 1))
+    spans = np.asarray(frame_spans, dtype=np.float64)
+    single_frame_tracks = int(np.count_nonzero(lengths == 1)) if lengths.size else 0
+    return {
+        "available": True,
+        "prediction_source": prediction_source,
+        "track_rows": len(track_rows),
+        "tracks": int(lengths.size),
+        "mean_track_length": None if lengths.size == 0 else float(np.mean(lengths)),
+        "median_track_length": None if lengths.size == 0 else float(np.median(lengths)),
+        "max_track_length": None if lengths.size == 0 else int(np.max(lengths)),
+        "single_frame_tracks": single_frame_tracks,
+        "single_frame_track_fraction": None if lengths.size == 0 else float(single_frame_tracks / lengths.size),
+        "mean_track_span_frames": None if spans.size == 0 else float(np.mean(spans)),
+        "median_track_span_frames": None if spans.size == 0 else float(np.median(spans)),
+    }
+
+
+def unavailable_track_metrics(*, reason: str, prediction_source: str) -> dict[str, Any]:
+    """Return an unavailable track-metric section with stable metadata fields."""
+
+    return {
+        "available": False,
+        "reason": reason,
+        "prediction_source": prediction_source,
+        "track_rows": 0,
+        "tracks": 0,
     }
 
 
@@ -849,6 +909,47 @@ def truth_velocity_values(truth: dict[str, Any]) -> tuple[float | None, float | 
     return true_velocity, true_ratio
 
 
+def velocity_distribution_metrics(
+    velocity_rows: list[dict[str, str]],
+    *,
+    true_velocity: float | None,
+) -> dict[str, Any]:
+    """Summarize velocity bias and variance over all velocity rows."""
+
+    estimates = [
+        value
+        for row in velocity_rows
+        if (value := finite_float(row.get("velocity_y_px_per_frame"))) is not None
+    ]
+    estimate_arr = np.asarray(estimates, dtype=np.float64)
+    result: dict[str, Any] = {
+        "velocity_y_rows_with_estimate": int(estimate_arr.size),
+        "velocity_y_mean_px_per_frame": None if estimate_arr.size == 0 else float(np.mean(estimate_arr)),
+        "velocity_y_variance_px2_per_frame2": None if estimate_arr.size == 0 else float(np.var(estimate_arr)),
+    }
+    if true_velocity is None or estimate_arr.size == 0:
+        result.update(
+            {
+                "velocity_y_mean_abs_error_px_per_frame": None,
+                "velocity_y_bias_px_per_frame": None,
+                "velocity_y_error_std_px_per_frame": None,
+                "velocity_y_error_variance_px2_per_frame2": None,
+            }
+        )
+        return result
+
+    errors = estimate_arr - true_velocity
+    result.update(
+        {
+            "velocity_y_mean_abs_error_px_per_frame": float(np.mean(np.abs(errors))),
+            "velocity_y_bias_px_per_frame": float(np.mean(errors)),
+            "velocity_y_error_std_px_per_frame": float(np.std(errors)),
+            "velocity_y_error_variance_px2_per_frame2": float(np.var(errors)),
+        }
+    )
+    return result
+
+
 def velocity_metrics(
     velocity_rows: list[dict[str, str]],
     truth: dict[str, Any],
@@ -859,6 +960,7 @@ def velocity_metrics(
     """Compare estimated track velocity against synthetic particle truth."""
 
     true_velocity, true_ratio = truth_velocity_values(truth)
+    distribution = velocity_distribution_metrics(velocity_rows, true_velocity=true_velocity)
 
     representative = choose_velocity_row(velocity_rows, true_ratio)
     if representative is None:
@@ -869,6 +971,7 @@ def velocity_metrics(
             "truth_velocity_y_px_per_frame": true_velocity,
             "truth_velocity_ratio_y": true_ratio,
             "velocity_rows": 0,
+            **distribution,
         }
 
     estimated_velocity = finite_float(representative.get("velocity_y_px_per_frame"))
@@ -898,6 +1001,7 @@ def velocity_metrics(
         "truth_matched_velocity_y_error_px_per_frame": None if true_velocity is None or matched_velocity is None else float(matched_velocity - true_velocity),
         "truth_matched_velocity_ratio_y": matched_ratio,
         "truth_matched_velocity_ratio_error": None if true_ratio is None or matched_ratio is None else float(matched_ratio - true_ratio),
+        **distribution,
     }
 
 
@@ -951,7 +1055,8 @@ def compute_benchmark_metrics(
     truth = read_json(truth_path)
     phase_rows = read_csv_rows(output_dir / "phase_estimates.csv")
     detection_rows = read_csv_rows(output_dir / "detections.csv")
-    track_rows = read_csv_rows(output_dir / "tracks.csv")
+    tracks_path = output_dir / "tracks.csv"
+    track_rows = read_csv_rows(tracks_path)
     filtered_tracks_path = output_dir / "filtered_tracks.csv"
     filtered_track_rows = read_csv_rows(filtered_tracks_path)
     velocity_rows = read_csv_rows(output_dir / "velocities.csv")
@@ -994,6 +1099,22 @@ def compute_benchmark_metrics(
         "phase": phase_metrics(phase_rows, truth),
         "belt_map": map_metrics(output_dir, truth_path, truth),
         "detections": detection_metrics(detection_rows, truth, iou_threshold=iou_threshold),
+        "tracks": (
+            track_metrics(track_rows, prediction_source="tracks.csv")
+            if tracks_path.is_file()
+            else unavailable_track_metrics(
+                reason=f"Missing {tracks_path}",
+                prediction_source="tracks.csv",
+            )
+        ),
+        "filtered_tracks": (
+            track_metrics(filtered_track_rows, prediction_source="filtered_tracks.csv")
+            if filtered_tracks_path.is_file()
+            else unavailable_track_metrics(
+                reason=f"Missing {filtered_tracks_path}",
+                prediction_source="filtered_tracks.csv",
+            )
+        ),
         "events": event_metrics(
             track_rows or detection_rows,
             truth,
@@ -1050,6 +1171,8 @@ def markdown_report(metrics: dict[str, Any]) -> str:
     phase = metrics["phase"]
     belt_map = metrics["belt_map"]
     detections = metrics["detections"]
+    tracks = metrics.get("tracks", {})
+    filtered_tracks = metrics.get("filtered_tracks", {})
     events = metrics["events"]
     filtered_events = metrics.get("filtered_events", {})
     velocity = metrics["velocity"]
@@ -1090,6 +1213,14 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| detection recall | {format_value(detections.get('recall'))} |",
             f"| detection F1 | {format_value(detections.get('f1'))} |",
             f"| mean centroid error [px] | {format_value(detections.get('mean_centroid_error_px'))} |",
+            f"| tracks | {format_value(tracks.get('tracks'))} |",
+            f"| mean track length | {format_value(tracks.get('mean_track_length'))} |",
+            f"| median track length | {format_value(tracks.get('median_track_length'))} |",
+            f"| single-frame tracks | {format_value(tracks.get('single_frame_tracks'))} |",
+            f"| single-frame track fraction | {format_value(tracks.get('single_frame_track_fraction'))} |",
+            f"| filtered tracks | {format_value(filtered_tracks.get('tracks'))} |",
+            f"| filtered median track length | {format_value(filtered_tracks.get('median_track_length'))} |",
+            f"| filtered single-frame tracks | {format_value(filtered_tracks.get('single_frame_tracks'))} |",
             f"| event precision | {format_value(events.get('precision'))} |",
             f"| event recall | {format_value(events.get('recall'))} |",
             f"| event F1 | {format_value(events.get('f1'))} |",
@@ -1098,6 +1229,8 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| truth events | {format_value(events.get('truth_events'))} |",
             f"| predicted events | {format_value(events.get('predicted_events'))} |",
             f"| event track fragmentation | {format_value(events.get('track_fragmentation'))} |",
+            f"| birth false-positive rate | {format_value(events.get('birth_false_positive_rate'))} |",
+            f"| missed event rate | {format_value(events.get('missed_event_rate'))} |",
             f"| filtered event F1 | {format_value(filtered_events.get('f1'))} |",
             f"| filtered event prediction source | {format_value(filtered_events.get('prediction_source'))} |",
             f"| filtered matched events | {format_value(filtered_events.get('matched_events'))} |",
@@ -1109,12 +1242,18 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             f"| velocity prediction source | {format_value(velocity.get('prediction_source'))} |",
             f"| velocity rows | {format_value(velocity.get('velocity_rows'))} |",
             f"| velocity y error [px/frame] | {format_value(velocity.get('velocity_y_error_px_per_frame'))} |",
+            f"| velocity mean abs. error [px/frame] | {format_value(velocity.get('velocity_y_mean_abs_error_px_per_frame'))} |",
+            f"| velocity bias [px/frame] | {format_value(velocity.get('velocity_y_bias_px_per_frame'))} |",
+            f"| velocity error std. [px/frame] | {format_value(velocity.get('velocity_y_error_std_px_per_frame'))} |",
+            f"| velocity variance [px^2/frame^2] | {format_value(velocity.get('velocity_y_variance_px2_per_frame2'))} |",
             f"| velocity-ratio error | {format_value(velocity.get('velocity_ratio_error'))} |",
             f"| truth-matched velocity y error [px/frame] | {format_value(velocity.get('truth_matched_velocity_y_error_px_per_frame'))} |",
             f"| truth-matched velocity-ratio error | {format_value(velocity.get('truth_matched_velocity_ratio_error'))} |",
             f"| filtered velocity prediction source | {format_value(filtered_velocity.get('prediction_source'))} |",
             f"| filtered velocity rows | {format_value(filtered_velocity.get('velocity_rows'))} |",
             f"| filtered velocity y error [px/frame] | {format_value(filtered_velocity.get('velocity_y_error_px_per_frame'))} |",
+            f"| filtered velocity mean abs. error [px/frame] | {format_value(filtered_velocity.get('velocity_y_mean_abs_error_px_per_frame'))} |",
+            f"| filtered velocity bias [px/frame] | {format_value(filtered_velocity.get('velocity_y_bias_px_per_frame'))} |",
             f"| filtered velocity-ratio error | {format_value(filtered_velocity.get('velocity_ratio_error'))} |",
             f"| filtered truth-matched velocity y error [px/frame] | {format_value(filtered_velocity.get('truth_matched_velocity_y_error_px_per_frame'))} |",
             f"| filtered truth-matched velocity-ratio error | {format_value(filtered_velocity.get('truth_matched_velocity_ratio_error'))} |",
@@ -1128,11 +1267,14 @@ def markdown_report(metrics: dict[str, Any]) -> str:
             "- Belt-map RMSE is minimized over cyclic vertical shifts, so a constant phase offset",
             "  in the reconstructed map is not counted as a reconstruction error.",
             "- Detection scores use greedy per-frame IoU matching against synthetic particle boxes.",
+            "- Track scores summarize the PyRecEst track rows before and after final",
+            "  velocity/track filtering, including single-frame track counts.",
             "- Event scores use `tracks.csv` when present, falling back to `detections.csv`",
             "  for older outputs without track rows. Filtered event scores separately use",
             "  `filtered_tracks.csv` when the driver wrote final accepted track rows.",
             "  Rows without event IDs are linked into particle events before greedy event matching.",
             "- Velocity metrics use the representative output track with the most detections.",
+            "  Bias, mean absolute error, and variance summarize all velocity rows.",
             "  Filtered velocity metrics separately use `filtered_velocities.csv` when the",
             "  driver wrote final accepted velocity rows.",
             "- Truth-matched velocity metrics separately score the velocity row closest to",
@@ -1146,6 +1288,8 @@ def markdown_report(metrics: dict[str, Any]) -> str:
         ("belt map", belt_map),
         ("phase", phase),
         ("detections", detections),
+        ("tracks", tracks),
+        ("filtered tracks", filtered_tracks),
         ("events", events),
         ("filtered events", filtered_events),
         ("velocity", velocity),

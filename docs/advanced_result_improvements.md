@@ -31,8 +31,8 @@ beltmap-synthetic-suite --output-root outputs/synthetic_suite --execute
 For synthetic cases, add `--benchmark-truth-path` to `beltmap-sweep` to write
 `sweep_metrics.csv`, `sweep_metrics.json`, and `sweep_report.md`. Those files
 turn threshold grids into precision-recall, F1-threshold, false-positive,
-fragmentation, and velocity-bias curve data instead of isolated single-threshold
-scores.
+PyRecEst track-length, single-frame-track, fragmentation, missed-event, and
+velocity-bias curve data instead of isolated single-threshold scores.
 
 The helpers are intentionally not all enabled in `beltmap-apply` by default.
 They are meant to make the next round of experiments reproducible and to reduce

@@ -13,6 +13,7 @@ from beltmap.benchmark import (
     event_metrics,
     finite_int,
     generate_benchmark_report,
+    track_metrics,
 )
 
 
@@ -328,10 +329,20 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     assert metrics["events"]["truth_events"] == 1
     assert metrics["events"]["predicted_events"] == 1
     assert metrics["events"]["matched_events"] == 1
+    assert metrics["events"]["birth_false_positive_rate"] == pytest.approx(0.0)
+    assert metrics["events"]["missed_event_rate"] == pytest.approx(0.0)
     assert metrics["events"]["mean_truth_frame_coverage"] == pytest.approx(1.0)
+    assert metrics["tracks"]["tracks"] == 1
+    assert metrics["tracks"]["mean_track_length"] == pytest.approx(3.0)
+    assert metrics["tracks"]["median_track_length"] == pytest.approx(3.0)
+    assert metrics["tracks"]["single_frame_tracks"] == 0
+    assert metrics["filtered_tracks"]["available"] is False
     assert metrics["filtered_events"]["available"] is False
     assert metrics["filtered_events"]["prediction_source"] == "filtered_tracks.csv"
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(0.05)
+    assert metrics["velocity"]["velocity_y_mean_abs_error_px_per_frame"] == pytest.approx(0.05)
+    assert metrics["velocity"]["velocity_y_bias_px_per_frame"] == pytest.approx(0.05)
+    assert metrics["velocity"]["velocity_y_error_std_px_per_frame"] == pytest.approx(0.0)
     assert metrics["velocity"]["velocity_ratio_error"] == pytest.approx(0.025)
     assert metrics["velocity"]["prediction_source"] == "velocities.csv"
     assert metrics["velocity"]["truth_matched_track_id"] == 0
@@ -358,6 +369,7 @@ def test_compute_benchmark_metrics_scores_events_from_tracks_when_available(tmp_
     assert metrics["events"]["predicted_events"] == 2
     assert metrics["events"]["matched_events"] == 1
     assert metrics["events"]["precision"] == pytest.approx(0.5)
+    assert metrics["events"]["birth_false_positive_rate"] == pytest.approx(0.5)
     assert metrics["events"]["recall"] == pytest.approx(1.0)
     assert metrics["events"]["f1"] == pytest.approx(2 / 3)
 
@@ -390,6 +402,8 @@ def test_compute_benchmark_metrics_reports_filtered_track_events(tmp_path):
     assert metrics["filtered_events"]["prediction_rows"] == 2
     assert metrics["filtered_events"]["predicted_events"] == 1
     assert metrics["filtered_events"]["f1"] == pytest.approx(1.0)
+    assert metrics["filtered_tracks"]["tracks"] == 1
+    assert metrics["filtered_tracks"]["median_track_length"] == pytest.approx(2.0)
 
 
 def test_compute_benchmark_metrics_reports_empty_filtered_track_events(tmp_path):
@@ -497,6 +511,9 @@ def test_compute_benchmark_metrics_reports_truth_matched_velocity(tmp_path):
 
     assert metrics["velocity"]["representative_track_id"] == 10
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(-0.9)
+    assert metrics["velocity"]["velocity_y_mean_abs_error_px_per_frame"] == pytest.approx((0.9 + 0.01) / 2)
+    assert metrics["velocity"]["velocity_y_bias_px_per_frame"] == pytest.approx((-0.9 + 0.01) / 2)
+    assert metrics["velocity"]["velocity_y_error_std_px_per_frame"] == pytest.approx(np.std([-0.9, 0.01]))
     assert metrics["velocity"]["truth_matched_track_id"] == 11
     assert metrics["velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(0.01)
     assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(0.005)
@@ -585,6 +602,24 @@ def test_event_metrics_reports_track_fragmentation():
     assert metrics["extra_fragment_events"] == 1
     assert metrics["mean_fragments_per_truth_event"] == pytest.approx(2.0)
     assert metrics["track_fragmentation"] == pytest.approx(1.0)
+
+
+def test_track_metrics_reports_single_frame_tracks():
+    rows = [
+        {"track_id": "a", "frame_index": "0"},
+        {"track_id": "a", "frame_index": "1"},
+        {"track_id": "b", "frame_index": "4"},
+    ]
+
+    metrics = track_metrics(rows)
+
+    assert metrics["tracks"] == 2
+    assert metrics["track_rows"] == 3
+    assert metrics["mean_track_length"] == pytest.approx(1.5)
+    assert metrics["median_track_length"] == pytest.approx(1.5)
+    assert metrics["single_frame_tracks"] == 1
+    assert metrics["single_frame_track_fraction"] == pytest.approx(0.5)
+    assert metrics["mean_track_span_frames"] == pytest.approx(1.5)
 
 
 def test_generate_benchmark_report_writes_json_and_markdown(tmp_path):
