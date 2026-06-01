@@ -701,10 +701,10 @@ Files:
 | File | Meaning |
 |---|---|
 | `sweep_manifest.json` | Generated run configs, output directories, and parameter overrides. |
-| `sweep_metrics.csv` | One row per run with detection precision/recall/F1, false positives per frame, event F1, filtered event F1, track fragmentation, velocity bias, phase RMSE, and map RMSE. |
+| `sweep_metrics.csv` | One row per run with detection precision/recall/F1, false positives per frame, event F1, filtered event F1, PyRecEst track-length statistics, single-frame track counts, track fragmentation, birth false-positive rate, missed-event rate, velocity mean absolute error/bias/variance, phase RMSE, and map RMSE. |
 | `sweep_metrics.json` | JSON form of the same benchmark summary rows. |
 | `sweep_report.md` | Compact Markdown table for quick inspection before plotting curves. |
 
 The sweep summary is intended for precision-recall curves, F1-vs-threshold,
-false-positives-vs-recall, track-fragmentation-vs-threshold, and
-velocity-bias-vs-threshold plots.
+false-positives-vs-recall, track-length-vs-threshold,
+track-fragmentation-vs-threshold, and velocity-bias-vs-threshold plots.

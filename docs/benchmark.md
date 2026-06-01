@@ -48,10 +48,15 @@ bash examples/synthetic_sequence/run.sh
   reconstructed belt map and the true synthetic belt map.
 - `detections`: greedy per-frame IoU matching against synthetic particle boxes,
   with precision, recall, F1, IoU, and centroid-error statistics.
+- `tracks` and `filtered_tracks`: PyRecEst track continuity statistics,
+  including mean/median track length and single-frame track counts before and
+  after final track filtering.
 - `events`: track/event precision, recall, F1, temporal coverage, and
   `track_fragmentation`, the number of extra predicted event fragments per
-  truth event.
-- `velocity`: representative-track vertical velocity and velocity-ratio errors.
+  truth event, plus birth false-positive and missed-event rates.
+- `velocity`: representative-track vertical velocity, velocity-ratio errors,
+  and all-row velocity mean absolute error, bias, standard deviation, and
+  variance.
 - `runtime`: elapsed time, throughput, and peak resident memory when available.
 
 Phase errors are circular because the belt coordinate wraps modulo the belt
@@ -84,11 +89,13 @@ outputs/threshold_sweep/faint_particles/
 ```
 
 `sweep_metrics.csv` includes detection precision/recall/F1, false positives per
-frame, event F1, filtered event F1, track fragmentation, velocity bias, phase
-RMSE, and map RMSE. Plot these columns as precision-recall, F1-vs-threshold,
-false-positives-vs-recall, fragmentation-vs-threshold, and
-velocity-bias-vs-threshold curves. This is stronger evidence than reporting one
-F1 value at one arbitrary threshold.
+frame, event F1, filtered event F1, mean/median track length, single-frame
+tracks, track fragmentation, birth false-positive rate, missed-event rate,
+velocity mean absolute error, velocity bias, phase RMSE, and map RMSE. Plot
+these columns as precision-recall, F1-vs-threshold,
+false-positives-vs-recall, track-length-vs-threshold,
+fragmentation-vs-threshold, and velocity-bias-vs-threshold curves. This is
+stronger evidence than reporting one F1 value at one arbitrary threshold.
 
 ## Why synthetic first?
 
