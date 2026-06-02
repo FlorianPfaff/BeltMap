@@ -10,6 +10,12 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .benchmark import detection_metrics, source_frame_index
+from .track_diagnostics import (
+    DEFAULT_NEAR_THRESHOLD_MARGIN,
+    DEFAULT_SMALL_AREA_THRESHOLD_PX,
+    accepted_track_quality_summary,
+    detection_quality_summary,
+)
 from .visual_qc import (
     DetectionRecord,
     find_preview_paths,
@@ -32,6 +38,8 @@ SUMMARY_FIELDS = [
     "detections_per_frame_median",
     "detections_per_frame_max",
     "detection_area_median_px",
+    "small_detection_share_area_lt_50",
+    "near_threshold_peak_share",
     "labeled_detection_available",
     "labeled_scored_frames",
     "labeled_detection_iou_threshold",
@@ -46,6 +54,9 @@ SUMMARY_FIELDS = [
     "labeled_mean_matched_iou",
     "labeled_mean_centroid_error_px",
     "small_component_share_area_le_8",
+    "small_accepted_tracks_lt_50",
+    "long_small_accepted_tracks_ge_5",
+    "long_small_accepted_tracks_ge_10",
     "velocity_ratio_median",
     "velocity_ratio_q25",
     "velocity_ratio_q75",
@@ -564,12 +575,6 @@ def summarize_run(
     filtered_ratio_stats = describe(filtered_velocity_ratios)
     length_stats = describe(velocity_track_lengths)
     small_components = sum(1 for value in detection_areas if value <= 8.0)
-    plausible_ratios = sum(1 for value in velocity_ratios if 0.0 <= value <= 1.0)
-    plausible_filtered_ratios = sum(
-        1 for value in filtered_velocity_ratios if 0.0 <= value <= 1.0
-    )
-    long_ge_5 = sum(1 for value in velocity_track_lengths if value >= 5.0)
-    long_ge_10 = sum(1 for value in velocity_track_lengths if value >= 10.0)
     detection_threshold = finite_float(data.metadata.get("detection_threshold"))
     if detection_threshold is None:
         config = read_json(data.spec.output_dir / "config_resolved.json")
@@ -577,6 +582,22 @@ def summarize_run(
         threshold_option = options.get("detection_threshold", {})
         if isinstance(threshold_option, dict):
             detection_threshold = finite_float(threshold_option.get("value"))
+    detection_quality = detection_quality_summary(
+        data.detections,
+        small_area_threshold_px=DEFAULT_SMALL_AREA_THRESHOLD_PX,
+        detection_threshold=detection_threshold,
+        near_threshold_margin=DEFAULT_NEAR_THRESHOLD_MARGIN,
+    )
+    accepted_track_quality = accepted_track_quality_summary(
+        data.filtered_tracks,
+        small_area_threshold_px=DEFAULT_SMALL_AREA_THRESHOLD_PX,
+    )
+    plausible_ratios = sum(1 for value in velocity_ratios if 0.0 <= value <= 1.0)
+    plausible_filtered_ratios = sum(
+        1 for value in filtered_velocity_ratios if 0.0 <= value <= 1.0
+    )
+    long_ge_5 = sum(1 for value in velocity_track_lengths if value >= 5.0)
+    long_ge_10 = sum(1 for value in velocity_track_lengths if value >= 10.0)
 
     row = {
         "label": data.spec.label,
@@ -596,7 +617,18 @@ def summarize_run(
         "detections_per_frame_median": detection_stats["median"],
         "detections_per_frame_max": detection_stats["max"],
         "detection_area_median_px": area_stats["median"],
+        "small_detection_share_area_lt_50": detection_quality[
+            "small_detection_share_area_lt_threshold"
+        ],
+        "near_threshold_peak_share": detection_quality["near_threshold_peak_share"],
         "small_component_share_area_le_8": safe_share(small_components, len(detection_areas)),
+        "small_accepted_tracks_lt_50": accepted_track_quality["small_accepted_tracks"],
+        "long_small_accepted_tracks_ge_5": accepted_track_quality[
+            "long_small_accepted_tracks_ge_5"
+        ],
+        "long_small_accepted_tracks_ge_10": accepted_track_quality[
+            "long_small_accepted_tracks_ge_10"
+        ],
         "velocity_ratio_median": ratio_stats["median"],
         "velocity_ratio_q25": ratio_stats["q25"],
         "velocity_ratio_q75": ratio_stats["q75"],
@@ -982,7 +1014,9 @@ def build_markdown_report(
         ("detections_per_frame_median", "median/frame"),
         ("detections_per_frame_max", "max/frame"),
         ("detection_area_median_px", "median area"),
+        ("small_detection_share_area_lt_50", "small det <50 share"),
         ("small_component_share_area_le_8", "small <=8px share"),
+        ("small_accepted_tracks_lt_50", "small accepted tracks"),
         ("velocity_ratio_median", "ratio median"),
         ("velocity_ratio_share_0_to_1", "ratio 0..1 share"),
         ("filtered_velocity_ratio_share_0_to_1", "filtered 0..1 share"),

@@ -10,6 +10,13 @@ from typing import Any, Iterable
 import numpy as np
 from PIL import Image, ImageDraw
 
+from beltmap.track_diagnostics import (
+    DEFAULT_NEAR_THRESHOLD_MARGIN,
+    DEFAULT_SMALL_AREA_THRESHOLD_PX,
+    accepted_track_quality_summary,
+    detection_quality_summary,
+)
+
 
 PLOT_FILENAMES = {
     "phase_corrections": "phase_corrections.png",
@@ -236,6 +243,7 @@ def load_run_data(output_dir: Path) -> dict[str, Any]:
             output_dir / "velocities.csv",
             required_columns=REQUIRED_CSV_COLUMNS["velocities.csv"],
         ),
+        "filtered_tracks": read_csv_rows(output_dir / "filtered_tracks.csv"),
     }
 
 
@@ -499,9 +507,20 @@ def build_markdown_report(
     config = data["config"]
     phase_rows = data["phase_rows"]
     detection_rows = data["detections_per_frame"]
+    all_detection_rows = data.get("detections", [])
     velocity_rows = data["velocities"]
+    filtered_track_rows = data.get("filtered_tracks", [])
     progress_rows = data["progress"]
     recurrent_summary = recurrent_artifact_summary(data.get("recurrent_artifact_detections", []))
+    detection_quality = detection_quality_summary(
+        all_detection_rows,
+        detection_threshold=finite_float(metadata.get("detection_threshold")),
+        near_threshold_margin=DEFAULT_NEAR_THRESHOLD_MARGIN,
+    )
+    accepted_track_quality = accepted_track_quality_summary(
+        filtered_track_rows,
+        small_area_threshold_px=DEFAULT_SMALL_AREA_THRESHOLD_PX,
+    )
 
     corrections = finite_values(phase_rows, "correction_px")
     scores = finite_values(phase_rows, "score")
@@ -587,6 +606,20 @@ def build_markdown_report(
             f"| max | {format_value(detection_stats['max'])} |",
             "",
             plot_line("detections_per_frame", "Detections per frame"),
+            "## Small and weak detections",
+            "",
+            "| Quantity | Value |",
+            "| --- | ---: |",
+            f"| small-area threshold px | {format_value(detection_quality['small_area_threshold_px'])} |",
+            f"| detections with area below threshold | {format_value(detection_quality['small_detections_area_lt_threshold'])} |",
+            f"| small-detection share | {format_value(detection_quality['small_detection_share_area_lt_threshold'])} |",
+            f"| peak-signal near-threshold margin | {format_value(detection_quality['near_threshold_peak_margin'])} |",
+            f"| detections with peak barely above threshold | {format_value(detection_quality['near_threshold_peak_count'])} |",
+            f"| near-threshold peak share | {format_value(detection_quality['near_threshold_peak_share'])} |",
+            f"| accepted tracks with mean area below threshold | {format_value(accepted_track_quality['small_accepted_tracks'])} |",
+            f"| long small accepted tracks >=5 detections | {format_value(accepted_track_quality['long_small_accepted_tracks_ge_5'])} |",
+            f"| long small accepted tracks >=10 detections | {format_value(accepted_track_quality['long_small_accepted_tracks_ge_10'])} |",
+            "",
         ]
     )
     if recurrent_summary["available"]:
@@ -664,6 +697,7 @@ def build_validation_summary(output_dir: Path, data: dict[str, Any]) -> dict[str
     velocity_rows = data["velocities"]
     progress_rows = data["progress"]
     recurrent_rows = data.get("recurrent_artifact_detections", [])
+    filtered_track_rows = data.get("filtered_tracks", [])
 
     corrections = finite_values(phase_rows, "correction_px")
     scores = finite_values(phase_rows, "score")
@@ -693,6 +727,11 @@ def build_validation_summary(output_dir: Path, data: dict[str, Any]) -> dict[str
         "detections": {
             "per_frame": describe(detections),
             "zero_detection_frames": sum(1 for value in detections if value == 0),
+            "quality": detection_quality_summary(
+                data.get("detections", []),
+                detection_threshold=finite_float(metadata.get("detection_threshold")),
+                near_threshold_margin=DEFAULT_NEAR_THRESHOLD_MARGIN,
+            ),
         },
         "velocities": {
             "velocity_ratio_y": describe(velocity_ratios),
@@ -707,6 +746,10 @@ def build_validation_summary(output_dir: Path, data: dict[str, Any]) -> dict[str
             "tracks_ge_5": sum(1 for value in track_lengths if value >= 5),
             "tracks_ge_10": sum(1 for value in track_lengths if value >= 10),
         },
+        "accepted_track_quality": accepted_track_quality_summary(
+            filtered_track_rows,
+            small_area_threshold_px=DEFAULT_SMALL_AREA_THRESHOLD_PX,
+        ),
         "recurrent_artifact_filtering": recurrent_artifact_summary(recurrent_rows),
         "belt_map_progress": final_belt_map_progress(progress_rows),
     }
