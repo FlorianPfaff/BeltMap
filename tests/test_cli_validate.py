@@ -74,6 +74,9 @@ def make_minimal_outputs(output_dir: Path) -> None:
                 "label": 1,
                 "y": 4.0,
                 "x": 5.0,
+                "area_px": 16,
+                "mean_signal": 4.5,
+                "peak_signal": 5.2,
                 "bbox_top": 3,
                 "bbox_left": 4,
                 "bbox_bottom": 6,
@@ -85,6 +88,41 @@ def make_minimal_outputs(output_dir: Path) -> None:
         output_dir / "velocities.csv",
         [
             {"track_id": 0, "velocity_ratio_y": 0.5, "n_detections": 8},
+        ],
+    )
+    write_csv(
+        output_dir / "filtered_tracks.csv",
+        [
+            {
+                "track_id": 0,
+                "track_detection_index": 0,
+                "frame_index": 0,
+                "label": 1,
+                "y": 4.0,
+                "x": 5.0,
+                "area_px": 16,
+                "mean_signal": 4.5,
+                "peak_signal": 5.2,
+                "bbox_top": 3,
+                "bbox_left": 4,
+                "bbox_bottom": 6,
+                "bbox_right": 7,
+            },
+            {
+                "track_id": 0,
+                "track_detection_index": 1,
+                "frame_index": 1,
+                "label": 1,
+                "y": 5.0,
+                "x": 5.0,
+                "area_px": 18,
+                "mean_signal": 4.6,
+                "peak_signal": 5.3,
+                "bbox_top": 4,
+                "bbox_left": 4,
+                "bbox_bottom": 7,
+                "bbox_right": 7,
+            },
         ],
     )
 
@@ -101,8 +139,10 @@ def test_generate_validation_report_writes_markdown_and_plots(tmp_path):
     summary = json.loads(artifacts.summary.read_text(encoding="utf-8"))
     assert summary["run"]["n_images"] == 3
     assert summary["detections"]["zero_detection_frames"] == 1
+    assert summary["detections"]["quality"]["small_detections_area_lt_threshold"] == 1
     assert summary["velocities"]["velocity_ratio_0_to_1_share"] == 1.0
     assert summary["track_lengths"]["tracks_ge_5"] == 1
+    assert summary["accepted_track_quality"]["small_accepted_tracks"] == 1
     report = artifacts.report.read_text(encoding="utf-8")
     assert "# BeltMap validation report" in report
     assert "| selected frames | 3 |" in report
@@ -111,6 +151,7 @@ def test_generate_validation_report_writes_markdown_and_plots(tmp_path):
     assert "velocity_ratio_histogram.png" in report
     assert "track_length_histogram.png" in report
     assert "| tracks >= 5 detections | 1 |" in report
+    assert "| accepted tracks with mean area below threshold | 1 |" in report
     assert set(artifacts.plots) == {
         "phase_corrections",
         "phase_correction_timeseries",

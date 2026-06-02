@@ -48,6 +48,7 @@ def make_run(output_dir: Path, *, threshold: float, count_offset: int) -> None:
                 "y": 2.0,
                 "x": 3.0,
                 "area_px": 6 + count_offset,
+                "peak_signal": 4.2 + count_offset,
                 "bbox_top": 1,
                 "bbox_left": 2,
                 "bbox_bottom": 4,
@@ -59,6 +60,7 @@ def make_run(output_dir: Path, *, threshold: float, count_offset: int) -> None:
                 "y": 4.0,
                 "x": 3.0,
                 "area_px": 12 + count_offset,
+                "peak_signal": 4.8 + count_offset,
                 "bbox_top": 3,
                 "bbox_left": 2,
                 "bbox_bottom": 6,
@@ -139,6 +141,10 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
     assert rows[0]["label"] == "T4.0"
     assert rows[0]["detection_threshold"] == "4.0"
+    assert rows[0]["small_detection_share_area_lt_50"] == "1.0"
+    assert rows[0]["small_accepted_tracks_lt_50"] == "1"
+    assert rows[0]["near_threshold_peak_share"] == "1.0"
+    assert "small accepted tracks" in report
 
 
 def test_generate_comparison_report_includes_fixed_and_raw_preview_sheets(tmp_path):
