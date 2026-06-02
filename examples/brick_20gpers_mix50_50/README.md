@@ -22,4 +22,4 @@ beltmap-apply --config examples/brick_20gpers_mix50_50/beltmap.toml
 beltmap-validate --output-dir outputs
 ```
 
-The configuration uses stricter detection defaults than the Brick 10 g/s example. A 20-frame smoke run on this dataset over-detected badly with the lower 10 g/s threshold, while `threshold = 12.0`, `low_threshold = 0.0`, and `min_area_px = 8` produced a tractable PyRecEst-tracked run. Treat these as starting defaults, then tune only after recording raw, static-average, and BeltMap baseline evidence.
+The configuration uses stricter detection defaults than the Brick 10 g/s example. A 20-frame smoke run on this dataset over-detected badly with the lower 10 g/s threshold, while `threshold = 12.0`, `low_threshold = 0.0`, and `min_area_px = 50` produced a more conservative PyRecEst-tracked run. This removes tiny speckles while preserving the long-track count seen with `min_area_px = 8`; `min_area_px = 100` was also tractable but dropped more velocity tracks. Treat these as starting defaults, then tune only after recording raw, static-average, and BeltMap baseline evidence.
