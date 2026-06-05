@@ -6,7 +6,12 @@ import pytest
 from PIL import Image
 
 from beltmap.cli import compare as cli_compare
-from beltmap.compare_runs import RunSpec, generate_comparison_report, parse_run_spec
+from beltmap.compare_runs import (
+    RunSpec,
+    detection_froc_curve,
+    generate_comparison_report,
+    parse_run_spec,
+)
 
 
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:

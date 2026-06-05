@@ -1123,6 +1123,42 @@ def draw_velocity_ratio_histogram(path: Path, runs: list[RunData]) -> None:
     )
 
 
+def draw_labeled_froc_plot(
+    path: Path,
+    runs: list[RunData],
+    *,
+    labeled_truth: dict[str, Any],
+    truth_iou_threshold: float,
+) -> None:
+    """Draw labeled detection FROC curves for the comparison report."""
+
+    scored_frames = truth_frame_indices(labeled_truth)
+    labeled_series: list[tuple[str, list[float], list[float]]] = []
+    for run in runs:
+        froc = detection_froc_curve(
+            run.detections,
+            labeled_truth,
+            scored_frames=scored_frames,
+            iou_threshold=truth_iou_threshold,
+        )
+        points = monotone_froc_points(list(froc.get("points") or []))
+        labeled_series.append(
+            (
+                run.spec.label,
+                [false_positives_per_frame for false_positives_per_frame, _recall in points],
+                [recall for _false_positives_per_frame, recall in points],
+            )
+        )
+
+    draw_multiline_plot(
+        path,
+        title="Labeled detection FROC",
+        labeled_series=labeled_series,
+        x_label="false positives per scored frame",
+        y_label="recall",
+    )
+
+
 def detection_count_for_frame(data: RunData, frame_index: int, *, filtered: bool = False) -> int:
     """Return the loaded detection count for a frame."""
 
@@ -1253,13 +1289,21 @@ def draw_detection_contact_sheet(
     sheet.save(path)
 
 
-def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path], dict[str, Path]]:
+def write_plots(
+    report_dir: Path,
+    runs: list[RunData],
+    *,
+    labeled_truth: dict[str, Any] | None = None,
+    truth_iou_threshold: float = 0.25,
+) -> tuple[dict[str, Path], dict[str, Path]]:
     """Write comparison plots and contact sheets."""
 
     plots = {
         "detections_per_frame": report_dir / "detections_per_frame_comparison.png",
         "velocity_ratio_histogram": report_dir / "velocity_ratio_histogram_comparison.png",
     }
+    if labeled_truth is not None:
+        plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
     images = {
         "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
         "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
@@ -1406,6 +1450,7 @@ def build_markdown_report(
                 "",
                 f"Truth labels: `{truth_path}`; detection matching IoU threshold: {format_value(truth_iou_threshold)}.",
                 "Detections outside the scored frame set are ignored so sparse labels do not penalize unlabeled frames.",
+                "Use labeled F1 and fixed-budget FROC recall as the primary labeled target metrics.",
                 "",
                 "| " + " | ".join(label for _field, label in labeled_fields) + " |",
                 "| " + " | ".join("---" for _ in labeled_fields) + " |",
