@@ -14,6 +14,7 @@ from beltmap.phase import (
     _box_blur,
     _prepare_for_registration,
     _refine_quadratic_offset,
+    _registration_loss_diagnostics,
     _uniform_filter_axis,
 )
 
@@ -115,6 +116,20 @@ def test_registration_config_rejects_negative_search_radius():
         PhaseRegistrationConfig(search_radius_px=-1).candidate_offsets()
 
 
+def test_registration_loss_diagnostics_reports_ambiguity_and_curvature():
+    diagnostics = _registration_loss_diagnostics(
+        [(4.0, -1.0), (1.0, 0.0), (2.0, 1.0)],
+        best_index=1,
+        best_loss=1.0,
+    )
+
+    assert diagnostics["second_best_loss"] == pytest.approx(2.0)
+    assert diagnostics["loss_gap"] == pytest.approx(1.0)
+    assert diagnostics["loss_gap_ratio"] == pytest.approx(1.0)
+    assert diagnostics["loss_curvature"] == pytest.approx(4.0)
+    assert diagnostics["uncertainty_px"] == pytest.approx(0.5)
+
+
 def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
     offsets = PhaseRegistrationConfig(
         search_radius_px=1.0,
@@ -210,6 +225,11 @@ def test_registration_refines_phase_with_particle_outliers():
     assert circular_error <= 0.25
     assert estimate.method == "registration"
     assert estimate.correction_px < 0
+    assert estimate.second_best_loss is not None
+    assert estimate.loss_gap is not None and estimate.loss_gap >= 0
+    assert estimate.loss_gap_ratio is not None and estimate.loss_gap_ratio >= 0
+    assert estimate.loss_curvature is not None and estimate.loss_curvature > 0
+    assert estimate.uncertainty_px is not None and estimate.uncertainty_px > 0
 
 
 def test_smooth_phase_estimates_rejects_registration_outlier():

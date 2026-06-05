@@ -139,6 +139,14 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("registration_search_step_px", "REGISTRATION_SEARCH_STEP_PX", "float", (("registration_search_step_px",), ("registration", "search_step_px")), "Phase-registration search step in pixels.", "PX"),
     ("registration_subpixel_refinement", "REGISTRATION_SUBPIXEL_REFINEMENT", "bool", (("registration_subpixel_refinement",), ("registration", "subpixel_refinement")), "Refine the best phase-registration offset with a local quadratic fit.", None),
     ("registration_robust_normalization", "REGISTRATION_ROBUST_NORMALIZATION", "bool", (("registration_robust_normalization",), ("registration", "robust_normalization")), "Normalize registration images by a robust MAD scale instead of standard deviation.", None),
+    ("registration_quality_enabled", "REGISTRATION_QUALITY_ENABLED", "bool", (("registration_quality_enabled",), ("registration_quality", "enabled")), "Enable frame-level registration-quality gates after phase estimation.", None),
+    ("registration_quality_action", "REGISTRATION_QUALITY_ACTION", "path", (("registration_quality_action",), ("registration_quality", "action")), "Registration-quality response: report, inflate, or skip.", "ACTION"),
+    ("registration_quality_min_score", "REGISTRATION_QUALITY_MIN_SCORE", "float", (("registration_quality_min_score",), ("registration_quality", "min_score")), "Minimum registration score before a frame is treated as low quality. Use 0 to disable.", "SCORE"),
+    ("registration_quality_min_loss_gap_ratio", "REGISTRATION_QUALITY_MIN_LOSS_GAP_RATIO", "float", (("registration_quality_min_loss_gap_ratio",), ("registration_quality", "min_loss_gap_ratio")), "Minimum relative loss gap to the next-best registration candidate. Use 0 to disable.", "RATIO"),
+    ("registration_quality_max_uncertainty_px", "REGISTRATION_QUALITY_MAX_UNCERTAINTY_PX", "float", (("registration_quality_max_uncertainty_px",), ("registration_quality", "max_uncertainty_px")), "Maximum curvature-derived registration uncertainty. Use 0 to disable.", "PX"),
+    ("registration_quality_max_abs_correction_px", "REGISTRATION_QUALITY_MAX_ABS_CORRECTION_PX", "float", (("registration_quality_max_abs_correction_px",), ("registration_quality", "max_abs_correction_px")), "Maximum absolute phase correction accepted without quality action. Use 0 to disable.", "PX"),
+    ("registration_quality_noise_inflation_factor", "REGISTRATION_QUALITY_NOISE_INFLATION_FACTOR", "float", (("registration_quality_noise_inflation_factor",), ("registration_quality", "noise_inflation_factor")), "Residual-noise multiplier for low-quality frames when action='inflate'.", "FACTOR"),
+    ("registration_quality_uncertainty_inflation_scale", "REGISTRATION_QUALITY_UNCERTAINTY_INFLATION_SCALE", "float", (("registration_quality_uncertainty_inflation_scale",), ("registration_quality", "uncertainty_inflation_scale")), "Additional residual-noise multiplier per uncertainty pixel when action='inflate'.", "SCALE"),
     ("phase_estimation_mode", "PHASE_ESTIMATION_MODE", "path", (("phase_estimation_mode",), ("phase", "estimation_mode")), "Phase source for residual rendering: motion_model, registration, or smoothed_registration.", "MODE"),
     ("phase_refinement_iterations", "PHASE_REFINEMENT_ITERATIONS", "int", (("phase_refinement_iterations",), ("phase_refinement", "iterations")), "Phase-feedback map-refinement iterations. Use 0 to disable.", "N"),
     ("phase_refinement_min_score", "PHASE_REFINEMENT_MIN_SCORE", "float", (("phase_refinement_min_score",), ("phase_refinement", "min_score")), "Minimum registration score accepted for phase-feedback refinement.", "SCORE"),
@@ -349,6 +357,16 @@ robust_normalization = true
 
 [phase]
 estimation_mode = "registration"
+
+[registration_quality]
+enabled = false
+action = "report"
+min_score = 0.0
+min_loss_gap_ratio = 0.0
+max_uncertainty_px = 0.0
+max_abs_correction_px = 0.0
+noise_inflation_factor = 2.0
+uncertainty_inflation_scale = 0.0
 
 [phase_refinement]
 iterations = 0

@@ -76,6 +76,12 @@ from .recurrent_artifacts import (
     score_recurrent_artifact_detections,
     score_recurrent_artifact_detections_excluding_current_revolution,
 )
+from .registration_quality import (
+    REGISTRATION_QUALITY_FIELDS,
+    RegistrationQualityGateConfig,
+    evaluate_registration_quality,
+    normalize_registration_quality_action,
+)
 from .revolution_split import (
     REVOLUTION_SPLIT_DETECTION_SUMMARY_FIELDS,
     REVOLUTION_SPLIT_FRAME_FIELDS,
@@ -107,7 +113,9 @@ DETECTION_FIELDS = [
 ]
 PHASE_FIELDS = [
     "frame_index", "image", "phase_px", "phase_fraction", "phase_rad",
-    "predicted_phase_px", "correction_px", "phase_drift_px", "loss", "score", "method",
+    "predicted_phase_px", "correction_px", "phase_drift_px", "loss", "score",
+    "second_best_loss", "loss_gap", "loss_gap_ratio", "loss_curvature",
+    "uncertainty_px", "method",
 ]
 PHASE_ESTIMATION_MODES = {
     "motion_model",
@@ -319,6 +327,11 @@ def load_phase_estimates(
                 drift_px=optional_csv_float(row, "phase_drift_px") or 0.0,
                 loss=optional_csv_float(row, "loss"),
                 score=optional_csv_float(row, "score"),
+                second_best_loss=optional_csv_float(row, "second_best_loss"),
+                loss_gap=optional_csv_float(row, "loss_gap"),
+                loss_gap_ratio=optional_csv_float(row, "loss_gap_ratio"),
+                loss_curvature=optional_csv_float(row, "loss_curvature"),
+                uncertainty_px=optional_csv_float(row, "uncertainty_px"),
                 method=row.get("method", "loaded_phase_estimate") or "loaded_phase_estimate",
             )
     if not estimates:
@@ -427,6 +440,11 @@ def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> di
         "phase_drift_px": estimate.drift_px,
         "loss": "" if estimate.loss is None else estimate.loss,
         "score": "" if estimate.score is None else estimate.score,
+        "second_best_loss": "" if estimate.second_best_loss is None else estimate.second_best_loss,
+        "loss_gap": "" if estimate.loss_gap is None else estimate.loss_gap,
+        "loss_gap_ratio": "" if estimate.loss_gap_ratio is None else estimate.loss_gap_ratio,
+        "loss_curvature": "" if estimate.loss_curvature is None else estimate.loss_curvature,
+        "uncertainty_px": "" if estimate.uncertainty_px is None else estimate.uncertainty_px,
         "method": estimate.method,
     }
 
@@ -442,6 +460,10 @@ def write_detection_outputs(detections_by_frame: list, detection_rows: list[dict
 
 def write_phase_outputs(phase_rows: list[dict]) -> None:
     rt.write_csv(rt.OUT / "phase_estimates.csv", phase_rows, PHASE_FIELDS)
+
+
+def write_registration_quality_outputs(registration_quality_rows: list[dict]) -> None:
+    rt.write_csv(rt.OUT / "registration_quality.csv", registration_quality_rows, REGISTRATION_QUALITY_FIELDS)
 
 
 def normalize_phase_estimation_mode(value: str) -> str:
@@ -1577,6 +1599,19 @@ def main() -> None:
         subpixel_refinement=env_bool("REGISTRATION_SUBPIXEL_REFINEMENT", True),
         robust_normalization=env_bool("REGISTRATION_ROBUST_NORMALIZATION", True),
     )
+    registration_quality_config = RegistrationQualityGateConfig(
+        enabled=env_bool("REGISTRATION_QUALITY_ENABLED", False),
+        action=normalize_registration_quality_action(
+            os.getenv("REGISTRATION_QUALITY_ACTION", "report")
+        ),
+        min_score=optional_positive_float("REGISTRATION_QUALITY_MIN_SCORE", 0.0),
+        min_loss_gap_ratio=optional_positive_float("REGISTRATION_QUALITY_MIN_LOSS_GAP_RATIO", 0.0),
+        max_uncertainty_px=optional_positive_float("REGISTRATION_QUALITY_MAX_UNCERTAINTY_PX", 0.0),
+        max_abs_correction_px=optional_positive_float("REGISTRATION_QUALITY_MAX_ABS_CORRECTION_PX", 0.0),
+        noise_inflation_factor=rt.env_float("REGISTRATION_QUALITY_NOISE_INFLATION_FACTOR", 2.0, minimum=1.0),
+        uncertainty_inflation_scale=rt.env_float("REGISTRATION_QUALITY_UNCERTAINTY_INFLATION_SCALE", 0.0, minimum=0.0),
+    )
+    registration_quality_config.validate()
     phase_estimation_mode = normalize_phase_estimation_mode(
         os.getenv("PHASE_ESTIMATION_MODE", "registration")
     )
@@ -1758,6 +1793,14 @@ def main() -> None:
         registration_search_step_px=registration_config.search_step_px,
         registration_subpixel_refinement=registration_config.subpixel_refinement,
         registration_robust_normalization=registration_config.robust_normalization,
+        registration_quality_enabled=registration_quality_config.enabled,
+        registration_quality_action=registration_quality_config.action,
+        registration_quality_min_score=registration_quality_config.min_score,
+        registration_quality_min_loss_gap_ratio=registration_quality_config.min_loss_gap_ratio,
+        registration_quality_max_uncertainty_px=registration_quality_config.max_uncertainty_px,
+        registration_quality_max_abs_correction_px=registration_quality_config.max_abs_correction_px,
+        registration_quality_noise_inflation_factor=registration_quality_config.noise_inflation_factor,
+        registration_quality_uncertainty_inflation_scale=registration_quality_config.uncertainty_inflation_scale,
         phase_estimation_mode=phase_estimation_mode,
         phase_drift_enabled=phase_drift_config.enabled,
         phase_drift_smoothing_alpha=phase_drift_config.smoothing_alpha,
@@ -2122,6 +2165,7 @@ def main() -> None:
     cross_map_agreement_removed = 0
     phase_rows: list[dict] = []
     photometric_rows: list[dict] = []
+    registration_quality_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
     smoothed_phase_estimates = (
         None
@@ -2221,6 +2265,14 @@ def main() -> None:
         phase_row = phase_estimate_row(frame_index, path, residual, float(map_height))
         phase_rows.append(phase_row)
         phase_px_by_frame.append(float(phase_row["phase_px"]))
+        residual, registration_quality_row, skip_detections = evaluate_registration_quality(
+            residual,
+            frame_index=frame_index,
+            image=_relative_image_name(path, data_dir=rt.DATA),
+            config=registration_quality_config,
+        )
+        if registration_quality_row is not None:
+            registration_quality_rows.append(registration_quality_row)
         if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
             rt.save_scaled_png(frame, rt.OUT / f"raw_frame_{frame_index:06d}.png", scale=(0.0, 255.0))
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
@@ -2234,19 +2286,22 @@ def main() -> None:
                 and local_illumination_field is not None
             ):
                 rt.save_png(local_illumination_field, rt.OUT / f"local_illumination_field_frame_{frame_index:06d}.png")
-        mask = detect_particles_from_residual(
-            residual,
-            threshold=detection_threshold,
-            mode=detection_mode,
-            low_threshold=detection_low_threshold,
-        )
-        detections = extract_particle_detections(
-            mask,
-            residual=residual,
-            signal_mode=detection_mode,
-            frame_index=float(frame_index),
-            config=component_config,
-        )
+        if skip_detections:
+            detections = []
+        else:
+            mask = detect_particles_from_residual(
+                residual,
+                threshold=detection_threshold,
+                mode=detection_mode,
+                low_threshold=detection_low_threshold,
+            )
+            detections = extract_particle_detections(
+                mask,
+                residual=residual,
+                signal_mode=detection_mode,
+                frame_index=float(frame_index),
+                config=component_config,
+            )
         if map_risk_maps is not None:
             map_risk_scores = score_map_risk_detections(
                 detections,
@@ -2284,6 +2339,8 @@ def main() -> None:
                 )
             if photometric_enabled:
                 write_photometric_outputs(photometric_rows)
+            if registration_quality_config.enabled:
+                write_registration_quality_outputs(registration_quality_rows)
             rt.emit("detect", "wrote partial detection and phase outputs", processed_frames=processed, total_detections=len(detection_rows), phase_estimates=len(phase_rows))
         if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
             dt = rt.time.perf_counter() - detection_start
@@ -2609,7 +2666,9 @@ def main() -> None:
         write_photometric_outputs(photometric_rows)
     if detection_local_illumination_correction:
         write_local_illumination_outputs(local_illumination_rows)
-    rt.emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows), local_illumination_rows=len(local_illumination_rows))
+    if registration_quality_config.enabled:
+        write_registration_quality_outputs(registration_quality_rows)
+    rt.emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows), local_illumination_rows=len(local_illumination_rows), registration_quality_rows=len(registration_quality_rows))
 
     max_match = os.getenv("MAX_MATCH_DISTANCE_PX", "").strip()
     tracking_config = ParticleTrackingConfig(
@@ -2700,6 +2759,15 @@ def main() -> None:
         if reused_phase_estimates is not None
         else phase_estimation_mode
     )
+    registration_quality_rejected_frames = sum(
+        1 for row in registration_quality_rows if not row.get("accepted", True)
+    )
+    registration_quality_inflated_frames = sum(
+        1 for row in registration_quality_rows if row.get("action") == "inflate"
+    )
+    registration_quality_skipped_frames = sum(
+        1 for row in registration_quality_rows if row.get("action") == "skip"
+    )
     phase_velocity_metadata = texture_phase_velocity_summary(
         phase_rows,
         period_px=float(map_height),
@@ -2770,6 +2838,18 @@ def main() -> None:
         "registration_search_step_px": registration_config.search_step_px,
         "registration_subpixel_refinement": registration_config.subpixel_refinement,
         "registration_robust_normalization": registration_config.robust_normalization,
+        "registration_quality_enabled": registration_quality_config.enabled,
+        "registration_quality_action": registration_quality_config.action,
+        "registration_quality_min_score": registration_quality_config.min_score,
+        "registration_quality_min_loss_gap_ratio": registration_quality_config.min_loss_gap_ratio,
+        "registration_quality_max_uncertainty_px": registration_quality_config.max_uncertainty_px,
+        "registration_quality_max_abs_correction_px": registration_quality_config.max_abs_correction_px,
+        "registration_quality_noise_inflation_factor": registration_quality_config.noise_inflation_factor,
+        "registration_quality_uncertainty_inflation_scale": registration_quality_config.uncertainty_inflation_scale,
+        "n_registration_quality_rows": len(registration_quality_rows),
+        "n_registration_quality_rejected_frames": registration_quality_rejected_frames,
+        "n_registration_quality_inflated_frames": registration_quality_inflated_frames,
+        "n_registration_quality_skipped_frames": registration_quality_skipped_frames,
         "phase_refinement_iterations": phase_refinement_iterations,
         "phase_refinement_min_score": phase_refinement_min_score,
         "phase_refinement_max_abs_correction_px": phase_refinement_max_abs_correction_px,

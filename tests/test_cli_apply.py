@@ -340,6 +340,40 @@ grow_threshold = 2.0
     }
 
 
+def test_registration_quality_config_is_resolved_to_driver_environment(tmp_path):
+    config_path = tmp_path / "registration-quality.toml"
+    config_path.write_text(
+        """
+[registration_quality]
+enabled = true
+action = "inflate"
+min_score = 0.2
+min_loss_gap_ratio = 0.05
+max_uncertainty_px = 1.5
+max_abs_correction_px = 4.0
+noise_inflation_factor = 3.0
+uncertainty_inflation_scale = 0.25
+""".strip(),
+        encoding="utf-8",
+    )
+
+    env_updates, _report = cli.resolve_driver_env(
+        parse_args("--config", str(config_path)),
+        environ={},
+    )
+
+    assert env_updates == {
+        "REGISTRATION_QUALITY_ACTION": "inflate",
+        "REGISTRATION_QUALITY_ENABLED": "1",
+        "REGISTRATION_QUALITY_MAX_ABS_CORRECTION_PX": "4",
+        "REGISTRATION_QUALITY_MAX_UNCERTAINTY_PX": "1.5",
+        "REGISTRATION_QUALITY_MIN_LOSS_GAP_RATIO": "0.05",
+        "REGISTRATION_QUALITY_MIN_SCORE": "0.2",
+        "REGISTRATION_QUALITY_NOISE_INFLATION_FACTOR": "3",
+        "REGISTRATION_QUALITY_UNCERTAINTY_INFLATION_SCALE": "0.25",
+    }
+
+
 def test_removed_tracking_assignment_config_is_rejected(tmp_path):
     config_path = tmp_path / "legacy-tracking.toml"
     config_path.write_text(
