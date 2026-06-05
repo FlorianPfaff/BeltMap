@@ -45,6 +45,12 @@ directory:
 outputs/
   belt_map.npy
   belt_map.png
+  belt_map_support.npy
+  belt_map_observed_mask.npy
+  belt_map_interpolated_mask.npy
+  belt_map_low_support_mask.npy
+  belt_map_risk.npy
+  map_risk_detections.csv
   config_resolved.json
   detections.csv
   detections_per_frame.csv
@@ -54,11 +60,24 @@ outputs/
   phase_estimates.csv
   progress.jsonl
   progress_latest.json
+  local_illumination_fits.csv # only when detection local illumination correction is enabled
   recurrent_artifact_counts.npy  # only when recurrent artifact map is built
   recurrent_artifact_counts.png  # only when recurrent artifact map is built
   recurrent_artifact_detections.csv # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.npy     # only when recurrent artifact filtering is enabled
   recurrent_artifact_map.png     # only when recurrent artifact filtering is enabled
+  revolution_split_detection_summary.csv # only when train/eval split is enabled
+  revolution_split_frames.csv    # only when train/eval split is enabled
+  revolution_split_ghost_detections.csv # only when train/eval split is enabled
+  revolution_split_revolutions.csv # only when train/eval split is enabled
+  revolution_split_score_summary.csv # only when train/eval split is enabled
+  revolution_split_summary.json  # only when train/eval split is enabled
+  revolution_split_train_artifact_counts.npy # only when train/eval split is enabled
+  revolution_split_train_artifact_counts.png # only when train/eval split is enabled
+  revolution_split_train_artifact_exposure_counts.npy # only when train/eval split is enabled
+  revolution_split_train_artifact_map.npy # only when train/eval split is enabled
+  revolution_split_train_artifact_map.png # only when train/eval split is enabled
+  revolution_split_train_artifact_probability.npy # only when train/eval split is enabled
   raw_frame_000000.png
   raw_frame_000001.png
   raw_frame_000002.png
@@ -70,6 +89,7 @@ outputs/
   residual_fixed_frame_000002.png
   static_background.npy   # only when static-background learning or reuse is enabled
   static_background.png   # only when static-background learning or reuse is enabled
+  local_illumination_field_frame_000000.png # only for previewed frames when enabled
   static_noise.npy        # only when static-noise learning or reuse is enabled
   static_noise.png        # only when static-noise learning or reuse is enabled
   tracks.csv
@@ -139,6 +159,31 @@ Coordinates:
 Interpretation: row `phase_px + image_y` in this array is the clean belt value
 expected at crop-local image row `image_y` for the corresponding frame.
 
+## `belt_map_support.npy` and `belt_map_risk.npy`
+
+Purpose: belt-coordinate diagnostics for under-observed or interpolated map
+regions.  `belt_map_support.npy` stores the accumulation weight for each map
+pixel.  With fractional splatting this is an effective observation count rather
+than an integer frame count.  `belt_map_risk.npy` is normalized to `[0, 1]`: 1
+means the map value was interpolated or has zero support, and 0 means the support
+is at least `MAP_RISK_MIN_SUPPORT` / `map_risk.min_support`.
+
+Related masks:
+
+- `belt_map_observed_mask.npy`: true where support is positive;
+- `belt_map_interpolated_mask.npy`: true where no sampled unmasked pixel
+  contributed and the map value was filled by interpolation;
+- `belt_map_low_support_mask.npy`: true where support is below the configured
+  minimum support.
+
+All of these arrays have shape `(belt_map_height_px, crop_width_px)` and use the
+same belt-coordinate convention as `belt_map.npy`.  PNG versions are display-only
+quick-look images.
+
+`map_risk_detections.csv` is written when support is available.  It contains the
+same columns as `detections.csv` plus `map_risk_rejected`, and includes rows
+before optional map-risk rejection is applied.
+
 ## `static_background.npy`
 
 Purpose: optional additive image-fixed background learned from belt-subtracted
@@ -173,6 +218,46 @@ raw = image - belt_background - static_background
 When detection-only reuse mode is enabled with `REUSE_STATIC_BACKGROUND_PATH` or
 `reuse.static_background_path`, this file is a copy of the loaded additive
 static-background map in the new output directory.
+
+## `local_illumination_fits.csv`
+
+Purpose: per-frame diagnostics for the optional local low-frequency photometric
+correction used before final detection. This file is written only when
+`DETECTION_LOCAL_ILLUMINATION_CORRECTION` or
+`detection.local_illumination_correction` is enabled.
+
+The correction fits a smooth additive field from particle-masked tile medians of
+the raw residual and recomputes the residual against
+`expected_background + field`. It is intended as an ablation, not as a default
+post-processing step.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `frame_index` | frame | Zero-based processed-frame index. |
+| `image` | path | Input image path relative to the configured image directory. |
+| `tile_px` | px | Tile size used for the low-frequency field. |
+| `mask_threshold` | z | Strong particle-mask threshold used during fitting. |
+| `mask_mode` | mode | Particle-mask mode used during fitting. |
+| `mask_grow_threshold` | z | Lower hysteresis threshold for `hysteresis_abs` masks. |
+| `mask_dilation_px` | px | Particle-mask dilation radius. |
+| `mask_margin_px` | px | Particle-box safety margin. |
+| `mask_min_area_px` | px | Minimum component area for particle masks. |
+| `fit_pixels` | pixels | Number of valid, non-masked residual pixels used to fit the field. |
+| `masked_pixels` | pixels | Valid residual pixels excluded as particle-like before fitting. |
+| `field_median_gray` | gray | Median fitted additive field value over valid residual pixels. |
+| `field_p05_gray` | gray | Fifth percentile of the fitted field. |
+| `field_p95_gray` | gray | Ninety-fifth percentile of the fitted field. |
+| `field_max_abs_gray` | gray | Maximum absolute fitted field value. |
+| `residual_median_before_gray` | gray | Median raw residual over fit pixels before correction. |
+| `residual_median_after_gray` | gray | Median raw residual over the same fit pixels after correction. |
+| `residual_rmse_before_gray` | gray | RMSE of raw residual over fit pixels before correction. |
+| `residual_rmse_after_gray` | gray | RMSE of raw residual over the same fit pixels after correction. |
+| `status` | text | `ok`, `skipped:insufficient_fit_pixels`, or another skip reason. |
+
+For previewed frames, the driver also writes
+`local_illumination_field_frame_XXXXXX.png` as a contrast-scaled quick-look image.
 
 ## `belt_map.png`
 
@@ -341,6 +426,12 @@ Columns:
 | `bbox_right` | px | Right edge of the half-open crop-local bounding box. |
 | `mean_signal` | z | Mean normalized residual over the component. |
 | `peak_signal` | z | Maximum normalized residual over the component. |
+| `map_support_min` | effective observations | Minimum belt-map support over the detection bbox, after rendering support into the frame. Empty when support/risk diagnostics are unavailable. |
+| `map_support_mean` | effective observations | Mean belt-map support over the detection bbox. |
+| `map_risk_mean` | 1 | Mean normalized map risk over the detection bbox. |
+| `map_risk_max` | 1 | Maximum normalized map risk over the detection bbox. |
+| `map_interpolated_fraction` | 1 | Fraction of the detection bbox covered by interpolated belt-map pixels. |
+| `map_low_support_fraction` | 1 | Fraction of the detection bbox below `map_risk.min_support`. |
 | `recurrent_artifact_overlap_fraction` | 1 | Fraction of the detection bbox covered by the recurrent artifact map; empty if recurrent artifact filtering was disabled. |
 | `recurrent_artifact_required_peak_signal` | z | Soft-mode peak residual needed to survive artifact filtering; empty in hard mode or when recurrent artifact filtering was disabled. |
 
@@ -440,6 +531,14 @@ Important fields:
 | `detection_min_bbox_height_px` | px | Optional minimum component bounding-box height, or `null` when disabled. |
 | `detection_max_bbox_aspect_ratio` | ratio | Optional maximum component bounding-box aspect ratio, or `null` when disabled. |
 | `detection_min_bbox_extent` | fraction | Optional minimum component extent, or `null` when disabled. |
+| `detection_local_illumination_correction` | bool | Whether local low-frequency photometric correction was enabled before final detection. |
+| `detection_local_illumination_tile_px` | px | Tile size used for local illumination correction. |
+| `detection_local_illumination_min_pixels` | pixels | Minimum number of non-particle residual pixels required to fit a frame-level field. |
+| `detection_local_illumination_mask_threshold` | z | Strong particle-mask threshold used during local illumination fitting. |
+| `detection_local_illumination_mask_mode` | mode | Particle-mask mode used during local illumination fitting. |
+| `detection_local_illumination_mask_margin_px` | px | Particle-box safety margin used during local illumination fitting. |
+| `detection_local_illumination_mask_min_area_px` | px | Minimum particle-mask component area used during local illumination fitting. |
+| `n_local_illumination_rows` | count | Rows written to `local_illumination_fits.csv`, or 0 when the ablation is disabled. |
 | `map_mask_iterations` | count | Number of particle-mask refinement iterations used for map building. |
 | `map_frame_median_offset_correction` | bool | Whether sampled frames were median-offset normalized during map reconstruction. |
 | `map_particle_mask_threshold` | z | Threshold used for particle masking during map reconstruction. |
@@ -481,6 +580,8 @@ Important fields:
 | `track_filter_min_velocity_ratio_y` | ratio | Minimum accepted `velocity_ratio_y`. |
 | `track_filter_max_velocity_ratio_y` | ratio | Maximum accepted `velocity_ratio_y`. |
 | `track_filter_max_abs_x_velocity_px_per_frame` | px/frame | Optional lateral velocity gate, or `null` when disabled. |
+| `track_filter_max_recurrent_artifact_track_score` | fraction | Optional maximum accepted track-level recurrent-artifact score, or `null` when disabled. |
+| `track_filter_recurrent_artifact_detection_threshold` | fraction | Per-detection recurrent-artifact evidence threshold used to compute the track-level hit fraction. |
 | `auto_velocity_pair_shifts` | px/frame | List of adjacent-frame shifts used for automatic belt-velocity estimation. |
 | `elapsed_s` | s | Total elapsed runtime reported by the driver. |
 
@@ -568,6 +669,14 @@ Columns:
 | `passes_min_track_length` | bool | Whether the track is long enough for the filter. |
 | `passes_velocity_ratio` | bool | Whether `velocity_ratio_y` lies in the configured interval. |
 | `passes_lateral_velocity` | bool | Whether the optional lateral-velocity gate passes. |
+| `n_recurrent_artifact_scored_detections` | count | Number of track detections carrying recurrent-artifact overlap or probability values. |
+| `mean_recurrent_artifact_overlap_fraction` | fraction | Mean detection-level recurrent-artifact overlap for scored detections, or empty when no overlap values are present. |
+| `max_recurrent_artifact_overlap_fraction` | fraction | Maximum detection-level recurrent-artifact overlap in the track, or empty when no overlap values are present. |
+| `mean_recurrent_artifact_probability` | fraction | Mean recurrent-artifact probability for scored detections, or empty when no probability values are present. |
+| `max_recurrent_artifact_probability` | fraction | Maximum recurrent-artifact probability in the track, or empty when no probability values are present. |
+| `recurrent_artifact_hit_fraction` | fraction | Fraction of scored detections whose artifact evidence is at least `track_filter.recurrent_artifact_detection_threshold`. |
+| `recurrent_artifact_track_score` | fraction | Track-level artifact score: mean artifact evidence multiplied by hit fraction. This favors repeated belt-coordinate evidence over a single suspicious detection. |
+| `passes_recurrent_artifact` | bool | Whether the optional recurrent-artifact track gate passes. |
 | `accepted` | bool | Whether all enabled gates pass. |
 | `plausibility_score` | 1 | Smooth helper score in `[0, 1]`; use `accepted` for the hard filter. |
 

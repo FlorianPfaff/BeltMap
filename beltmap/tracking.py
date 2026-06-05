@@ -68,6 +68,12 @@ class ParticleDetection:
     bbox_right: int
     mean_signal: float | None = None
     peak_signal: float | None = None
+    map_support_min: float | None = None
+    map_support_mean: float | None = None
+    map_risk_mean: float | None = None
+    map_risk_max: float | None = None
+    map_interpolated_fraction: float | None = None
+    map_low_support_fraction: float | None = None
     recurrent_artifact_overlap_fraction: float | None = None
     recurrent_artifact_probability: float | None = None
     recurrent_artifact_required_peak_signal: float | None = None
@@ -127,6 +133,8 @@ class TrackFilterConfig:
     min_velocity_ratio_y: float = 0.0
     max_velocity_ratio_y: float = 1.1
     max_abs_x_velocity_px_per_frame: float | None = None
+    max_recurrent_artifact_track_score: float | None = None
+    recurrent_artifact_detection_threshold: float = 0.3
 
 
 @dataclass(frozen=True)
@@ -146,6 +154,27 @@ class ParticleTrackScore:
     passes_lateral_velocity: bool
     accepted: bool
     plausibility_score: float
+    n_recurrent_artifact_scored_detections: int = 0
+    mean_recurrent_artifact_overlap_fraction: float | None = None
+    max_recurrent_artifact_overlap_fraction: float | None = None
+    mean_recurrent_artifact_probability: float | None = None
+    max_recurrent_artifact_probability: float | None = None
+    recurrent_artifact_hit_fraction: float = 0.0
+    recurrent_artifact_track_score: float = 0.0
+    passes_recurrent_artifact: bool = True
+
+
+@dataclass(frozen=True)
+class TrackRecurrentArtifactSummary:
+    """Aggregate recurrent-artifact evidence for one PyRecEst track."""
+
+    n_scored_detections: int = 0
+    mean_overlap_fraction: float | None = None
+    max_overlap_fraction: float | None = None
+    mean_probability: float | None = None
+    max_probability: float | None = None
+    hit_fraction: float = 0.0
+    recurrent_artifact_track_score: float = 0.0
 
 
 def extract_particle_detections(
@@ -651,8 +680,9 @@ def score_particle_velocities(
     velocities: Sequence[ParticleVelocity],
     *,
     config: TrackFilterConfig | None = None,
+    tracks: Sequence[ParticleTrack] | None = None,
 ) -> list[ParticleTrackScore]:
-    """Score velocity rows with conservative physical plausibility gates.
+    """Score velocity rows with physical and recurrent-artifact gates.
 
     The score is intended for filtering particle tracks after detection. It does
     not modify the raw detections or raw velocity estimates. A track is accepted
@@ -662,8 +692,22 @@ def score_particle_velocities(
 
     cfg = config or TrackFilterConfig()
     _validate_track_filter_config(cfg)
+    if cfg.max_recurrent_artifact_track_score is not None and tracks is None:
+        raise ValueError(
+            "tracks are required when max_recurrent_artifact_track_score is set"
+        )
+    tracks_by_id: dict[int, ParticleTrack] = (
+        {}
+        if tracks is None
+        else {track.track_id: track for track in tracks}
+    )
+
     scores: list[ParticleTrackScore] = []
     for velocity in velocities:
+        recurrent_summary = _track_recurrent_artifact_summary(
+            tracks_by_id.get(velocity.track_id),
+            config=cfg,
+        )
         passes_length = velocity.n_detections >= cfg.min_track_length
         passes_ratio = (
             cfg.min_velocity_ratio_y
@@ -674,6 +718,11 @@ def score_particle_velocities(
         passes_lateral = (
             cfg.max_abs_x_velocity_px_per_frame is None
             or abs_x_velocity <= cfg.max_abs_x_velocity_px_per_frame
+        )
+        passes_recurrent = (
+            cfg.max_recurrent_artifact_track_score is None
+            or recurrent_summary.recurrent_artifact_track_score
+            <= cfg.max_recurrent_artifact_track_score
         )
         length_score = min(1.0, velocity.n_detections / cfg.min_track_length)
         ratio_score = _interval_score(
@@ -686,7 +735,8 @@ def score_particle_velocities(
             if cfg.max_abs_x_velocity_px_per_frame is None
             else max(0.0, 1.0 - abs_x_velocity / cfg.max_abs_x_velocity_px_per_frame)
         )
-        accepted = passes_length and passes_ratio and passes_lateral
+        recurrent_score = max(0.0, 1.0 - recurrent_summary.recurrent_artifact_track_score)
+        accepted = passes_length and passes_ratio and passes_lateral and passes_recurrent
         scores.append(
             ParticleTrackScore(
                 track_id=velocity.track_id,
@@ -701,20 +751,100 @@ def score_particle_velocities(
                 passes_velocity_ratio=passes_ratio,
                 passes_lateral_velocity=passes_lateral,
                 accepted=accepted,
-                plausibility_score=length_score * ratio_score * lateral_score,
+                plausibility_score=length_score * ratio_score * lateral_score * recurrent_score,
+                n_recurrent_artifact_scored_detections=(
+                    recurrent_summary.n_scored_detections
+                ),
+                mean_recurrent_artifact_overlap_fraction=(
+                    recurrent_summary.mean_overlap_fraction
+                ),
+                max_recurrent_artifact_overlap_fraction=(
+                    recurrent_summary.max_overlap_fraction
+                ),
+                mean_recurrent_artifact_probability=recurrent_summary.mean_probability,
+                max_recurrent_artifact_probability=recurrent_summary.max_probability,
+                recurrent_artifact_hit_fraction=recurrent_summary.hit_fraction,
+                recurrent_artifact_track_score=(
+                    recurrent_summary.recurrent_artifact_track_score
+                ),
+                passes_recurrent_artifact=passes_recurrent,
             )
         )
     return scores
+
+
+def _track_recurrent_artifact_summary(
+    track: ParticleTrack | None,
+    *,
+    config: TrackFilterConfig,
+) -> TrackRecurrentArtifactSummary:
+    if track is None or track.n_detections <= 0:
+        return TrackRecurrentArtifactSummary()
+
+    overlaps: list[float] = []
+    probabilities: list[float] = []
+    decision_values: list[float] = []
+    for detection in track.detections:
+        overlap = _finite_unit_interval_value(
+            detection.recurrent_artifact_overlap_fraction
+        )
+        probability = _finite_unit_interval_value(
+            detection.recurrent_artifact_probability
+        )
+        candidates: list[float] = []
+        if overlap is not None:
+            overlaps.append(overlap)
+            candidates.append(overlap)
+        if probability is not None:
+            probabilities.append(probability)
+            candidates.append(probability)
+        if candidates:
+            decision_values.append(max(candidates))
+
+    if not decision_values:
+        return TrackRecurrentArtifactSummary()
+
+    decisions = np.asarray(decision_values, dtype=np.float64)
+    hit_fraction = float(
+        np.count_nonzero(decisions >= config.recurrent_artifact_detection_threshold)
+        / decisions.size
+    )
+    track_score = float(np.mean(decisions) * hit_fraction)
+    return TrackRecurrentArtifactSummary(
+        n_scored_detections=int(decisions.size),
+        mean_overlap_fraction=_mean_or_none(overlaps),
+        max_overlap_fraction=None if not overlaps else float(np.max(overlaps)),
+        mean_probability=_mean_or_none(probabilities),
+        max_probability=None if not probabilities else float(np.max(probabilities)),
+        hit_fraction=hit_fraction,
+        recurrent_artifact_track_score=track_score,
+    )
+
+
+def _finite_unit_interval_value(value: float | None) -> float | None:
+    if value is None:
+        return None
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        return None
+    return min(1.0, max(0.0, parsed))
+
+
+def _mean_or_none(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    return float(np.mean(np.asarray(values, dtype=np.float64)))
 
 
 def filter_particle_velocities(
     velocities: Sequence[ParticleVelocity],
     *,
     config: TrackFilterConfig | None = None,
+    tracks: Sequence[ParticleTrack] | None = None,
 ) -> list[ParticleVelocity]:
     """Return velocity rows accepted by ``score_particle_velocities``."""
 
-    scores = score_particle_velocities(velocities, config=config)
+    scores = score_particle_velocities(velocities, config=config, tracks=tracks)
     accepted_ids = {score.track_id for score in scores if score.accepted}
     return [velocity for velocity in velocities if velocity.track_id in accepted_ids]
 
@@ -866,6 +996,18 @@ def _validate_track_filter_config(config: TrackFilterConfig) -> None:
         and config.max_abs_x_velocity_px_per_frame <= 0
     ):
         raise ValueError("max_abs_x_velocity_px_per_frame must be positive when set")
+    if config.max_recurrent_artifact_track_score is not None and not (
+        0.0 <= config.max_recurrent_artifact_track_score <= 1.0
+    ):
+        raise ValueError(
+            "max_recurrent_artifact_track_score must be in [0, 1] when set"
+        )
+    if not (
+        0.0 <= config.recurrent_artifact_detection_threshold <= 1.0
+    ):
+        raise ValueError(
+            "recurrent_artifact_detection_threshold must be in [0, 1]"
+        )
 
 
 def _interval_score(value: float, *, lower: float, upper: float) -> float:
