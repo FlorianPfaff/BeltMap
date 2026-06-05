@@ -80,6 +80,12 @@ class BeltMapBuildResult:
     phase_by_frame: np.ndarray | None = None
     sample_frame_indices: tuple[int, ...] = ()
 
+    @property
+    def sample_indices(self) -> tuple[int, ...]:
+        """Frame indices sampled for this map build."""
+
+        return self.sample_frame_indices
+
 
 def belt_phase(frame_index: int, velocity: float, reference_phase: float, period: float | None) -> float:
     phase = reference_phase - velocity * frame_index
@@ -550,7 +556,8 @@ def accumulate_belt_map(
     robust_huber_delta: float = 3.0,
     robust_min_scale: float = 1.0,
     robust_pixel_estimator: str = "mean",
-) -> tuple[np.ndarray, dict[str, int]]:
+    return_support: bool = False,
+) -> tuple[np.ndarray, dict[str, int]] | tuple[np.ndarray, np.ndarray, dict[str, int]]:
     _, _, crop_height, crop_width = region
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
@@ -1251,6 +1258,16 @@ def select_map_sample_indices(
         crop_height_px=max(1, crop_height),
     )
     return sorted({candidate_indices[sample.frame_index] for sample in selected})
+
+
+def validate_map_sample_frame_indices(
+    samples: Sequence[int] | None,
+    *,
+    frame_count: int,
+) -> list[int] | None:
+    if samples is None:
+        return None
+    return _validate_map_sample_indices_override(samples, frame_count=frame_count)
 
 
 def _validate_map_sample_indices_override(

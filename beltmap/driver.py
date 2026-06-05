@@ -38,12 +38,7 @@ from .advanced_quality import (
     theil_sen_slope,
     unwrap_periodic,
 )
-from .cross_map_agreement import (
-    CrossMapAgreementConfig,
-    CrossMapAgreementScore,
-    filter_detections_by_agreement,
-    score_cross_map_agreement,
-)
+from .cross_map_agreement import CrossMapAgreementConfig
 from .detection import detect_particles_from_residual_hysteresis, normalize_detection_mode
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
@@ -147,6 +142,11 @@ RECURRENT_ARTIFACT_DETECTION_FIELDS = [
 MAP_RISK_DETECTION_FIELDS = [
     *DETECTION_FIELDS,
     "map_risk_rejected",
+]
+CROSS_MAP_AGREEMENT_FIELDS = [
+    *DETECTION_FIELDS,
+    "cross_map_agreement_accepted",
+    "cross_map_agreement_confirming_maps",
 ]
 TRACK_SCORE_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
@@ -848,19 +848,22 @@ def apply_local_illumination_correction(
     frame: np.ndarray,
     residual: ResidualImage,
     residual_config: ResidualConfig,
+    frame_index: int,
+    path: Path,
     enabled: bool,
     tile_px: int,
+    min_pixels: int,
     mask_threshold: float,
     mask_mode: str,
     mask_grow_threshold: float,
     mask_dilation_px: int,
     mask_margin_px: int,
     mask_min_area_px: int,
-) -> ResidualImage:
+) -> tuple[ResidualImage, dict | None, np.ndarray | None]:
     """Subtract a low-frequency additive residual field before detection."""
 
     if not enabled:
-        return residual
+        return residual, None, None
     if tile_px < 1:
         raise ValueError("local illumination tile size must be positive")
 
@@ -874,6 +877,33 @@ def apply_local_illumination_correction(
         min_area_px=mask_min_area_px,
     )
     field_valid = np.asarray(residual.mask, dtype=bool) & ~particle_mask
+    fit_pixels = int(np.count_nonzero(field_valid))
+    row: dict = {
+        "frame_index": frame_index,
+        "image": _relative_image_name(path, data_dir=rt.DATA),
+        "tile_px": tile_px,
+        "mask_threshold": mask_threshold,
+        "mask_mode": mask_mode,
+        "mask_grow_threshold": mask_grow_threshold,
+        "mask_dilation_px": mask_dilation_px,
+        "mask_margin_px": mask_margin_px,
+        "mask_min_area_px": mask_min_area_px,
+        "fit_pixels": fit_pixels,
+        "masked_pixels": int(np.count_nonzero(particle_mask)),
+        "field_median_gray": "",
+        "field_p05_gray": "",
+        "field_p95_gray": "",
+        "field_max_abs_gray": "",
+        "residual_median_before_gray": float(np.nanmedian(residual.raw)),
+        "residual_median_after_gray": "",
+        "residual_rmse_before_gray": float(np.sqrt(np.nanmean(np.square(residual.raw)))),
+        "residual_rmse_after_gray": "",
+        "status": "ok",
+    }
+    if fit_pixels < min_pixels:
+        row["status"] = "skipped:insufficient_fit_pixels"
+        return residual, row, None
+
     illumination_field = estimate_local_illumination_field(
         residual.raw,
         field_valid,
@@ -886,7 +916,7 @@ def apply_local_illumination_correction(
         mask=residual.mask,
         config=residual_config,
     )
-    return ResidualImage(
+    corrected = ResidualImage(
         raw=corrected.raw,
         local_noise=corrected.local_noise,
         normalized=corrected.normalized,
@@ -894,6 +924,17 @@ def apply_local_illumination_correction(
         expected_background=corrected.expected_background,
         clean_render=residual.clean_render,
     )
+    finite_field = illumination_field[np.isfinite(illumination_field)]
+    corrected_rmse = float(np.sqrt(np.nanmean(np.square(corrected.raw))))
+    row.update(
+        field_median_gray=float(np.median(finite_field)) if finite_field.size else "",
+        field_p05_gray=float(np.percentile(finite_field, 5)) if finite_field.size else "",
+        field_p95_gray=float(np.percentile(finite_field, 95)) if finite_field.size else "",
+        field_max_abs_gray=float(np.max(np.abs(finite_field))) if finite_field.size else "",
+        residual_median_after_gray=float(np.nanmedian(corrected.raw)),
+        residual_rmse_after_gray=corrected_rmse,
+    )
+    return corrected, row, illumination_field
 
 
 def estimate_smoothed_phase_sequence(
@@ -1275,6 +1316,7 @@ def main() -> None:
         protected_output_inputs.append(
             reuse_belt_map_input_path.with_name("metadata.json")
         )
+    reuse_map_support_path = reuse_map_support_input_path
     rt.clear_generated_outputs(protected_paths=protected_output_inputs)
     rt.OUT.mkdir(parents=True, exist_ok=True)
     rt.emit("startup", "starting BeltMap image driver", data_dir=rt.DATA, output_dir=rt.OUT)
@@ -1519,6 +1561,16 @@ def main() -> None:
             "CROSS_MAP_AGREEMENT_MIN_CONFIRMING_MAPS cannot exceed 2; "
             "the driver currently builds two cross-fitted maps"
         )
+    map_risk_min_support = rt.env_float("MAP_RISK_MIN_SUPPORT", 1.0, minimum=0.0)
+    map_risk_reject_max_mean = probability_env_float("MAP_RISK_REJECT_MAX_MEAN", 1.0)
+    map_risk_reject_max_interpolated_fraction = probability_env_float(
+        "MAP_RISK_REJECT_MAX_INTERPOLATED_FRACTION",
+        1.0,
+    )
+    map_risk_reject_max_low_support_fraction = probability_env_float(
+        "MAP_RISK_REJECT_MAX_LOW_SUPPORT_FRACTION",
+        1.0,
+    )
     registration_config = PhaseRegistrationConfig(
         search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
@@ -2062,6 +2114,12 @@ def main() -> None:
     detection_rows: list[dict] = []
     map_risk_rows: list[dict] = []
     map_risk_rejected = 0
+    local_illumination_rows: list[dict] = []
+    cross_map_agreement_maps = None
+    cross_map_agreement_rows: list[dict] = []
+    cross_map_agreement_sample_counts: tuple[int, ...] = ()
+    cross_map_agreement_failed = 0
+    cross_map_agreement_removed = 0
     phase_rows: list[dict] = []
     photometric_rows: list[dict] = []
     phase_px_by_frame: list[float] = []
