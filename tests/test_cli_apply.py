@@ -527,9 +527,9 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["frame_median_offset_correction"] is False
     assert parsed["map"]["local_illumination_correction"] is False
     assert parsed["map"]["local_illumination_tile_px"] == 64
-    assert parsed["map"]["particle_mask_mode"] == "positive"
-    assert parsed["map"]["particle_mask_grow_threshold"] == 2.0
-    assert parsed["map"]["particle_mask_dilation_px"] == 0
+    assert parsed["map_particle_mask"]["mode"] == "positive"
+    assert parsed["map_particle_mask"]["grow_threshold"] == 2.0
+    assert parsed["map_particle_mask"]["dilation_px"] == 0
     assert parsed["map"]["aggregation"] == "mean"
     assert parsed["map"]["robust_iterations"] == 1
     assert parsed["map"]["robust_huber_delta"] == 3.0
