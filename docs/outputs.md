@@ -58,6 +58,7 @@ outputs/
   filtered_velocities.csv
   metadata.json
   phase_estimates.csv
+  registration_quality.csv     # only when registration-quality gates are enabled
   progress.jsonl
   progress_latest.json
   local_illumination_fits.csv # only when detection local illumination correction is enabled
@@ -396,8 +397,14 @@ Columns:
 | `phase_rad` | rad | `phase_fraction * 2*pi`. |
 | `predicted_phase_px` | px | Phase predicted by the signed constant-speed motion model before local correction. |
 | `correction_px` | px | Registration offset added to the predicted phase. |
+| `phase_drift_px` | px | Accumulated online drift estimate when phase drift compensation is enabled. |
 | `loss` | 1 | Trimmed mean-square registration loss; empty if no registration loss was computed. |
 | `score` | 1 | Dimensionless registration score; empty if no registration score was computed. |
+| `second_best_loss` | 1 | Lowest finite candidate loss excluding the best grid-search candidate. |
+| `loss_gap` | 1 | `second_best_loss - loss`; larger values indicate a less ambiguous registration minimum. |
+| `loss_gap_ratio` | 1 | `loss_gap / max(abs(loss), 1e-12)`, a scale-free ambiguity score. |
+| `loss_curvature` | 1/px² | Local quadratic curvature around the best grid-search candidate, when the best candidate has finite neighbors on both sides. |
+| `uncertainty_px` | px | Curvature-derived phase uncertainty proxy. Larger values indicate a flatter registration minimum. |
 | `method` | text | Phase-estimation method, such as `motion_model`, `registration`, or `registration_smoothed`. |
 
 Notes:
@@ -406,6 +413,44 @@ Notes:
 - `loss` is useful for diagnosing poor registration or weak belt texture.
 - `score` is relative to the candidate-loss distribution and is not a calibrated
   probability.
+
+## `registration_quality.csv`
+
+Purpose: per-frame diagnostics and actions for registration-quality gates. This
+file is written only when `registration_quality.enabled` /
+`REGISTRATION_QUALITY_ENABLED` is true.
+
+Format: CSV with a header row.
+
+Columns:
+
+| Column | Unit | Meaning |
+|---|---:|---|
+| `frame_index` | frame | Zero-based processed-frame index. |
+| `image` | path | Input image path relative to the configured image directory. |
+| `method` | text | Phase-estimation method from `phase_estimates.csv`. |
+| `accepted` | bool | Whether all enabled quality gates passed for this frame. |
+| `action` | text | `accept`, `report`, `inflate`, or `skip`. `accept` means the gates passed. |
+| `reasons` | text | Semicolon-separated failed gate names, such as `score`, `loss_gap_ratio`, `uncertainty_px`, or `correction_px`. Empty when accepted. |
+| `inflation_factor` | factor | Residual-noise multiplier applied before detection. It is `1.0` unless `action = "inflate"` and the frame failed at least one gate. |
+| `score` | 1 | Registration score copied from `phase_estimates.csv`. |
+| `correction_px` | px | Phase correction copied from `phase_estimates.csv`. |
+| `phase_drift_px` | px | Online drift estimate copied from `phase_estimates.csv`. |
+| `loss` | 1 | Registration loss copied from `phase_estimates.csv`. |
+| `second_best_loss` | 1 | Competing candidate loss copied from `phase_estimates.csv`. |
+| `loss_gap` | 1 | Candidate-loss gap copied from `phase_estimates.csv`. |
+| `loss_gap_ratio` | 1 | Relative candidate-loss gap copied from `phase_estimates.csv`. |
+| `loss_curvature` | 1/px² | Local loss curvature copied from `phase_estimates.csv`. |
+| `uncertainty_px` | px | Curvature-derived uncertainty copied from `phase_estimates.csv`. |
+
+Notes:
+
+- `report` mode is the safest first ablation because it records which frames
+  would have been gated without changing detections.
+- `inflate` mode preserves detections on low-confidence frames only when their
+  normalized residual survives the higher noise denominator.
+- `skip` mode is intentionally conservative and should mainly be used for
+  negative-control or high-precision operating points.
 
 ## `detections.csv`
 
@@ -577,6 +622,14 @@ Important fields:
 | `phase_estimation_mode` | mode | Configured phase source: `motion_model`, `registration`, or `smoothed_registration`. |
 | `texture_phase_velocity_px_per_frame` | px/frame | Robust belt velocity estimated from the phase trajectory, when at least two phase rows are available. |
 | `texture_phase_smoothed_velocity_px_per_frame` | px/frame | Median velocity from the phase/velocity smoother used as a diagnostic consistency check. |
+| `registration_quality_enabled` | bool | Whether registration-quality gating was enabled. |
+| `registration_quality_action` | mode | Configured response for low-quality registration frames: `report`, `inflate`, or `skip`. |
+| `registration_quality_min_score` | score | Minimum registration score gate, or `null` when disabled. |
+| `registration_quality_min_loss_gap_ratio` | ratio | Minimum relative loss-gap gate, or `null` when disabled. |
+| `registration_quality_max_uncertainty_px` | px | Maximum uncertainty gate, or `null` when disabled. |
+| `n_registration_quality_rejected_frames` | count | Number of frames that failed at least one enabled registration-quality gate. |
+| `n_registration_quality_inflated_frames` | count | Number of frames whose residual noise was inflated before detection. |
+| `n_registration_quality_skipped_frames` | count | Number of frames for which final detection was skipped. |
 | `n_detections` | count | Number of rows written to `detections.csv`. |
 | `n_tracks` | count | Number of particle tracks created by the tracker. |
 | `n_velocity_estimates` | count | Number of rows written to `velocities.csv`. |

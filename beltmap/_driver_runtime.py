@@ -27,6 +27,7 @@ GENERATED_OUTPUT_FILES = {
     "progress.jsonl",
     "progress_latest.json",
     "phase_estimates.csv",
+    "registration_quality.csv",
     "phase_refinement.csv",
     "photometric_fits.csv",
     "local_illumination_fits.csv",

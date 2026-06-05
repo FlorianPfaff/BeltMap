@@ -94,6 +94,11 @@ class PhaseEstimate:
     score: float | None = None
     method: str = "motion_model"
     drift_px: float = 0.0
+    second_best_loss: float | None = None
+    loss_gap: float | None = None
+    loss_gap_ratio: float | None = None
+    loss_curvature: float | None = None
+    uncertainty_px: float | None = None
 
 
 @dataclass(frozen=True)
@@ -305,6 +310,11 @@ def refine_phase_by_registration(
         best_loss, best_offset = _refine_quadratic_offset(losses, best_index)
     phase = wrap_phase(predicted_phase_px + best_offset, period_px)
     score = _loss_to_score(best_loss, (loss for loss, _offset in losses))
+    diagnostics = _registration_loss_diagnostics(
+        losses,
+        best_index=best_index,
+        best_loss=best_loss,
+    )
     return PhaseEstimate(
         phase_px=phase,
         frame_index=frame_index,
@@ -312,6 +322,7 @@ def refine_phase_by_registration(
         correction_px=best_offset,
         loss=best_loss,
         score=score,
+        **diagnostics,
         method="registration",
     )
 
@@ -369,6 +380,11 @@ def smooth_phase_estimates(
                 correction_px=float(correction),
                 loss=estimate.loss,
                 score=estimate.score,
+                second_best_loss=estimate.second_best_loss,
+                loss_gap=estimate.loss_gap,
+                loss_gap_ratio=estimate.loss_gap_ratio,
+                loss_curvature=estimate.loss_curvature,
+                uncertainty_px=estimate.uncertainty_px,
                 method=_smoothed_method_name(estimate.method),
                 drift_px=estimate.drift_px,
             )
@@ -624,3 +640,61 @@ def _loss_to_score(best_loss: float, all_losses: Iterable[float]) -> float:
     if median_loss <= 0:
         return 1.0
     return float(max(0.0, 1.0 - best_loss / median_loss))
+
+
+def _registration_loss_diagnostics(
+    losses: Sequence[tuple[float, float]],
+    *,
+    best_index: int,
+    best_loss: float,
+) -> dict[str, float | None]:
+    """Return ambiguity and local-curvature diagnostics for phase registration."""
+
+    finite_losses = [
+        (float(loss), index)
+        for index, (loss, _offset) in enumerate(losses)
+        if np.isfinite(loss)
+    ]
+    other_losses = [loss for loss, index in finite_losses if index != best_index]
+    second_best_loss = float(min(other_losses)) if other_losses else None
+
+    loss_gap: float | None = None
+    loss_gap_ratio: float | None = None
+    if second_best_loss is not None and np.isfinite(best_loss):
+        loss_gap = float(second_best_loss - best_loss)
+        denominator = max(abs(float(best_loss)), 1e-12)
+        loss_gap_ratio = float(loss_gap / denominator)
+
+    loss_curvature = _registration_loss_curvature(losses, best_index)
+    uncertainty_px: float | None = None
+    if loss_curvature is not None and np.isfinite(best_loss):
+        uncertainty_px = float(np.sqrt(max(float(best_loss), 1e-12) / loss_curvature))
+
+    return {
+        "second_best_loss": second_best_loss,
+        "loss_gap": loss_gap,
+        "loss_gap_ratio": loss_gap_ratio,
+        "loss_curvature": loss_curvature,
+        "uncertainty_px": uncertainty_px,
+    }
+
+
+def _registration_loss_curvature(
+    losses: Sequence[tuple[float, float]],
+    best_index: int,
+) -> float | None:
+    """Estimate local loss curvature around the grid-search winner."""
+
+    if best_index <= 0 or best_index >= len(losses) - 1:
+        return None
+    window = losses[best_index - 1 : best_index + 2]
+    offsets = np.array([offset for _loss, offset in window], dtype=np.float64)
+    values = np.array([loss for loss, _offset in window], dtype=np.float64)
+    if not np.all(np.isfinite(offsets)) or not np.all(np.isfinite(values)):
+        return None
+    if np.unique(offsets).size != offsets.size:
+        return None
+    quadratic, _linear, _constant = np.polyfit(offsets, values, deg=2)
+    if not np.isfinite(quadratic) or quadratic <= 0:
+        return None
+    return float(2.0 * quadratic)

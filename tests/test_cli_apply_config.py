@@ -127,5 +127,6 @@ def test_config_template_writer(tmp_path):
     assert "max_bbox_aspect_ratio" in text
     assert "reconstruction_trim_fraction" in text
     assert "sampling_strategy" in text
-    assert "particle_mask_margin_px" in text
+    assert "[map_particle_mask]" in text
+    assert "margin_px" in text
     assert "noise_exclusion_sigma" in text
