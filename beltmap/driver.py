@@ -122,6 +122,11 @@ PHASE_ESTIMATION_MODES = {
     "registration",
     "smoothed_registration",
 }
+# Map-building masks are decontamination gates, not final detection acceptance
+# gates. Keep their default permissive enough to remove small fragments from the
+# learned belt map even when final detection uses a larger MIN_AREA_PX to suppress
+# speckles in the reported detections and tracks.
+MAP_PARTICLE_MASK_MIN_AREA_DEFAULT = 8
 VELOCITY_FIELDS = [
     "track_id", "n_detections", "frame_start", "frame_end",
     "velocity_y_px_per_frame", "velocity_x_px_per_frame", "speed_px_per_frame",
@@ -1462,7 +1467,11 @@ def main() -> None:
     map_local_illumination_correction = env_bool("MAP_LOCAL_ILLUMINATION_CORRECTION", False)
     map_local_illumination_tile_px = rt.env_int("MAP_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1)
     map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
-    map_particle_mask_min_area_px = rt.env_int("MAP_PARTICLE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    map_particle_mask_min_area_px = rt.env_int(
+        "MAP_PARTICLE_MASK_MIN_AREA_PX",
+        MAP_PARTICLE_MASK_MIN_AREA_DEFAULT,
+        minimum=1,
+    )
     detection_local_illumination_mask_threshold = rt.env_float(
         "DETECTION_LOCAL_ILLUMINATION_MASK_THRESHOLD",
         map_particle_mask_threshold,
@@ -1508,11 +1517,19 @@ def main() -> None:
     static_noise_min_scale = rt.env_float("STATIC_NOISE_MIN_SCALE", 0.0, minimum=0.0)
     static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", detection_threshold)
     static_noise_mask_margin_px = rt.env_int("STATIC_NOISE_MASK_MARGIN_PX", 8, minimum=0)
-    static_noise_mask_min_area_px = rt.env_int("STATIC_NOISE_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    static_noise_mask_min_area_px = rt.env_int(
+        "STATIC_NOISE_MASK_MIN_AREA_PX",
+        map_particle_mask_min_area_px,
+        minimum=1,
+    )
     static_background_sample_frames = static_residual_sample_frames("STATIC_BACKGROUND_SAMPLE_FRAMES", frame_count=len(paths))
     static_background_mask_threshold = optional_positive_float("STATIC_BACKGROUND_MASK_THRESHOLD", detection_threshold)
     static_background_mask_margin_px = rt.env_int("STATIC_BACKGROUND_MASK_MARGIN_PX", 8, minimum=0)
-    static_background_mask_min_area_px = rt.env_int("STATIC_BACKGROUND_MASK_MIN_AREA_PX", min_area_px, minimum=1)
+    static_background_mask_min_area_px = rt.env_int(
+        "STATIC_BACKGROUND_MASK_MIN_AREA_PX",
+        map_particle_mask_min_area_px,
+        minimum=1,
+    )
     recurrent_artifact_config = RecurrentArtifactConfig(
         min_revolutions=rt.env_int("RECURRENT_ARTIFACT_MIN_REVOLUTIONS", 0, minimum=0),
         margin_px=rt.env_int("RECURRENT_ARTIFACT_MARGIN_PX", 2, minimum=0),

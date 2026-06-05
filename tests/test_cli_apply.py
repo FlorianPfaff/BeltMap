@@ -83,7 +83,7 @@ period_px = 64
 
 [detection]
 threshold = 5.5
-min_area_px = 4
+min_area_px = 50
 max_area_px = 5000
 min_bbox_width_px = 3
 min_bbox_height_px = 3
@@ -120,16 +120,18 @@ max_abs_x_velocity_px_per_frame = 12.5
 frame_median_offset_correction = true
 local_illumination_correction = true
 local_illumination_tile_px = 32
-particle_mask_mode = "hysteresis_abs"
-particle_mask_threshold = 4.0
-particle_mask_grow_threshold = 1.5
-particle_mask_dilation_px = 24
-particle_mask_margin_px = 16
-particle_mask_min_area_px = 8
 aggregation = "huber"
 robust_iterations = 2
 robust_huber_delta = 2.5
 robust_min_scale = 0.75
+
+[map_particle_mask]
+mode = "hysteresis_abs"
+threshold = 4.0
+grow_threshold = 1.5
+dilation_px = 24
+margin_px = 16
+min_area_px = 8
 
 [static_noise]
 sample_frames = 250
@@ -222,7 +224,7 @@ max_abs_px = 6
         "MAP_ROBUST_ITERATIONS": "2",
         "MAP_ROBUST_MIN_SCALE": "0.75",
         "MAX_MATCH_DISTANCE_PX": "75",
-        "MIN_AREA_PX": "4",
+        "MIN_AREA_PX": "50",
         "MIN_TRACK_LENGTH": "2",
         "REUSE_BELT_MAP_PATH": "previous/belt_map.npy",
         "REUSE_PHASE_ESTIMATES_PATH": "previous/phase_estimates.csv",
@@ -263,6 +265,22 @@ max_abs_px = 6
         "PHASE_DRIFT_SMOOTHING_ALPHA": "0.2",
     }
     assert report["driver_environment"] == env_updates
+
+
+def test_config_template_keeps_map_mask_area_independent_from_final_detection_gate():
+    assert "[detection]\nthreshold = 5.0" in cli.CONFIG_TEMPLATE
+    assert "min_area_px = 4" in cli.CONFIG_TEMPLATE
+    assert "[map_particle_mask]" in cli.CONFIG_TEMPLATE
+    assert "min_area_px = 8" in cli.CONFIG_TEMPLATE
+
+
+def test_map_particle_mask_section_aliases_are_resolved(tmp_path):
+    config_path = tmp_path / "map-mask.toml"
+    config_path.write_text("[map_particle_mask]\nmin_area_px = 8\nlow_threshold = 1.5\n", encoding="utf-8")
+
+    env_updates, _report = cli.resolve_driver_env(parse_args("--config", str(config_path)), environ={})
+
+    assert env_updates == {"MAP_PARTICLE_MASK_GROW_THRESHOLD": "1.5", "MAP_PARTICLE_MASK_MIN_AREA_PX": "8"}
 
 
 def test_legacy_result_improvement_aliases_are_resolved(tmp_path):

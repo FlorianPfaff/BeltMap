@@ -82,12 +82,12 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("map_local_illumination_correction", "MAP_LOCAL_ILLUMINATION_CORRECTION", "bool", (("map_local_illumination_correction",), ("map", "local_illumination_correction")), "Estimate and subtract a low-frequency additive illumination field during map accumulation.", None),
     ("map_local_illumination_tile_px", "MAP_LOCAL_ILLUMINATION_TILE_PX", "int", (("map_local_illumination_tile_px",), ("map", "local_illumination_tile_px")), "Tile size used for local residual-median illumination correction.", "PX"),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
-    ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold")), "Strong threshold used for particle masking during map building.", "Z"),
-    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode")), "Map-building particle mask mode: positive, negative, absolute, or hysteresis_abs.", "MODE"),
-    ("map_particle_mask_grow_threshold", "MAP_PARTICLE_MASK_GROW_THRESHOLD", "float", (("map_particle_mask_grow_threshold",), ("map", "particle_mask_grow_threshold")), "Lower absolute-residual threshold used to grow hysteresis map masks.", "Z"),
-    ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
-    ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
-    ("map_particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX", "int", (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px")), "Minimum component area for map-building particle masks.", "PX"),
+    ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold"), ("map_particle_mask", "threshold")), "Strong threshold used for particle masking during map building.", "Z"),
+    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode"), ("map_particle_mask", "mode"), ("map_particle_mask", "method")), "Map-building particle mask mode: positive, negative, absolute, or hysteresis_abs.", "MODE"),
+    ("map_particle_mask_grow_threshold", "MAP_PARTICLE_MASK_GROW_THRESHOLD", "float", (("map_particle_mask_grow_threshold",), ("map", "particle_mask_grow_threshold"), ("map_particle_mask", "grow_threshold"), ("map_particle_mask", "low_threshold")), "Lower absolute-residual threshold used to grow hysteresis map masks.", "Z"),
+    ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px"), ("map_particle_mask", "dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
+    ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px"), ("map_particle_mask", "margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
+    ("map_particle_mask_min_area_px", "MAP_PARTICLE_MASK_MIN_AREA_PX", "int", (("map_particle_mask_min_area_px",), ("map", "particle_mask_min_area_px"), ("map_particle_mask", "min_area_px")), "Minimum component area for map-building masks; independent of final detection.min_area_px.", "PX"),
     ("map_aggregation", "MAP_AGGREGATION", "path", (("map_aggregation",), ("map", "aggregation")), "Belt-map aggregation method: mean, huber, trimmed_mean, or winsorized_mean.", "METHOD"),
     ("map_robust_iterations", "MAP_ROBUST_ITERATIONS", "int", (("map_robust_iterations",), ("map", "robust_iterations")), "Robust Huber refinement iterations for aggregation='huber'.", "N"),
     ("map_robust_huber_delta", "MAP_ROBUST_HUBER_DELTA", "float", (("map_robust_huber_delta",), ("map", "robust_huber_delta")), "Huber cutoff in robust residual scale units.", "SIGMA"),
@@ -100,11 +100,11 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("static_noise_min_scale", "STATIC_NOISE_MIN_SCALE", "float", (("static_noise_min_scale",), ("static_noise", "min_scale")), "Minimum per-pixel static residual-noise floor.", "GRAY"),
     ("static_noise_mask_threshold", "STATIC_NOISE_MASK_THRESHOLD", "float", (("static_noise_mask_threshold",), ("static_noise", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static noise. Use 0 to disable.", "Z"),
     ("static_noise_mask_margin_px", "STATIC_NOISE_MASK_MARGIN_PX", "int", (("static_noise_mask_margin_px",), ("static_noise", "mask_margin_px")), "Safety margin around particle boxes while learning static noise.", "PX"),
-    ("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for particle masks while learning static noise.", "PX"),
+    ("static_noise_mask_min_area_px", "STATIC_NOISE_MASK_MIN_AREA_PX", "int", (("static_noise_mask_min_area_px",), ("static_noise", "mask_min_area_px")), "Minimum component area for static-noise masks; defaults to the map-particle mask gate.", "PX"),
     ("static_background_sample_frames", "STATIC_BACKGROUND_SAMPLE_FRAMES", "auto_int", (("static_background_sample_frames",), ("static_background", "sample_frames")), "Number of residual frames sampled to learn an additive image-fixed background. Use 0 to disable or 'auto' to sample automatically.", "N|auto"),
     ("static_background_mask_threshold", "STATIC_BACKGROUND_MASK_THRESHOLD", "float", (("static_background_mask_threshold",), ("static_background", "mask_threshold")), "Optional normalized residual threshold for masking particles while learning static background. Use 0 to disable.", "Z"),
     ("static_background_mask_margin_px", "STATIC_BACKGROUND_MASK_MARGIN_PX", "int", (("static_background_mask_margin_px",), ("static_background", "mask_margin_px")), "Safety margin around particle boxes while learning static background.", "PX"),
-    ("static_background_mask_min_area_px", "STATIC_BACKGROUND_MASK_MIN_AREA_PX", "int", (("static_background_mask_min_area_px",), ("static_background", "mask_min_area_px")), "Minimum component area for particle masks while learning static background.", "PX"),
+    ("static_background_mask_min_area_px", "STATIC_BACKGROUND_MASK_MIN_AREA_PX", "int", (("static_background_mask_min_area_px",), ("static_background", "mask_min_area_px")), "Minimum component area for static-background masks; defaults to the map-particle mask gate.", "PX"),
     ("recurrent_artifact_min_revolutions", "RECURRENT_ARTIFACT_MIN_REVOLUTIONS", "int", (("recurrent_artifact_min_revolutions",), ("recurrent_artifact", "min_revolutions")), "Minimum distinct belt revolutions required to mark recurrent artifact pixels. Use 0 to disable building unless a reused map is set.", "N"),
     ("recurrent_artifact_margin_px", "RECURRENT_ARTIFACT_MARGIN_PX", "int", (("recurrent_artifact_margin_px",), ("recurrent_artifact", "margin_px")), "Safety margin around detection boxes when accumulating recurrent artifacts.", "PX"),
     ("recurrent_artifact_max_overlap_fraction", "RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION", "float", (("recurrent_artifact_max_overlap_fraction",), ("recurrent_artifact", "max_overlap_fraction")), "Reject detections whose belt-coordinate bbox overlaps recurrent artifacts above this fraction.", "FRACTION"),
@@ -279,18 +279,22 @@ frame_median_offset_correction = false
 local_illumination_correction = false
 local_illumination_tile_px = 64
 mask_iterations = 1
-# Set explicitly in templates; omit or leave empty to follow detection.mode.
-particle_mask_mode = "positive"
-particle_mask_threshold = 5.0
-particle_mask_grow_threshold = 2.0
-particle_mask_dilation_px = 0
-particle_mask_margin_px = 8
-particle_mask_min_area_px = 4
 # aggregation accepts "mean", "huber", "trimmed_mean", or "winsorized_mean".
 aggregation = "mean"
 robust_iterations = 1
 robust_huber_delta = 3.0
 robust_min_scale = 1.0
+
+[map_particle_mask]
+# Used only while learning belt_map.npy and auxiliary maps. Keep this gate
+# independent from [detection].min_area_px so small fragments can be excluded
+# from the learned background even when final detections use a larger area gate.
+mode = "positive"
+threshold = 5.0
+grow_threshold = 2.0
+dilation_px = 0
+margin_px = 8
+min_area_px = 8
 
 [map_risk]
 min_support = 1.0
@@ -303,13 +307,13 @@ sample_frames = 0
 min_scale = 0.0
 mask_threshold = 0.0
 mask_margin_px = 8
-mask_min_area_px = 4
+mask_min_area_px = 8
 
 [static_background]
 sample_frames = 0
 mask_threshold = 0.0
 mask_margin_px = 8
-mask_min_area_px = 4
+mask_min_area_px = 8
 
 [recurrent_artifact]
 min_revolutions = 0

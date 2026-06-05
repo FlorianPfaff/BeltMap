@@ -81,6 +81,11 @@ underscores.
   environment variable, or CLI flag supplies the option. The generated template
   may intentionally contain example values, such as a non-full-frame belt
   region.
+- Final detection component gates and map-learning particle-mask gates are
+  intentionally separate. For example, a run can use
+  `detection.min_area_px = 50` for accepted detections while keeping
+  `map_particle_mask.min_area_px = 8` to prevent small fragments contaminating
+  `belt_map.npy`.
 
 ## Option table
 
@@ -103,7 +108,7 @@ underscores.
 | `detection.threshold` | `DETECTION_THRESHOLD` | `--detection-threshold` | `5.0` | z | Threshold on normalized residuals for final bright-particle detection. |
 | `detection.mode` | `DETECTION_MODE` | `--detection-mode` | `positive` | mode | Detection residual polarity: `positive`, `negative`, or `absolute`. Legacy config-file values `threshold`, `hysteresis`, and `hysteresis_abs` are accepted as aliases for `positive`, `positive`, and `absolute`; use `detection.low_threshold` to enable hysteresis growth. |
 | `detection.low_threshold` | `DETECTION_LOW_THRESHOLD` | `--detection-low-threshold` | `0` | z | Optional lower hysteresis threshold for final detection. `0` disables hysteresis. |
-| `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. Must be at least 1. |
+| `detection.min_area_px` | `MIN_AREA_PX` | `--min-area-px` | `4` | px | Minimum connected-component area for final particle detections. This does not control map-learning particle masks. Must be at least 1. |
 | `detection.max_area_px` | `DETECTION_MAX_AREA_PX` | `--detection-max-area-px` | `0` | px | Optional maximum connected-component area. `0` disables this gate. |
 | `detection.min_bbox_width_px` | `DETECTION_MIN_BBOX_WIDTH_PX` | `--detection-min-bbox-width-px` | `0` | px | Optional minimum component bounding-box width. `0` disables this gate. |
 | `detection.min_bbox_height_px` | `DETECTION_MIN_BBOX_HEIGHT_PX` | `--detection-min-bbox-height-px` | `0` | px | Optional minimum component bounding-box height. `0` disables this gate. |
@@ -156,21 +161,21 @@ underscores.
 | `map_risk.reject_max_interpolated_fraction` | `MAP_RISK_REJECT_MAX_INTERPOLATED_FRACTION` | `--map-risk-reject-max-interpolated-fraction` | `1.0` | fraction | Optional detection gate: reject components whose bbox interpolated-pixel fraction exceeds this value. `1.0` disables the gate. |
 | `map_risk.reject_max_low_support_fraction` | `MAP_RISK_REJECT_MAX_LOW_SUPPORT_FRACTION` | `--map-risk-reject-max-low-support-fraction` | `1.0` | fraction | Optional detection gate: reject components whose bbox low-support fraction exceeds this value. `1.0` disables the gate. |
 | `map.mask_iterations` | `MAP_MASK_ITERATIONS` | `--map-mask-iterations` | `1` | passes | Number of particle-masked belt-map refinement passes after the initial provisional map. `0` disables particle masking during map reconstruction. |
-| `map.particle_mask_threshold` | `MAP_PARTICLE_MASK_THRESHOLD` | `--map-particle-mask-threshold` | `detection.threshold` | z | Strong residual threshold used to seed particle masks while building the clean belt map. |
-| `map.particle_mask_mode` | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive`; follows `detection.mode` for `negative`/`absolute` when unset | mode | Map-building particle-mask mode. Valid values are `positive`, `negative`, `absolute`, and `hysteresis_abs`. |
-| `map.particle_mask_grow_threshold` | `MAP_PARTICLE_MASK_GROW_THRESHOLD` | `--map-particle-mask-grow-threshold` | `2.0` | z | Lower absolute-residual threshold used to grow `hysteresis_abs` map masks from strong seeds. Ignored by `positive`, `negative`, and `absolute`. |
-| `map.particle_mask_dilation_px` | `MAP_PARTICLE_MASK_DILATION_PX` | `--map-particle-mask-dilation-px` | `0` | px | Morphological dilation radius for `hysteresis_abs` map masks before applying the rectangular safety margin. `0` disables dilation. |
-| `map.particle_mask_margin_px` | `MAP_PARTICLE_MASK_MARGIN_PX` | `--map-particle-mask-margin-px` | `8` | px | Safety margin added around detected or grown particle regions during map reconstruction. |
-| `map.particle_mask_min_area_px` | `MAP_PARTICLE_MASK_MIN_AREA_PX` | `--map-particle-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area used for particle masking during map reconstruction. Must be at least 1. |
+| `map_particle_mask.threshold` (`map.particle_mask_threshold`) | `MAP_PARTICLE_MASK_THRESHOLD` | `--map-particle-mask-threshold` | `detection.threshold` | z | Strong residual threshold used to seed particle masks while building the clean belt map. |
+| `map_particle_mask.mode` (`map.particle_mask_mode`) | `MAP_PARTICLE_MASK_MODE` | `--map-particle-mask-mode` | `positive`; follows `detection.mode` for `negative`/`absolute` when unset | mode | Map-building particle-mask mode. Valid values are `positive`, `negative`, `absolute`, and `hysteresis_abs`. |
+| `map_particle_mask.grow_threshold` (`map.particle_mask_grow_threshold`) | `MAP_PARTICLE_MASK_GROW_THRESHOLD` | `--map-particle-mask-grow-threshold` | `2.0` | z | Lower absolute-residual threshold used to grow `hysteresis_abs` map masks from strong seeds. Ignored by `positive`, `negative`, and `absolute`. `map_particle_mask.low_threshold` is also accepted. |
+| `map_particle_mask.dilation_px` (`map.particle_mask_dilation_px`) | `MAP_PARTICLE_MASK_DILATION_PX` | `--map-particle-mask-dilation-px` | `0` | px | Morphological dilation radius for `hysteresis_abs` map masks before applying the rectangular safety margin. `0` disables dilation. |
+| `map_particle_mask.margin_px` (`map.particle_mask_margin_px`) | `MAP_PARTICLE_MASK_MARGIN_PX` | `--map-particle-mask-margin-px` | `8` | px | Safety margin added around detected or grown particle regions during map reconstruction. |
+| `map_particle_mask.min_area_px` (`map.particle_mask_min_area_px`) | `MAP_PARTICLE_MASK_MIN_AREA_PX` | `--map-particle-mask-min-area-px` | `8` | px | Minimum component area used for particle masking during map reconstruction. Independent of `detection.min_area_px`; must be at least 1. |
 | `static_noise.sample_frames` | `STATIC_NOISE_SAMPLE_FRAMES` | `--static-noise-sample-frames` | `0` | frames | Number of belt-subtracted residual frames sampled to learn `static_noise.npy`. `0` disables static residual-noise learning. |
 | `static_noise.min_scale` | `STATIC_NOISE_MIN_SCALE` | `--static-noise-min-scale` | `0` | gray | Minimum value written into the learned static residual-noise map. |
 | `static_noise.mask_threshold` | `STATIC_NOISE_MASK_THRESHOLD` | `--static-noise-mask-threshold` | `0` | z | Optional normalized-residual threshold for masking particle boxes while learning static noise. `0` disables this particle mask. |
 | `static_noise.mask_margin_px` | `STATIC_NOISE_MASK_MARGIN_PX` | `--static-noise-mask-margin-px` | `8` | px | Safety margin around particle boxes while learning static noise. Used only when `static_noise.mask_threshold > 0`. |
-| `static_noise.mask_min_area_px` | `STATIC_NOISE_MASK_MIN_AREA_PX` | `--static-noise-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area for particle masks while learning static noise. |
+| `static_noise.mask_min_area_px` | `STATIC_NOISE_MASK_MIN_AREA_PX` | `--static-noise-mask-min-area-px` | `map_particle_mask.min_area_px` | px | Minimum component area for particle masks while learning static noise. |
 | `static_background.sample_frames` | `STATIC_BACKGROUND_SAMPLE_FRAMES` | `--static-background-sample-frames` | `0` | frames | Number of belt-subtracted residual frames sampled to learn `static_background.npy`. `0` disables additive static-background learning. |
 | `static_background.mask_threshold` | `STATIC_BACKGROUND_MASK_THRESHOLD` | `--static-background-mask-threshold` | `0` | z | Optional normalized-residual threshold for masking particle boxes while learning the static background. `0` disables this particle mask. |
 | `static_background.mask_margin_px` | `STATIC_BACKGROUND_MASK_MARGIN_PX` | `--static-background-mask-margin-px` | `8` | px | Safety margin around particle boxes while learning the static background. Used only when `static_background.mask_threshold > 0`. |
-| `static_background.mask_min_area_px` | `STATIC_BACKGROUND_MASK_MIN_AREA_PX` | `--static-background-mask-min-area-px` | `detection.min_area_px` | px | Minimum component area for particle masks while learning the static background. |
+| `static_background.mask_min_area_px` | `STATIC_BACKGROUND_MASK_MIN_AREA_PX` | `--static-background-mask-min-area-px` | `map_particle_mask.min_area_px` | px | Minimum component area for particle masks while learning the static background. |
 | `recurrent_artifact.min_revolutions` | `RECURRENT_ARTIFACT_MIN_REVOLUTIONS` | `--recurrent-artifact-min-revolutions` | `0` | revolutions | Minimum distinct belt revolutions in which a belt-coordinate neighborhood must fire before it is marked as recurrent artifact. `0` disables building this filter unless `reuse.recurrent_artifact_map_path` is set. |
 | `recurrent_artifact.margin_px` | `RECURRENT_ARTIFACT_MARGIN_PX` | `--recurrent-artifact-margin-px` | `2` | px | Safety margin around detected component boxes when accumulating recurrent artifacts in belt coordinates. |
 | `recurrent_artifact.max_overlap_fraction` | `RECURRENT_ARTIFACT_MAX_OVERLAP_FRACTION` | `--recurrent-artifact-max-overlap-fraction` | `0.3` | fraction | Reject a detection when this fraction of its belt-coordinate bounding box overlaps the recurrent artifact map. |
@@ -229,8 +234,8 @@ environment variables.
 
 ## Map particle-mask modes
 
-`map.particle_mask_mode` controls how particle-contaminated observations are
-excluded while reconstructing `belt_map.npy`.
+`map_particle_mask.mode` controls how particle-contaminated observations are
+excluded while reconstructing `belt_map.npy`; legacy `map.particle_mask_*` keys remain accepted.
 
 | Mode | Behavior | Best use |
 |---|---|---|
@@ -242,12 +247,13 @@ excluded while reconstructing `belt_map.npy`.
 For `hysteresis_abs`, tune these together:
 
 ```toml
-[map]
-particle_mask_mode = "hysteresis_abs"
-particle_mask_threshold = 5.0
-particle_mask_grow_threshold = 2.0
-particle_mask_dilation_px = 2
-particle_mask_margin_px = 8
+[map_particle_mask]
+mode = "hysteresis_abs"
+threshold = 5.0
+grow_threshold = 2.0
+dilation_px = 2
+margin_px = 8
+min_area_px = 8
 ```
 
 ## Map-frame sampling
