@@ -7,6 +7,13 @@ from .detection import (
     detection_signal_from_residual,
     normalize_detection_mode,
 )
+from .cross_map_agreement import (
+    CrossMapAgreementConfig,
+    CrossMapAgreementMapScore,
+    CrossMapAgreementScore,
+    filter_detections_by_agreement,
+    score_cross_map_agreement,
+)
 from .period_state import (
     BeltPeriodState,
     fresh_period_state,
@@ -36,6 +43,11 @@ from .residual import (
     estimate_local_noise,
     generate_residual_image,
     render_clean_belt_residual,
+)
+from .revolution_split import (
+    RevolutionSplit,
+    build_revolution_split,
+    parse_revolution_indices,
 )
 from .recurrent_artifacts import (
     RecurrentArtifactConfig,
@@ -68,6 +80,9 @@ __all__ = [
     "BeltPeriodState",
     "BeltRegion",
     "CleanBeltRender",
+    "CrossMapAgreementConfig",
+    "CrossMapAgreementMapScore",
+    "CrossMapAgreementScore",
     "DETECTION_MODES",
     "PhaseEstimate",
     "PhaseRegistrationConfig",
@@ -80,11 +95,13 @@ __all__ = [
     "ParticleVelocity",
     "ResidualConfig",
     "ResidualImage",
+    "RevolutionSplit",
     "RecurrentArtifactConfig",
     "RecurrentArtifactDetectionScore",
     "RecurrentArtifactMap",
     "TrackFilterConfig",
     "belt_revolution_indices",
+    "build_revolution_split",
     "build_recurrent_artifact_map",
     "detect_particles_from_residual",
     "detect_particles_from_residual_hysteresis",
@@ -95,11 +112,13 @@ __all__ = [
     "estimate_phase",
     "extract_particle_detections",
     "extract_particle_velocities_vs_belt",
+    "filter_detections_by_agreement",
     "filter_recurrent_artifact_detections",
     "filter_particle_velocities",
     "fresh_period_state",
     "generate_residual_image",
     "metadata_fields",
+    "parse_revolution_indices",
     "phase_fraction_and_radians",
     "refine_phase_by_registration",
     "render_clean_belt_residual",
@@ -108,6 +127,7 @@ __all__ = [
     "reused_period_state",
     "smooth_phase_estimates",
     "render_expected_clean_belt",
+    "score_cross_map_agreement",
     "score_particle_velocities",
     "score_recurrent_artifact_detections",
     "score_recurrent_artifact_detections_excluding_current_revolution",

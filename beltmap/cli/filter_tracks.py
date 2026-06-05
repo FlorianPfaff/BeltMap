@@ -9,6 +9,7 @@ from pathlib import Path
 
 from beltmap.tracking import (
     ParticleDetection,
+    ParticleTrack,
     ParticleTrackingConfig,
     ParticleVelocity,
     TrackFilterConfig,
@@ -41,6 +42,14 @@ TRACK_SCORE_FIELDS = [
     "passes_min_track_length",
     "passes_velocity_ratio",
     "passes_lateral_velocity",
+    "n_recurrent_artifact_scored_detections",
+    "mean_recurrent_artifact_overlap_fraction",
+    "max_recurrent_artifact_overlap_fraction",
+    "mean_recurrent_artifact_probability",
+    "max_recurrent_artifact_probability",
+    "recurrent_artifact_hit_fraction",
+    "recurrent_artifact_track_score",
+    "passes_recurrent_artifact",
     "accepted",
     "plausibility_score",
 ]
@@ -101,6 +110,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional maximum accepted absolute lateral velocity.",
     )
     parser.add_argument(
+        "--max-recurrent-artifact-track-score",
+        type=float,
+        default=None,
+        help=(
+            "Optional maximum accepted track-level recurrent-artifact score in [0, 1]. "
+            "Omit or pass 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--recurrent-artifact-detection-threshold",
+        type=float,
+        default=0.3,
+        help="Per-detection recurrent-artifact evidence threshold used for track scoring.",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Do not print generated artifact paths and counts as JSON.",
@@ -118,6 +142,24 @@ def optional_nonnegative_float(value: float | None, *, name: str) -> float | Non
     if value < 0:
         raise ValueError(f"{name} must be non-negative")
     return None if value == 0 else value
+
+
+def optional_unit_float(value: float | None, *, name: str) -> float | None:
+    """Normalize optional [0, 1] gates where zero disables the gate."""
+
+    if value is None:
+        return None
+    parsed = unit_float(value, name=name)
+    return None if parsed == 0 else parsed
+
+
+def unit_float(value: float, *, name: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    if parsed < 0 or parsed > 1:
+        raise ValueError(f"{name} must be in [0, 1]")
+    return parsed
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -193,6 +235,28 @@ def parse_detection(row: dict[str, str]) -> ParticleDetection:
             else float(row["recurrent_artifact_required_peak_signal"])
         ),
     )
+
+
+def parse_tracks(rows: list[dict[str, str]]) -> list[ParticleTrack]:
+    grouped: dict[int, list[tuple[int, ParticleDetection]]] = {}
+    for row in rows:
+        track_id = int(float(row["track_id"]))
+        raw_index = row.get("track_detection_index", "")
+        detection_index = (
+            len(grouped.get(track_id, []))
+            if raw_index == ""
+            else int(float(raw_index))
+        )
+        grouped.setdefault(track_id, []).append((detection_index, parse_detection(row)))
+    return [
+        ParticleTrack(
+            track_id=track_id,
+            detections=tuple(
+                detection for _index, detection in sorted(items, key=lambda item: item[0])
+            ),
+        )
+        for track_id, items in sorted(grouped.items())
+    ]
 
 
 def option_value(config: dict, name: str) -> str | None:
@@ -288,7 +352,9 @@ def filter_tracks(
     config: TrackFilterConfig,
 ) -> dict[str, object]:
     velocities = [parse_velocity(row) for row in read_csv_rows(output_dir / "velocities.csv")]
-    scores = score_particle_velocities(velocities, config=config)
+    track_rows = reconstruct_track_rows(output_dir)
+    tracks = parse_tracks(track_rows) if track_rows else None
+    scores = score_particle_velocities(velocities, config=config, tracks=tracks)
     accepted_ids = {score.track_id for score in scores if score.accepted}
     filtered = [velocity for velocity in velocities if velocity.track_id in accepted_ids]
     track_scores_path = output_dir / "track_scores.csv"
@@ -296,7 +362,6 @@ def filter_tracks(
     filtered_tracks_path = output_dir / "filtered_tracks.csv"
     write_csv(track_scores_path, [asdict(score) for score in scores], TRACK_SCORE_FIELDS)
     write_csv(filtered_velocities_path, [asdict(velocity) for velocity in filtered], VELOCITY_FIELDS)
-    track_rows = reconstruct_track_rows(output_dir)
     filtered_track_count: int | None = None
     filtered_tracks_result: str | None = None
     if track_rows:
@@ -326,11 +391,21 @@ def main(argv: list[str] | None = None) -> int:
             args.max_abs_x_velocity_px_per_frame,
             name="--max-abs-x-velocity-px-per-frame",
         )
+        max_recurrent_artifact_track_score = optional_unit_float(
+            args.max_recurrent_artifact_track_score,
+            name="--max-recurrent-artifact-track-score",
+        )
+        recurrent_artifact_detection_threshold = unit_float(
+            args.recurrent_artifact_detection_threshold,
+            name="--recurrent-artifact-detection-threshold",
+        )
         config = TrackFilterConfig(
             min_track_length=args.min_track_length,
             min_velocity_ratio_y=args.min_velocity_ratio_y,
             max_velocity_ratio_y=args.max_velocity_ratio_y,
             max_abs_x_velocity_px_per_frame=max_abs_x_velocity,
+            max_recurrent_artifact_track_score=max_recurrent_artifact_track_score,
+            recurrent_artifact_detection_threshold=recurrent_artifact_detection_threshold,
         )
         payload = filter_tracks(args.output_dir, config=config)
     except (OSError, ValueError, json.JSONDecodeError) as exc:

@@ -8,6 +8,7 @@ from beltmap._driver_map import (
     _accumulate_frame_nearest,
     accumulate_belt_map,
     estimate_local_illumination_field,
+    validate_map_aggregation,
     validate_map_trim_fraction,
 )
 
@@ -61,6 +62,52 @@ def test_trimmed_map_reconstruction_rejects_single_bright_outlier(tmp_path, monk
     assert trimmed_coverage == mean_coverage
     assert mean_map[0, 0] == pytest.approx(70.0)
     assert trimmed_map[0, 0] == pytest.approx(10.0)
+
+
+def test_winsorized_map_reconstruction_clips_single_bright_outlier(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    paths = []
+    for index, value in enumerate([10, 10, 12, 250]):
+        path = tmp_path / f"frame_{index:03d}.png"
+        _write_gray(path, value)
+        paths.append(path)
+
+    common_kwargs = dict(
+        paths=paths,
+        samples=[0, 1, 2, 3],
+        region=(0, 0, 1, 1),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=1.0,
+        map_height=1,
+        previous_belt_map=None,
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+    )
+
+    mean_map, mean_coverage = accumulate_belt_map(
+        **common_kwargs,
+        map_trim_fraction=0.0,
+    )
+    winsorized_map, winsorized_coverage = accumulate_belt_map(
+        **common_kwargs,
+        map_trim_fraction=0.25,
+        robust_pixel_estimator="winsorized_mean",
+    )
+
+    assert mean_coverage["contributed_pixels"] == 4
+    assert winsorized_coverage == mean_coverage
+    assert mean_map[0, 0] == pytest.approx(70.5)
+    # With one sample trimmed from each tail, the 250 outlier is clipped to 12
+    # and the low tail remains at 10: mean([10, 10, 12, 12]) = 11.
+    assert winsorized_map[0, 0] == pytest.approx(11.0)
 
 
 def test_frame_median_offset_correction_aligns_additive_illumination(tmp_path, monkeypatch):
@@ -208,7 +255,7 @@ def test_trimmed_map_reconstruction_fails_before_large_memory_allocation(tmp_pat
         Image.fromarray(np.full((8, 8), value, dtype=np.uint8)).save(path)
         paths.append(path)
 
-    with pytest.raises(MemoryError, match="trimmed belt-map reconstruction"):
+    with pytest.raises(MemoryError, match="robust per-pixel belt-map reconstruction"):
         accumulate_belt_map(
             paths=paths,
             samples=[0, 1],
@@ -307,6 +354,20 @@ def test_non_fractional_map_accumulation_uses_nearest_row_assignment():
     np.testing.assert_allclose(sums_linear[:, 0], [6.0, 64.0, 40.0, 0.0])
     np.testing.assert_allclose(weights_nearest[:, 0], [1.0, 1.0, 0.0, 0.0])
     np.testing.assert_allclose(sums_nearest[:, 0], [10.0, 100.0, 0.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("mean", "mean"),
+        ("huber", "huber"),
+        ("trimmed", "trimmed_mean"),
+        ("winsor", "winsorized_mean"),
+        ("winsorised-mean", "winsorized_mean"),
+    ],
+)
+def test_validate_map_aggregation_accepts_robust_estimators(value, expected):
+    assert validate_map_aggregation(value) == expected
 
 
 @pytest.mark.parametrize("trim_fraction", [0.0, 0.1, 0.49])

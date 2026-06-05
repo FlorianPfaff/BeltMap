@@ -1,10 +1,12 @@
 import numpy as np
+import pytest
 
 import beltmap.tracking as tracking_module
 from beltmap import (
     ParticleComponentConfig,
     ParticleDetection,
     ParticleTrackingConfig,
+    ParticleTrack,
     ParticleVelocity,
     TrackFilterConfig,
     estimate_particle_velocities_vs_belt,
@@ -953,6 +955,110 @@ def test_score_particle_velocities_applies_length_ratio_and_lateral_gates():
     assert scores[1].passes_velocity_ratio is False
     assert scores[2].passes_lateral_velocity is False
     assert [velocity.track_id for velocity in filtered] == [0]
+
+
+def test_score_particle_velocities_uses_track_level_recurrent_artifact_gate():
+    velocities = [
+        ParticleVelocity(
+            track_id=0,
+            n_detections=4,
+            frame_start=0,
+            frame_end=3,
+            velocity_y_px_per_frame=4.0,
+            velocity_x_px_per_frame=0.0,
+            speed_px_per_frame=4.0,
+            belt_velocity_y_px_per_frame=5.0,
+            velocity_ratio_y=0.8,
+            belt_minus_particle_velocity_y_px_per_frame=1.0,
+        ),
+        ParticleVelocity(
+            track_id=1,
+            n_detections=4,
+            frame_start=0,
+            frame_end=3,
+            velocity_y_px_per_frame=4.0,
+            velocity_x_px_per_frame=0.0,
+            speed_px_per_frame=4.0,
+            belt_velocity_y_px_per_frame=5.0,
+            velocity_ratio_y=0.8,
+            belt_minus_particle_velocity_y_px_per_frame=1.0,
+        ),
+    ]
+    clean_track = ParticleTrack(
+        track_id=0,
+        detections=tuple(
+            ParticleDetection(
+                frame_index,
+                1,
+                y=10.0 + frame_index,
+                x=5.0,
+                area_px=4,
+                bbox_top=10 + frame_index,
+                bbox_left=4,
+                bbox_bottom=12 + frame_index,
+                bbox_right=6,
+                recurrent_artifact_overlap_fraction=0.1,
+                recurrent_artifact_probability=0.0,
+            )
+            for frame_index in range(4)
+        ),
+    )
+    recurrent_track = ParticleTrack(
+        track_id=1,
+        detections=tuple(
+            ParticleDetection(
+                frame_index,
+                1,
+                y=20.0 + frame_index,
+                x=5.0,
+                area_px=4,
+                bbox_top=20 + frame_index,
+                bbox_left=4,
+                bbox_bottom=22 + frame_index,
+                bbox_right=6,
+                recurrent_artifact_overlap_fraction=0.75,
+                recurrent_artifact_probability=0.8,
+            )
+            for frame_index in range(4)
+        ),
+    )
+
+    scores = score_particle_velocities(
+        velocities,
+        config=TrackFilterConfig(
+            min_track_length=4,
+            max_recurrent_artifact_track_score=0.5,
+            recurrent_artifact_detection_threshold=0.3,
+        ),
+        tracks=[clean_track, recurrent_track],
+    )
+
+    assert [score.passes_recurrent_artifact for score in scores] == [True, False]
+    assert [score.accepted for score in scores] == [True, False]
+    assert scores[0].recurrent_artifact_track_score < 0.5
+    assert scores[1].recurrent_artifact_hit_fraction == 1.0
+    assert scores[1].recurrent_artifact_track_score > 0.5
+
+
+def test_score_particle_velocities_requires_tracks_for_enabled_recurrent_gate():
+    velocity = ParticleVelocity(
+        track_id=0,
+        n_detections=4,
+        frame_start=0,
+        frame_end=3,
+        velocity_y_px_per_frame=4.0,
+        velocity_x_px_per_frame=0.0,
+        speed_px_per_frame=4.0,
+        belt_velocity_y_px_per_frame=5.0,
+        velocity_ratio_y=0.8,
+        belt_minus_particle_velocity_y_px_per_frame=1.0,
+    )
+
+    with pytest.raises(ValueError, match="tracks are required"):
+        score_particle_velocities(
+            [velocity],
+            config=TrackFilterConfig(max_recurrent_artifact_track_score=0.5),
+        )
 
 
 def test_track_particle_detections_drops_tracks_across_explicit_empty_frame_gap():

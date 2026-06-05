@@ -184,6 +184,38 @@ def test_filter_tracks_cli_reports_missing_velocities_without_traceback(tmp_path
     assert exc_info.value.code == 2
 
 
+def test_filter_tracks_cli_can_gate_track_level_recurrent_artifacts(tmp_path, capsys):
+    make_velocities(tmp_path)
+    track_rows = list(csv.DictReader((tmp_path / "tracks.csv").open()))
+    for row in track_rows:
+        if row["track_id"] == "0":
+            row["recurrent_artifact_overlap_fraction"] = "0.9"
+            row["recurrent_artifact_probability"] = "0.8"
+        else:
+            row["recurrent_artifact_overlap_fraction"] = "0.0"
+            row["recurrent_artifact_probability"] = "0.0"
+        row.setdefault("recurrent_artifact_required_peak_signal", "")
+    write_csv(tmp_path / "tracks.csv", track_rows)
+
+    exit_code = cli_filter_tracks.main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "--min-track-length",
+            "5",
+            "--max-recurrent-artifact-track-score",
+            "0.5",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["accepted_velocity_estimates"] == 0
+    score_rows = list(csv.DictReader((tmp_path / "track_scores.csv").open()))
+    assert score_rows[0]["passes_recurrent_artifact"] == "False"
+    assert float(score_rows[0]["recurrent_artifact_track_score"]) > 0.5
+
+
 def test_filter_tracks_reconstructs_missing_track_membership(tmp_path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "metadata.json").write_text(

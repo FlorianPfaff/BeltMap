@@ -10,6 +10,11 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .benchmark import detection_metrics, source_frame_index
+from .bootstrap_ci import (
+    BOOTSTRAP_SUMMARY_FIELDS,
+    bootstrap_run_summary,
+    empty_bootstrap_metrics,
+)
 from .track_diagnostics import (
     DEFAULT_NEAR_THRESHOLD_MARGIN,
     DEFAULT_SMALL_AREA_THRESHOLD_PX,
@@ -64,6 +69,7 @@ SUMMARY_FIELDS = [
     "labeled_froc_recall_at_1_0_fp_per_frame",
     "labeled_mean_matched_iou",
     "labeled_mean_centroid_error_px",
+    *BOOTSTRAP_SUMMARY_FIELDS,
     "small_component_share_area_le_8",
     "small_accepted_tracks_lt_50",
     "long_small_accepted_tracks_ge_5",
@@ -332,6 +338,17 @@ def format_value(value: Any, *, digits: int = 4) -> str:
             return f"{value:.{digits}g}"
         return f"{value:.{digits}f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def format_bootstrap_interval(row: dict[str, Any], field: str) -> str:
+    """Format one bootstrap median and confidence interval cell."""
+
+    median = finite_float(row.get(f"{field}_bootstrap_median"))
+    low = finite_float(row.get(f"{field}_ci_low"))
+    high = finite_float(row.get(f"{field}_ci_high"))
+    if median is None or low is None or high is None:
+        return "n/a"
+    return f"{format_value(median)} [{format_value(low)}, {format_value(high)}]"
 
 
 def parse_run_spec(value: str) -> RunSpec:
@@ -848,6 +865,10 @@ def summarize_run(
     *,
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
+    bootstrap_samples: int = 0,
+    bootstrap_confidence_level: float = 0.95,
+    bootstrap_seed: int | None = 0,
+    bootstrap_block_length_frames: int = 1,
 ) -> dict[str, Any]:
     """Compute one row of comparison metrics for a run."""
 
@@ -931,6 +952,8 @@ def summarize_run(
         "elapsed_s": data.metadata.get("elapsed_s"),
     }
     row.update(empty_labeled_metrics())
+    row.update(empty_bootstrap_metrics())
+    scored_frames: set[int] | None = None
     if labeled_truth is not None:
         scored_frames = truth_frame_indices(labeled_truth)
         scored_detections = restrict_detection_rows_to_frames(data.detections, scored_frames)
@@ -983,6 +1006,22 @@ def summarize_run(
                 "labeled_froc_recall_at_0_5_fp_per_frame": froc.get("recall_at_0_5_fp_per_frame"),
                 "labeled_froc_recall_at_1_0_fp_per_frame": froc.get("recall_at_1_0_fp_per_frame"),
             }
+        )
+    if bootstrap_samples > 0:
+        row.update(
+            bootstrap_run_summary(
+                detections_per_frame=data.detections_per_frame,
+                detections=data.detections,
+                velocities=data.velocities,
+                filtered_velocities=data.filtered_velocities,
+                labeled_truth=labeled_truth,
+                scored_frames=scored_frames,
+                truth_iou_threshold=truth_iou_threshold,
+                samples=bootstrap_samples,
+                confidence_level=bootstrap_confidence_level,
+                seed=bootstrap_seed,
+                block_length_frames=bootstrap_block_length_frames,
+            )
         )
     return row
 
@@ -1462,18 +1501,86 @@ def build_markdown_report(
                 + " | ".join(format_value(row.get(field)) for field, _label in labeled_fields)
                 + " |"
             )
-        if "labeled_detection_froc" in plots:
+    bootstrap_rows = [row for row in rows if finite_int(row.get("bootstrap_samples"))]
+    if bootstrap_rows:
+        first_bootstrap = bootstrap_rows[0]
+        proxy_ci_fields = [
+            ("label", "run"),
+            ("detections_per_frame_mean", "det/frame mean"),
+            ("detections_per_frame_median", "det/frame median"),
+            ("velocity_ratio_median", "ratio median"),
+            ("velocity_ratio_share_0_to_1", "ratio 0..1 share"),
+            ("filtered_velocity_ratio_median", "filtered ratio median"),
+            ("filtered_velocity_ratio_share_0_to_1", "filtered 0..1 share"),
+            ("long_velocity_tracks_ge_5", "tracks >=5"),
+            ("long_velocity_tracks_ge_10", "tracks >=10"),
+        ]
+        lines.extend(
+            [
+                "",
+                "## Bootstrap confidence intervals",
+                "",
+                "Values are bootstrap median [low, high] intervals. Frame-count and labeled metrics use circular contiguous frame blocks; velocity and track-length summaries resample velocity rows.",
+                f"Samples: {format_value(first_bootstrap.get('bootstrap_samples'))}; confidence level: {format_value(first_bootstrap.get('bootstrap_confidence_level'))}; frame block length: {format_value(first_bootstrap.get('bootstrap_block_length_frames'))}.",
+                "",
+                "| " + " | ".join(label for _field, label in proxy_ci_fields) + " |",
+                "| " + " | ".join("---" for _ in proxy_ci_fields) + " |",
+            ]
+        )
+        for row in rows:
+            lines.append(
+                "| "
+                + " | ".join(
+                    format_value(row.get(field))
+                    if field == "label"
+                    else format_bootstrap_interval(row, field)
+                    for field, _label in proxy_ci_fields
+                )
+                + " |"
+            )
+        if truth_path is not None:
+            labeled_ci_fields = [
+                ("label", "run"),
+                ("labeled_precision", "precision"),
+                ("labeled_recall", "recall"),
+                ("labeled_f1", "F1"),
+                ("labeled_false_positives", "FP"),
+                ("labeled_false_negatives", "FN"),
+                ("labeled_mean_matched_iou", "mean IoU"),
+                ("labeled_mean_centroid_error_px", "centroid px"),
+            ]
             lines.extend(
                 [
                     "",
-                    "### Labeled detection FROC",
+                    "### Labeled-frame bootstrap intervals",
                     "",
-                    "The FROC curve sweeps the loaded detections by their per-component score, using `peak_signal` when available. It measures recall against false positives per scored frame, so empty scored frames contribute to the false-positive budget. Because detections below the run's original detector threshold were never written, use this plot as a within-run confidence sweep; full threshold sweeps still require rerunning the detector.",
-                    "",
-                    f"![Labeled detection FROC]({markdown_link(plots['labeled_detection_froc'], relative_to=report_dir)})",
-                    "",
+                    "| " + " | ".join(label for _field, label in labeled_ci_fields) + " |",
+                    "| " + " | ".join("---" for _ in labeled_ci_fields) + " |",
                 ]
             )
+            for row in rows:
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        format_value(row.get(field))
+                        if field == "label"
+                        else format_bootstrap_interval(row, field)
+                        for field, _label in labeled_ci_fields
+                    )
+                    + " |"
+                )
+    if "labeled_detection_froc" in plots:
+        lines.extend(
+            [
+                "",
+                "### Labeled detection FROC",
+                "",
+                "The FROC curve sweeps the loaded detections by their per-component score, using `peak_signal` when available. It measures recall against false positives per scored frame, so empty scored frames contribute to the false-positive budget. Because detections below the run's original detector threshold were never written, use this plot as a within-run confidence sweep; full threshold sweeps still require rerunning the detector.",
+                "",
+                f"![Labeled detection FROC]({markdown_link(plots['labeled_detection_froc'], relative_to=report_dir)})",
+                "",
+            ]
+        )
     lines.extend(["", "## Visual comparison", ""])
     if "raw_detection_contact_sheet" in images:
         lines.extend(
@@ -1556,20 +1663,40 @@ def generate_comparison_report(
     frames: list[int] | None = None,
     truth_path: Path | None = None,
     truth_iou_threshold: float = 0.25,
+    bootstrap_samples: int = 0,
+    bootstrap_confidence_level: float = 0.95,
+    bootstrap_seed: int | None = 0,
+    bootstrap_block_length_frames: int = 1,
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
     if len(specs) < 2:
         raise ValueError("at least two runs are required for comparison")
+    if bootstrap_samples < 0:
+        raise ValueError("bootstrap samples must be non-negative")
+    if not 0.0 < bootstrap_confidence_level < 1.0:
+        raise ValueError("bootstrap confidence level must be between 0 and 1")
+    if bootstrap_block_length_frames < 1:
+        raise ValueError("bootstrap block length must be at least 1 frame")
     report_dir.mkdir(parents=True, exist_ok=True)
     labeled_truth = (
         None if truth_path is None else load_labeled_detection_truth(truth_path)
     )
     runs = [load_run_data(spec) for spec in specs]
-    rows = [
-        summarize_run(run, labeled_truth=labeled_truth, truth_iou_threshold=truth_iou_threshold)
-        for run in runs
-    ]
+    rows = []
+    for run_index, run in enumerate(runs):
+        bootstrap_seed_for_run = None if bootstrap_seed is None else bootstrap_seed + run_index
+        rows.append(
+            summarize_run(
+                run,
+                labeled_truth=labeled_truth,
+                truth_iou_threshold=truth_iou_threshold,
+                bootstrap_samples=bootstrap_samples,
+                bootstrap_confidence_level=bootstrap_confidence_level,
+                bootstrap_seed=bootstrap_seed_for_run,
+                bootstrap_block_length_frames=bootstrap_block_length_frames,
+            )
+        )
     summary_csv = report_dir / "summary.csv"
     write_summary_csv(summary_csv, rows)
     plots, images = write_plots(

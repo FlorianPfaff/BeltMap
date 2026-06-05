@@ -91,6 +91,13 @@ max_bbox_aspect_ratio = 4.0
 min_bbox_extent = 0.15
 local_illumination_correction = true
 local_illumination_tile_px = 24
+local_illumination_min_pixels = 256
+local_illumination_mask_threshold = 7.0
+local_illumination_mask_mode = "hysteresis_abs"
+local_illumination_mask_grow_threshold = 2.5
+local_illumination_mask_dilation_px = 3
+local_illumination_mask_margin_px = 6
+local_illumination_mask_min_area_px = 9
 
 [photometric]
 enabled = true
@@ -189,6 +196,13 @@ max_abs_px = 6
         "DETECTION_MIN_BBOX_WIDTH_PX": "3",
         "DETECTION_LOCAL_ILLUMINATION_CORRECTION": "1",
         "DETECTION_LOCAL_ILLUMINATION_TILE_PX": "24",
+        "DETECTION_LOCAL_ILLUMINATION_MIN_PIXELS": "256",
+        "DETECTION_LOCAL_ILLUMINATION_MASK_THRESHOLD": "7",
+        "DETECTION_LOCAL_ILLUMINATION_MASK_MODE": "hysteresis_abs",
+        "DETECTION_LOCAL_ILLUMINATION_MASK_GROW_THRESHOLD": "2.5",
+        "DETECTION_LOCAL_ILLUMINATION_MASK_DILATION_PX": "3",
+        "DETECTION_LOCAL_ILLUMINATION_MASK_MARGIN_PX": "6",
+        "DETECTION_LOCAL_ILLUMINATION_MASK_MIN_AREA_PX": "9",
         "PHOTOMETRIC_ENABLED": "1",
         "PHOTOMETRIC_MAX_ITERATIONS": "4",
         "PHOTOMETRIC_MIN_PIXELS": "512",
@@ -470,6 +484,8 @@ def test_write_config_template_writes_valid_toml(tmp_path):
     assert parsed["map"]["robust_min_scale"] == 1.0
     assert parsed["detection"]["local_illumination_correction"] is False
     assert parsed["detection"]["local_illumination_tile_px"] == 64
+    assert parsed["detection"]["local_illumination_min_pixels"] == 128
+    assert "local_illumination_mask_threshold" not in parsed["detection"]
     assert parsed["phase"]["estimation_mode"] == "registration"
     assert parsed["static_noise"]["sample_frames"] == 0
     assert parsed["static_noise"]["mask_margin_px"] == 8

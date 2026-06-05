@@ -5,6 +5,7 @@ import csv
 import json
 import math
 import re
+import shutil
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -15,6 +16,7 @@ from PIL import Image
 
 from beltmap import (
     ParticleComponentConfig,
+    ParticleDetection,
     ParticleTrackingConfig,
     ResidualConfig,
     ResidualImage,
@@ -80,6 +82,14 @@ TRACK_SCORE_FIELDS = [
     "accepted",
     "plausibility_score",
 ]
+PREVIEW_PATTERNS = (
+    "phase_estimates.csv",
+    "preview_scales.json",
+    "belt_map.png",
+    "raw_frame_*.png",
+    "residual_frame_*.png",
+    "residual_fixed_frame_*.png",
+)
 
 
 def natural_key(path: Path) -> list[Any]:
@@ -214,6 +224,10 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
         writer.writerows(rows)
 
 
+def optional_csv_value(value: Any) -> Any:
+    return "" if value is None else value
+
+
 def detection_row(detection: Any, *, path: Path, image_dir: Path, frame_index: int) -> dict[str, Any]:
     row = {
         "frame_index": frame_index,
@@ -226,11 +240,17 @@ def detection_row(detection: Any, *, path: Path, image_dir: Path, frame_index: i
         "bbox_left": detection.bbox_left,
         "bbox_bottom": detection.bbox_bottom,
         "bbox_right": detection.bbox_right,
-        "mean_signal": detection.mean_signal,
-        "peak_signal": detection.peak_signal,
-        "recurrent_artifact_overlap_fraction": None,
-        "recurrent_artifact_probability": None,
-        "recurrent_artifact_required_peak_signal": None,
+        "mean_signal": optional_csv_value(getattr(detection, "mean_signal", None)),
+        "peak_signal": optional_csv_value(getattr(detection, "peak_signal", None)),
+        "recurrent_artifact_overlap_fraction": optional_csv_value(
+            getattr(detection, "recurrent_artifact_overlap_fraction", None)
+        ),
+        "recurrent_artifact_probability": optional_csv_value(
+            getattr(detection, "recurrent_artifact_probability", None)
+        ),
+        "recurrent_artifact_required_peak_signal": optional_csv_value(
+            getattr(detection, "recurrent_artifact_required_peak_signal", None)
+        ),
     }
     return row
 
@@ -286,6 +306,264 @@ def average_subtracted_residual(
     if average_background is None:
         raise ValueError("average_background is required")
     return generate_residual_image(frame, average_background, config=config)
+
+
+def read_csv_rows(path: Path, *, required: bool = True) -> list[dict[str, str]]:
+    if not path.is_file():
+        if required:
+            raise FileNotFoundError(path)
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
+def optional_float(row: dict[str, Any], field: str) -> float | None:
+    value = row.get(field, "")
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "" or text.lower() in {"none", "nan"}:
+        return None
+    parsed = float(text)
+    return parsed if np.isfinite(parsed) else None
+
+
+def required_float(row: dict[str, Any], field: str) -> float:
+    parsed = optional_float(row, field)
+    if parsed is None:
+        raise ValueError(f"Missing finite {field!r} in detection row: {row}")
+    return parsed
+
+
+def required_int(row: dict[str, Any], field: str) -> int:
+    parsed = required_float(row, field)
+    rounded = round(parsed)
+    if abs(parsed - rounded) > 1e-6:
+        raise ValueError(f"Expected integer-like {field!r}, got {parsed!r}")
+    return int(rounded)
+
+
+def parse_detection(row: dict[str, str]) -> ParticleDetection:
+    return ParticleDetection(
+        frame_index=required_float(row, "frame_index"),
+        label=required_int(row, "label"),
+        y=required_float(row, "y"),
+        x=required_float(row, "x"),
+        area_px=required_int(row, "area_px"),
+        bbox_top=required_int(row, "bbox_top"),
+        bbox_left=required_int(row, "bbox_left"),
+        bbox_bottom=required_int(row, "bbox_bottom"),
+        bbox_right=required_int(row, "bbox_right"),
+        mean_signal=optional_float(row, "mean_signal"),
+        peak_signal=optional_float(row, "peak_signal"),
+        recurrent_artifact_overlap_fraction=optional_float(row, "recurrent_artifact_overlap_fraction"),
+        recurrent_artifact_probability=optional_float(row, "recurrent_artifact_probability"),
+        recurrent_artifact_required_peak_signal=optional_float(row, "recurrent_artifact_required_peak_signal"),
+    )
+
+
+def safe_label(value: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip()).strip("._-")
+    return label or "beltmap"
+
+
+def unique_label(label: str, existing: set[str]) -> str:
+    if label not in existing:
+        return label
+    suffix = 2
+    while f"{label}_{suffix}" in existing:
+        suffix += 1
+    return f"{label}_{suffix}"
+
+
+def selected_image_name(path: Path, *, image_dir: Path) -> str:
+    try:
+        return str(path.relative_to(image_dir))
+    except ValueError:
+        return str(path)
+
+
+def infer_run_frame_count(run_dir: Path, detection_rows: list[dict[str, str]], metadata: dict[str, Any]) -> int | None:
+    value = metadata.get("n_images")
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, float) and value >= 0 and value.is_integer():
+        return int(value)
+    per_frame = read_csv_rows(run_dir / "detections_per_frame.csv", required=False)
+    if per_frame:
+        return max(required_int(row, "frame_index") for row in per_frame) + 1
+    if detection_rows:
+        return max(required_int(row, "frame_index") for row in detection_rows) + 1
+    return None
+
+
+def load_existing_beltmap_detections(
+    run_dir: Path,
+    *,
+    paths: list[Path],
+    image_dir: Path,
+    current_frame_stride: int,
+    strict_frame_match: bool,
+) -> tuple[list[list[ParticleDetection]], dict[str, Any]]:
+    detection_path = run_dir / "detections.csv"
+    detection_rows = read_csv_rows(detection_path)
+    metadata = read_json(run_dir / "metadata.json")
+    source_n_images = infer_run_frame_count(run_dir, detection_rows, metadata)
+
+    source_stride = metadata.get("frame_stride")
+    if strict_frame_match and source_stride is not None:
+        source_stride_int = int(float(source_stride))
+        if source_stride_int != current_frame_stride:
+            raise ValueError(
+                f"{run_dir} was produced with frame_stride={source_stride_int}, "
+                f"but this comparison selected frame_stride={current_frame_stride}. "
+                "Re-run the BeltMap output with the same frame selection or pass "
+                "--allow-beltmap-frame-mismatch for an explicitly non-strict diagnostic run."
+            )
+    if strict_frame_match and source_n_images is not None and source_n_images < len(paths):
+        raise ValueError(
+            f"{run_dir} contains {source_n_images} processed frames, "
+            f"but this comparison selected {len(paths)} frames."
+        )
+
+    detections_by_frame: list[list[ParticleDetection]] = [[] for _ in paths]
+    ignored_outside_selected_frames = 0
+    for row in detection_rows:
+        frame_index = required_int(row, "frame_index")
+        if frame_index < 0:
+            raise ValueError(f"Negative frame_index in {detection_path}: {frame_index}")
+        if frame_index >= len(paths):
+            ignored_outside_selected_frames += 1
+            continue
+        observed_image = str(row.get("image", "")).strip()
+        if strict_frame_match and observed_image:
+            expected_image = selected_image_name(paths[frame_index], image_dir=image_dir)
+            if observed_image != expected_image:
+                raise ValueError(
+                    f"{run_dir} frame {frame_index} image mismatch: "
+                    f"detections.csv has {observed_image!r}, selected frame is {expected_image!r}. "
+                    "Use the same image-dir/max-frames/frame-stride for a fair comparison."
+                )
+        detections_by_frame[frame_index].append(parse_detection(row))
+
+    return detections_by_frame, {
+        "source_run_n_images": source_n_images,
+        "ignored_source_detections_outside_selected_frames": ignored_outside_selected_frames,
+        "strict_beltmap_frame_match": strict_frame_match,
+    }
+
+
+def copy_preview_files(source_run: Path, method_dir: Path) -> None:
+    for pattern in PREVIEW_PATTERNS:
+        for path in source_run.glob(pattern):
+            shutil.copy2(path, method_dir / path.name)
+
+
+def run_existing_beltmap_same_tracker(
+    *,
+    label: str,
+    source_run: Path,
+    paths: list[Path],
+    image_dir: Path,
+    output_dir: Path,
+    current_frame_stride: int,
+    strict_frame_match: bool,
+    tracking_config: ParticleTrackingConfig,
+    velocity_fit_method: str,
+    belt_velocity_px_per_frame: float,
+    min_track_length: int,
+    track_filter_config: TrackFilterConfig,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    method_dir = output_dir / label
+    method_dir.mkdir(parents=True, exist_ok=True)
+    copy_preview_files(source_run, method_dir)
+
+    source_metadata = read_json(source_run / "metadata.json")
+    detections_by_frame, load_metadata = load_existing_beltmap_detections(
+        source_run,
+        paths=paths,
+        image_dir=image_dir,
+        current_frame_stride=current_frame_stride,
+        strict_frame_match=strict_frame_match,
+    )
+    detection_rows = detections_to_rows(detections_by_frame, paths, image_dir=image_dir)
+    print(
+        f"{label}: loaded {len(detection_rows)} BeltMap detections from {source_run}; "
+        "re-tracking with shared PyRecEst settings",
+        flush=True,
+    )
+    write_csv(method_dir / "detections.csv", detection_rows, DETECTION_FIELDS)
+    write_csv(
+        method_dir / "detections_per_frame.csv",
+        [
+            {"frame_index": index, "n_detections": len(detections)}
+            for index, detections in enumerate(detections_by_frame)
+        ],
+        ["frame_index", "n_detections"],
+    )
+
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=tracking_config,
+        frame_indices=[float(index) for index in range(len(paths))],
+    )
+    tracks_rows = track_detection_rows(tracks, paths, image_dir=image_dir)
+    write_csv(method_dir / "tracks.csv", tracks_rows, TRACK_DETECTION_FIELDS)
+
+    velocity_objects = estimate_particle_velocities_vs_belt(
+        tracks,
+        belt_image_velocity_px_per_frame=belt_velocity_px_per_frame,
+        min_track_length=min_track_length,
+        fit_method=velocity_fit_method,
+    )
+    velocity_rows = [asdict(velocity) for velocity in velocity_objects]
+    write_csv(method_dir / "velocities.csv", velocity_rows, VELOCITY_FIELDS)
+
+    track_scores = score_particle_velocities(velocity_objects, config=track_filter_config)
+    accepted_track_ids = {score.track_id for score in track_scores if score.accepted}
+    filtered_velocity_rows = [
+        asdict(velocity)
+        for velocity in velocity_objects
+        if velocity.track_id in accepted_track_ids
+    ]
+    filtered_track_rows = [row for row in tracks_rows if row["track_id"] in accepted_track_ids]
+    write_csv(method_dir / "track_scores.csv", [asdict(score) for score in track_scores], TRACK_SCORE_FIELDS)
+    write_csv(method_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
+    write_csv(method_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
+
+    areas = np.asarray([row["area_px"] for row in detection_rows], dtype=np.float64)
+    elapsed_s = time.perf_counter() - start
+    metadata = {
+        "method": label,
+        "source_run": str(source_run),
+        "same_tracker_recomputed": True,
+        "n_images": len(paths),
+        "n_detections": len(detection_rows),
+        "n_tracks": len(tracks),
+        "n_velocity_estimates": len(velocity_rows),
+        "n_filtered_velocity_estimates": len(filtered_velocity_rows),
+        "belt_velocity_px_per_frame": belt_velocity_px_per_frame,
+        "detection_threshold": source_metadata.get("detection_threshold"),
+        "detection_low_threshold": source_metadata.get("detection_low_threshold"),
+        "detection_mode": source_metadata.get("detection_mode"),
+        "min_area_px": source_metadata.get("min_area_px"),
+        "detection_area_median_px": None if areas.size == 0 else float(np.median(areas)),
+        "detections_per_frame": None if not paths else len(detection_rows) / len(paths),
+        "elapsed_s": elapsed_s,
+        **load_metadata,
+    }
+    (method_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return {"label": label, "output_dir": str(method_dir), **metadata}
 
 
 def run_method(
@@ -414,6 +692,8 @@ def run_method(
     elapsed_s = time.perf_counter() - start
     metadata = {
         "method": label,
+        "source_run": "",
+        "same_tracker_recomputed": True,
         "n_images": len(paths),
         "n_detections": len(detection_rows),
         "n_tracks": len(tracks),
@@ -456,7 +736,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--image-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/raw_baseline_comparison"))
-    parser.add_argument("--beltmap-run", action="append", type=Path, default=[], help="Existing BeltMap output dir to include in the comparison report.")
+    parser.add_argument(
+        "--beltmap-run",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "Existing BeltMap output dir whose detections.csv should be included in the "
+            "fair comparison. Detections are re-tracked and re-filtered with the same "
+            "PyRecEst settings used for the raw baselines."
+        ),
+    )
+    parser.add_argument(
+        "--include-original-beltmap-runs",
+        action="store_true",
+        help="Also include the unmodified BeltMap run dirs in comparison_report for debugging only.",
+    )
+    parser.add_argument(
+        "--allow-beltmap-frame-mismatch",
+        action="store_true",
+        help=(
+            "Allow BeltMap detections from a different frame selection. By default the script "
+            "requires matching processed image names/stride and truncates only extra trailing frames."
+        ),
+    )
     parser.add_argument("--max-frames", type=int, default=1000)
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--belt-region", type=parse_region, default=parse_region("0,220,1330,1800"))
@@ -509,6 +812,8 @@ def parse_preview_frames(value: str, *, frame_count: int) -> set[int]:
 def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
     fields = [
         "label",
+        "source_run",
+        "same_tracker_recomputed",
         "n_images",
         "n_detections",
         "detections_per_frame",
@@ -521,7 +826,10 @@ def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
     ]
     write_csv(output_dir / "raw_baseline_summary.csv", rows, fields)
     lines = [
-        "# Raw Baseline Comparison",
+        "# Same-Tracker Baseline Comparison",
+        "",
+        "Raw-image, raw-minus-average, and external BeltMap detections in this table use "
+        "the same PyRecEst tracking and track-filter configuration.",
         "",
         "| method | detections | detections/frame | tracks | velocities | filtered velocities | median area px | elapsed s |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -645,13 +953,38 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
+    for path in args.beltmap_run:
+        base_label = (
+            "beltmap_same_tracker"
+            if len(args.beltmap_run) == 1
+            else f"beltmap_{safe_label(path.name)}_same_tracker"
+        )
+        label = unique_label(base_label, {str(row["label"]) for row in summary_rows})
+        summary_rows.append(
+            run_existing_beltmap_same_tracker(
+                label=label,
+                source_run=path,
+                paths=selected_paths,
+                image_dir=args.image_dir,
+                output_dir=args.output_dir,
+                current_frame_stride=args.frame_stride,
+                strict_frame_match=not args.allow_beltmap_frame_mismatch,
+                tracking_config=tracking_config,
+                velocity_fit_method=args.velocity_fit_method,
+                belt_velocity_px_per_frame=args.belt_velocity_px_per_frame,
+                min_track_length=args.min_track_length,
+                track_filter_config=track_filter_config,
+            )
+        )
+
     write_summary(summary_rows, args.output_dir)
     compare_runs = [
         RunSpec(row["label"], Path(row["output_dir"]))
         for row in summary_rows
     ]
-    for path in args.beltmap_run:
-        compare_runs.append(RunSpec(path.name, path))
+    if args.include_original_beltmap_runs:
+        for path in args.beltmap_run:
+            compare_runs.append(RunSpec(f"{path.name}_original", path))
     if len(compare_runs) >= 2:
         generate_comparison_report(
             compare_runs,

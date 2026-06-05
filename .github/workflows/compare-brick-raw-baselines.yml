@@ -325,6 +325,7 @@ jobs:
 
           test -f outputs/beltmap-artifact/detections.csv
           test -f outputs/raw-baseline-comparison/raw_zscore/detections.csv
+          test -f outputs/raw-baseline-comparison/beltmap_same_tracker/detections.csv
 
           IFS=',' read -r MIN_IOU MAX_CENTER CANDIDATE_MARGIN CONFIRMING_MARGIN <<< "$RAW_CONFIRMATION_OVERLAP"
           IFS=',' read -r RESCUE_MIN_DETECTIONS RESCUE_MIN_CONFIRMED RESCUE_MIN_FRACTION <<< "$RAW_CONFIRMATION_TRACK_RESCUE"
@@ -340,7 +341,7 @@ jobs:
             max_match_center_args+=(--max-match-center-distance-px "$RAW_CONFIRMATION_MAX_MATCH_CENTER_DISTANCE")
           fi
           poetry run python scripts/filter_run_by_detection_overlap.py \
-            --candidate-run outputs/beltmap-artifact \
+            --candidate-run outputs/raw-baseline-comparison/beltmap_same_tracker \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
             --confirming-detections-source "$RAW_CONFIRMATION_CONFIRMING_SOURCE" \
             --output-dir outputs/raw-baseline-comparison/beltmap_raw_confirmed \
@@ -378,7 +379,7 @@ jobs:
               compare_args+=(--run "$method=outputs/raw-baseline-comparison/$method")
             fi
           done
-          compare_args+=(--run "beltmap-artifact=outputs/beltmap-artifact")
+          compare_args+=(--run "beltmap_same_tracker=outputs/raw-baseline-comparison/beltmap_same_tracker")
           compare_args+=(--run "beltmap_raw_confirmed=outputs/raw-baseline-comparison/beltmap_raw_confirmed")
           poetry run python -m beltmap.cli.compare \
             "${compare_args[@]}" \
@@ -387,7 +388,7 @@ jobs:
             --quiet
 
           poetry run python scripts/sweep_detection_overlap_filter.py \
-            --candidate-run outputs/beltmap-artifact \
+            --candidate-run outputs/raw-baseline-comparison/beltmap_same_tracker \
             --confirming-run outputs/raw-baseline-comparison/raw_zscore \
             --confirming-detections-source "$RAW_CONFIRMATION_CONFIRMING_SOURCE" \
             --output-root outputs/raw-baseline-comparison/raw_confirmation_sweep \

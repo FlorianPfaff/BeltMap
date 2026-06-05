@@ -19,13 +19,15 @@ from .residual import ResidualConfig, ResidualImage, generate_residual_image
 from .tracking import ParticleComponentConfig, extract_particle_detections
 
 MAP_PARTICLE_MASK_MODES = {"positive", "negative", "absolute", "hysteresis_abs"}
-MAP_AGGREGATION_METHODS = {"mean", "huber"}
+MAP_PER_PIXEL_ROBUST_AGGREGATIONS = {"trimmed_mean", "winsorized_mean"}
+MAP_AGGREGATION_METHODS = {"mean", "huber", *MAP_PER_PIXEL_ROBUST_AGGREGATIONS}
 MAP_SAMPLING_STRATEGIES = {"uniform", "adaptive_phase_coverage"}
 MAP_SAMPLE_STRATEGY_ENV = "MAP_SAMPLE_STRATEGY"
 MAP_SAMPLING_STRATEGY_ENV = "MAP_SAMPLING_STRATEGY"
 MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV = "MAP_ADAPTIVE_CANDIDATE_FRAMES"
 MAP_RECONSTRUCTION_TRIM_FRACTION_ENV = "MAP_RECONSTRUCTION_TRIM_FRACTION"
 MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV = "MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB"
+DEFAULT_ROBUST_MAP_TRIM_FRACTION = 0.1
 MAP_FRAME_MEDIAN_OFFSET_CORRECTION_ENV = "MAP_FRAME_MEDIAN_OFFSET_CORRECTION"
 MAP_LOCAL_ILLUMINATION_CORRECTION_ENV = "MAP_LOCAL_ILLUMINATION_CORRECTION"
 MAP_LOCAL_ILLUMINATION_TILE_PX_ENV = "MAP_LOCAL_ILLUMINATION_TILE_PX"
@@ -74,7 +76,15 @@ class BeltMapBuildResult:
     reference_phase: float
     map_height: int
     phase_refinement_rows: list[dict]
+    map_support: np.ndarray | None = None
     phase_by_frame: np.ndarray | None = None
+    sample_frame_indices: tuple[int, ...] = ()
+
+    @property
+    def sample_indices(self) -> tuple[int, ...]:
+        """Frame indices sampled for this map build."""
+
+        return self.sample_frame_indices
 
 
 def belt_phase(frame_index: int, velocity: float, reference_phase: float, period: float | None) -> float:
@@ -125,7 +135,18 @@ def validate_map_particle_mask_mode(mode: str) -> str:
 
 
 def validate_map_aggregation(method: str) -> str:
-    normalized = method.strip().lower()
+    normalized = method.strip().lower().replace("-", "_")
+    aliases = {
+        "trim": "trimmed_mean",
+        "trimmed": "trimmed_mean",
+        "trimmedmean": "trimmed_mean",
+        "winsor": "winsorized_mean",
+        "winsorized": "winsorized_mean",
+        "winsorizedmean": "winsorized_mean",
+        "winsorised": "winsorized_mean",
+        "winsorised_mean": "winsorized_mean",
+    }
+    normalized = aliases.get(normalized, normalized)
     if normalized not in MAP_AGGREGATION_METHODS:
         choices = ", ".join(sorted(MAP_AGGREGATION_METHODS))
         raise ValueError(f"MAP_AGGREGATION must be one of {choices}, got {method!r}")
@@ -179,6 +200,8 @@ def build_belt_map(
     local_illumination_correction: bool = False,
     local_illumination_tile_px: int = 64,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
+    sample_indices_override: Sequence[int] | None = None,
+    allowed_sample_frame_indices: Sequence[int] | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
         paths=paths,
@@ -203,6 +226,8 @@ def build_belt_map(
         local_illumination_correction=local_illumination_correction,
         local_illumination_tile_px=local_illumination_tile_px,
         phase_feedback_config=phase_feedback_config,
+        sample_indices_override=sample_indices_override,
+        allowed_sample_frame_indices=allowed_sample_frame_indices,
     )
     if result.phase_refinement_rows:
         rt.write_csv(rt.OUT / "phase_refinement.csv", result.phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
@@ -239,6 +264,8 @@ def build_belt_map_result(
     local_illumination_correction: bool = False,
     local_illumination_tile_px: int = 64,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
+    sample_indices_override: Sequence[int] | None = None,
+    allowed_sample_frame_indices: Sequence[int] | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
         raise ValueError("paths must contain at least one image")
@@ -262,31 +289,60 @@ def build_belt_map_result(
     cfg = _validate_phase_feedback_config(
         phase_feedback_config if phase_feedback_config is not None else _env_phase_feedback_config()
     )
+    default_trim_fraction = (
+        DEFAULT_ROBUST_MAP_TRIM_FRACTION
+        if aggregation in MAP_PER_PIXEL_ROBUST_AGGREGATIONS
+        else 0.0
+    )
     map_trim_fraction = validate_map_trim_fraction(
-        env_float(MAP_RECONSTRUCTION_TRIM_FRACTION_ENV, 0.0, minimum=0.0)
+        env_float(
+            MAP_RECONSTRUCTION_TRIM_FRACTION_ENV,
+            default_trim_fraction,
+            minimum=0.0,
+        )
         if map_trim_fraction is None
         else map_trim_fraction
+    )
+    if aggregation in MAP_PER_PIXEL_ROBUST_AGGREGATIONS and map_trim_fraction <= 0.0:
+        raise ValueError(
+            f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be positive when "
+            f"MAP_AGGREGATION={aggregation!r}"
+        )
+    per_pixel_aggregation = (
+        aggregation
+        if aggregation in MAP_PER_PIXEL_ROBUST_AGGREGATIONS
+        else "trimmed_mean" if map_trim_fraction > 0.0 else "mean"
     )
     _, _, crop_height, crop_width = region
     max_samples = env_int("MAP_SAMPLE_FRAMES", 120, minimum=1)
     map_adaptive_candidate_frames = env_int(MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV, 0, minimum=0)
     map_height, reference_phase, model_period = map_geometry(len(paths), crop_height, velocity, supplied_period)
-    samples = select_map_sample_indices(
-        frame_count=len(paths),
-        sample_count=max_samples,
-        velocity=velocity,
-        reference_phase=reference_phase,
-        model_period=model_period,
-        map_height=map_height,
-        crop_height=crop_height,
-        sampling_strategy=sampling_strategy,
-        adaptive_candidate_frames=map_adaptive_candidate_frames,
-    )
+    if sample_indices_override is None:
+        samples = select_map_sample_indices(
+            frame_count=len(paths),
+            sample_count=max_samples,
+            velocity=velocity,
+            reference_phase=reference_phase,
+            model_period=model_period,
+            map_height=map_height,
+            crop_height=crop_height,
+            sampling_strategy=sampling_strategy,
+            adaptive_candidate_frames=map_adaptive_candidate_frames,
+            allowed_indices=allowed_sample_frame_indices,
+        )
+        sample_source = "selected"
+    else:
+        samples = _validate_map_sample_indices_override(
+            sample_indices_override,
+            frame_count=len(paths),
+        )
+        sample_source = "override"
     emit(
         "belt_map",
         "building clean belt map",
         sampled_frames=len(samples),
         selected_frames=len(paths),
+        sample_source=sample_source,
         crop_height=crop_height,
         crop_width=crop_width,
         sampling_strategy=sampling_strategy,
@@ -299,6 +355,8 @@ def build_belt_map_result(
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
         aggregation=aggregation,
+        per_pixel_aggregation=per_pixel_aggregation,
+        map_trim_fraction=map_trim_fraction,
         robust_iterations=robust_iterations if aggregation == "huber" else 0,
         robust_huber_delta=robust_huber_delta,
         robust_min_scale=robust_min_scale,
@@ -311,7 +369,7 @@ def build_belt_map_result(
         phase_refinement_iterations=cfg.iterations,
         phase_refinement_smoothing_window_frames=cfg.smoothing_window_frames,
     )
-    belt_map, _coverage = accumulate_belt_map(
+    belt_map, map_support, _coverage = accumulate_belt_map(
         paths=paths,
         samples=samples,
         region=region,
@@ -327,11 +385,13 @@ def build_belt_map_result(
         mask_margin_px=mask_margin_px,
         mask_min_area_px=mask_min_area_px,
         map_trim_fraction=map_trim_fraction,
+        robust_pixel_estimator=per_pixel_aggregation,
         fractional_splat=fractional_splat,
         frame_median_offset_correction=frame_median_offset_correction,
         local_illumination_correction=local_illumination_correction,
         local_illumination_tile_px=local_illumination_tile_px,
         pass_label="initial",
+        return_support=True,
     )
     phase_by_frame: np.ndarray | None = None
     phase_rows: list[dict] = []
@@ -354,7 +414,7 @@ def build_belt_map_result(
                 iteration=iteration,
             )
             phase_rows.extend(rows)
-            belt_map, coverage = accumulate_belt_map(
+            belt_map, map_support, coverage = accumulate_belt_map(
                 paths=paths,
                 samples=samples,
                 region=region,
@@ -370,12 +430,14 @@ def build_belt_map_result(
                 mask_margin_px=mask_margin_px,
                 mask_min_area_px=mask_min_area_px,
                 map_trim_fraction=map_trim_fraction,
+                robust_pixel_estimator=per_pixel_aggregation,
                 fractional_splat=fractional_splat,
                 frame_median_offset_correction=frame_median_offset_correction,
                 local_illumination_correction=local_illumination_correction,
                 local_illumination_tile_px=local_illumination_tile_px,
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
+                return_support=True,
             )
             used = sum(1 for row in rows if row["used_for_refinement"])
             emit(
@@ -387,7 +449,7 @@ def build_belt_map_result(
                 total_pixels=coverage["total_pixels"],
             )
     for iteration in range(1, mask_iterations + 1):
-        belt_map, coverage = accumulate_belt_map(
+        belt_map, map_support, coverage = accumulate_belt_map(
             paths=paths,
             samples=samples,
             region=region,
@@ -403,12 +465,14 @@ def build_belt_map_result(
             mask_margin_px=mask_margin_px,
             mask_min_area_px=mask_min_area_px,
             map_trim_fraction=map_trim_fraction,
+            robust_pixel_estimator=per_pixel_aggregation,
             fractional_splat=fractional_splat,
             frame_median_offset_correction=frame_median_offset_correction,
             local_illumination_correction=local_illumination_correction,
             local_illumination_tile_px=local_illumination_tile_px,
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
+            return_support=True,
         )
         emit(
             "belt_map",
@@ -420,7 +484,7 @@ def build_belt_map_result(
         )
     if aggregation == "huber" and robust_iterations > 0:
         for iteration in range(1, robust_iterations + 1):
-            belt_map, coverage = accumulate_belt_map(
+            belt_map, map_support, coverage = accumulate_belt_map(
                 paths=paths,
                 samples=samples,
                 region=region,
@@ -445,6 +509,8 @@ def build_belt_map_result(
                 robust_reference_belt_map=belt_map,
                 robust_huber_delta=robust_huber_delta,
                 robust_min_scale=robust_min_scale,
+                robust_pixel_estimator="mean",
+                return_support=True,
             )
             emit(
                 "belt_map",
@@ -461,7 +527,9 @@ def build_belt_map_result(
         reference_phase=reference_phase,
         map_height=map_height,
         phase_refinement_rows=phase_rows,
+        map_support=map_support,
         phase_by_frame=phase_by_frame,
+        sample_frame_indices=tuple(int(index) for index in samples),
     )
 
 
@@ -491,7 +559,9 @@ def accumulate_belt_map(
     robust_reference_belt_map: np.ndarray | None = None,
     robust_huber_delta: float = 3.0,
     robust_min_scale: float = 1.0,
-) -> tuple[np.ndarray, dict[str, int]]:
+    robust_pixel_estimator: str = "mean",
+    return_support: bool = False,
+) -> tuple[np.ndarray, dict[str, int]] | tuple[np.ndarray, np.ndarray, dict[str, int]]:
     _, _, crop_height, crop_width = region
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
@@ -507,13 +577,33 @@ def accumulate_belt_map(
         raise ValueError("robust_min_scale must be positive")
     if local_illumination_tile_px < 1:
         raise ValueError("local_illumination_tile_px must be positive")
+    robust_pixel_estimator = validate_map_aggregation(robust_pixel_estimator)
+    if robust_pixel_estimator == "huber":
+        raise ValueError(
+            "robust_pixel_estimator must be mean, trimmed_mean, or winsorized_mean; "
+            "use robust_reference_belt_map for Huber weighting"
+        )
     if not 0.0 <= map_trim_fraction < 0.5:
         raise ValueError(
             f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be in [0, 0.5), "
             f"got {map_trim_fraction!r}"
         )
-    use_trimmed_mean = map_trim_fraction > 0.0 and not use_huber_weights
-    if use_trimmed_mean:
+    if robust_pixel_estimator == "mean" and map_trim_fraction > 0.0 and not use_huber_weights:
+        # Backward-compatible behavior for existing configs that selected robust
+        # per-pixel reconstruction only through MAP_RECONSTRUCTION_TRIM_FRACTION.
+        robust_pixel_estimator = "trimmed_mean"
+    if use_huber_weights and robust_pixel_estimator != "mean":
+        raise ValueError("robust_pixel_estimator cannot be combined with Huber weights")
+    if robust_pixel_estimator in MAP_PER_PIXEL_ROBUST_AGGREGATIONS and map_trim_fraction <= 0.0:
+        raise ValueError(
+            f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be positive for "
+            f"robust_pixel_estimator={robust_pixel_estimator!r}"
+        )
+    use_per_pixel_robust_mean = (
+        robust_pixel_estimator in MAP_PER_PIXEL_ROBUST_AGGREGATIONS
+        and not use_huber_weights
+    )
+    if use_per_pixel_robust_mean:
         estimated_trim_bytes = (
             len(samples)
             * map_height
@@ -529,9 +619,10 @@ def accumulate_belt_map(
         if max_trim_memory_gb > 0.0 and estimated_trim_bytes > max_trim_memory_gb * (1024**3):
             estimated_gb = estimated_trim_bytes / (1024**3)
             raise MemoryError(
-                "trimmed belt-map reconstruction would require approximately "
+                "robust per-pixel belt-map reconstruction would require approximately "
                 f"{estimated_gb:.1f} GiB for per-sample accumulators. "
-                f"Set {MAP_RECONSTRUCTION_TRIM_FRACTION_ENV}=0 for streaming mean "
+                f"Use MAP_AGGREGATION=mean or set {MAP_RECONSTRUCTION_TRIM_FRACTION_ENV}=0 "
+                "for the streaming mean, "
                 f"or raise {MAP_RECONSTRUCTION_TRIM_MAX_MEMORY_GB_ENV} if this is intentional."
             )
     sums = np.zeros((map_height, crop_width), dtype=np.float64)
@@ -652,8 +743,8 @@ def accumulate_belt_map(
                 outliers = finite_valid & (centered_abs > cutoff)
                 pixel_weights[outliers] = cutoff / centered_abs[outliers]
                 valid &= pixel_weights > 0
-        frame_sums = sums if not use_trimmed_mean else np.zeros_like(sums)
-        frame_weights = weights if not use_trimmed_mean else np.zeros_like(weights)
+        frame_sums = sums if not use_per_pixel_robust_mean else np.zeros_like(sums)
+        frame_weights = weights if not use_per_pixel_robust_mean else np.zeros_like(weights)
         if fractional_splat:
             contributed_pixels += _accumulate_frame_linear(
                 sums=frame_sums,
@@ -676,7 +767,7 @@ def accumulate_belt_map(
                 model_period=model_period,
                 pixel_weights=pixel_weights,
             )
-        if use_trimmed_mean:
+        if use_per_pixel_robust_mean:
             stacked_values.append(frame_sums)
             stacked_weights.append(frame_weights)
             sums += frame_sums
@@ -706,13 +797,14 @@ def accumulate_belt_map(
     total_weight = float(np.sum(weights))
     if total_weight <= 0:
         raise RuntimeError("No pixels contributed to the belt map")
-    if use_trimmed_mean:
+    if use_per_pixel_robust_mean:
         values_by_sample = np.stack(stacked_values, axis=0)
         weights_by_sample = np.stack(stacked_weights, axis=0)
-        sums, weights = _trim_belt_map_accumulators(
+        sums, weights = _robust_belt_map_accumulators(
             values_by_sample,
             weights_by_sample,
             trim_fraction=map_trim_fraction,
+            estimator=robust_pixel_estimator,
         )
         known_pixels = weights > 0
         total_weight = float(np.sum(weights))
@@ -732,12 +824,15 @@ def accumulate_belt_map(
             belt_map[:, col] = float(values[0])
         else:
             belt_map[:, col] = np.interp(x, known.astype(np.float64), values).astype(np.float32)
-    return belt_map, {
+    stats = {
         "masked_pixels": masked_pixels,
         "contributed_pixels": contributed_pixels,
         "observed_pixels": int(np.count_nonzero(known_pixels)),
         "total_pixels": int(weights.size),
     }
+    if return_support:
+        return belt_map, np.asarray(weights, dtype=np.float32), stats
+    return belt_map, stats
 
 
 def _sample_frame_median_reference(
@@ -831,12 +926,18 @@ def estimate_local_illumination_field(
     return field
 
 
-def _trim_belt_map_accumulators(
+def _robust_belt_map_accumulators(
     values_by_sample: np.ndarray,
     weights_by_sample: np.ndarray,
     *,
     trim_fraction: float,
+    estimator: str,
 ) -> tuple[np.ndarray, np.ndarray]:
+    estimator = validate_map_aggregation(estimator)
+    if estimator not in MAP_PER_PIXEL_ROBUST_AGGREGATIONS:
+        raise ValueError(
+            "estimator must be one of trimmed_mean or winsorized_mean"
+        )
     _sample_count, map_height, map_width = values_by_sample.shape
     sums = np.zeros((map_height, map_width), dtype=np.float64)
     weights = np.zeros((map_height, map_width), dtype=np.float64)
@@ -850,12 +951,31 @@ def _trim_belt_map_accumulators(
                 / weights_by_sample[positive, row, col]
             )
             sample_weights = weights_by_sample[positive, row, col]
-            keep = _trim_sample_mask(values, trim_fraction=trim_fraction)
-            if not np.any(keep):
-                continue
-            sums[row, col] = float(np.sum(values[keep] * sample_weights[keep]))
-            weights[row, col] = float(np.sum(sample_weights[keep]))
+            if estimator == "trimmed_mean":
+                keep = _trim_sample_mask(values, trim_fraction=trim_fraction)
+                if not np.any(keep):
+                    continue
+                values = values[keep]
+                sample_weights = sample_weights[keep]
+            elif estimator == "winsorized_mean":
+                values = _winsorize_sample_values(values, trim_fraction=trim_fraction)
+            sums[row, col] = float(np.sum(values * sample_weights))
+            weights[row, col] = float(np.sum(sample_weights))
     return sums, weights
+
+
+def _trim_belt_map_accumulators(
+    values_by_sample: np.ndarray,
+    weights_by_sample: np.ndarray,
+    *,
+    trim_fraction: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    return _robust_belt_map_accumulators(
+        values_by_sample,
+        weights_by_sample,
+        trim_fraction=trim_fraction,
+        estimator="trimmed_mean",
+    )
 
 
 def _trim_sample_mask(values: np.ndarray, *, trim_fraction: float) -> np.ndarray:
@@ -869,6 +989,18 @@ def _trim_sample_mask(values: np.ndarray, *, trim_fraction: float) -> np.ndarray
     keep = np.zeros(values.shape, dtype=bool)
     keep[keep_sorted] = True
     return keep
+
+
+def _winsorize_sample_values(values: np.ndarray, *, trim_fraction: float) -> np.ndarray:
+    if trim_fraction <= 0.0 or values.size <= 1:
+        return values
+    trim_count = int(np.floor(trim_fraction * values.size))
+    if trim_count <= 0:
+        return values
+    sorted_values = np.sort(values)
+    lower = sorted_values[trim_count]
+    upper = sorted_values[values.size - trim_count - 1]
+    return np.clip(values, lower, upper)
 
 
 def _accumulate_frame_linear(
@@ -1088,6 +1220,7 @@ def select_map_sample_indices(
     crop_height: int,
     sampling_strategy: str,
     adaptive_candidate_frames: int = 0,
+    allowed_indices: Sequence[int] | None = None,
 ) -> list[int]:
     """Select source frames for map reconstruction.
 
@@ -1098,8 +1231,15 @@ def select_map_sample_indices(
     """
 
     strategy = validate_map_sampling_strategy(sampling_strategy)
+    candidate_indices = validate_map_sample_frame_indices(
+        allowed_indices,
+        frame_count=frame_count,
+    )
+    if candidate_indices is None:
+        candidate_indices = list(range(frame_count))
     if strategy == "uniform":
-        return sample_indices(frame_count, sample_count)
+        selected_positions = sample_indices(len(candidate_indices), sample_count)
+        return [candidate_indices[position] for position in selected_positions]
 
     phases = _constant_model_phases(
         frame_count=frame_count,
@@ -1107,18 +1247,51 @@ def select_map_sample_indices(
         reference_phase=reference_phase,
         model_period=model_period,
     )
-    candidate_indices = list(range(frame_count))
     if adaptive_candidate_frames > 0:
-        candidate_count = max(sample_count, min(frame_count, adaptive_candidate_frames))
-        candidate_indices = sample_indices(frame_count, candidate_count)
-        phases = phases[np.asarray(candidate_indices, dtype=np.int64)]
+        candidate_count = max(
+            sample_count,
+            min(len(candidate_indices), adaptive_candidate_frames),
+        )
+        candidate_positions = sample_indices(len(candidate_indices), candidate_count)
+        candidate_indices = [candidate_indices[position] for position in candidate_positions]
+    candidate_phases = phases[np.asarray(candidate_indices, dtype=np.int64)]
     selected = select_adaptive_map_frames(
-        phases,
+        candidate_phases,
         map_height_px=map_height,
-        sample_count=max(1, min(frame_count, sample_count)),
+        sample_count=max(1, min(len(candidate_indices), sample_count)),
         crop_height_px=max(1, crop_height),
     )
     return sorted({candidate_indices[sample.frame_index] for sample in selected})
+
+
+def validate_map_sample_frame_indices(
+    samples: Sequence[int] | None,
+    *,
+    frame_count: int,
+) -> list[int] | None:
+    if samples is None:
+        return None
+    return _validate_map_sample_indices_override(samples, frame_count=frame_count)
+
+
+def _validate_map_sample_indices_override(
+    samples: Sequence[int],
+    *,
+    frame_count: int,
+) -> list[int]:
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
+    unique = sorted({int(index) for index in samples})
+    if not unique:
+        raise ValueError("sample_indices_override must contain at least one frame")
+    invalid = [index for index in unique if index < 0 or index >= frame_count]
+    if invalid:
+        preview = ", ".join(str(index) for index in invalid[:8])
+        raise ValueError(
+            "sample_indices_override contains frame indices outside the selected "
+            f"sequence: {preview}"
+        )
+    return unique
 
 
 def refine_phase_feedback(

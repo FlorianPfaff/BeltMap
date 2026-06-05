@@ -39,6 +39,43 @@ def parse_iou_threshold(value: str) -> float:
     return threshold
 
 
+def parse_nonnegative_int(value: str) -> int:
+    """Parse a non-negative integer CLI value."""
+
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a non-negative integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be a non-negative integer")
+    return parsed
+
+
+def parse_positive_int(value: str) -> int:
+    """Parse a positive integer CLI value."""
+
+    parsed = parse_nonnegative_int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
+def parse_confidence_level(value: str) -> float:
+    """Parse a bootstrap confidence level in the open interval (0, 1)."""
+
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "bootstrap confidence level must be a finite number in (0, 1)"
+        ) from exc
+    if not math.isfinite(parsed) or not 0.0 < parsed < 1.0:
+        raise argparse.ArgumentTypeError(
+            "bootstrap confidence level must be a finite number in (0, 1)"
+        )
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="beltmap-compare",
@@ -78,6 +115,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="IoU threshold used to match detections to labeled boxes. Default: 0.25",
     )
     parser.add_argument(
+        "--bootstrap-samples",
+        type=parse_nonnegative_int,
+        default=0,
+        help="Number of bootstrap resamples for summary confidence intervals. Default: 0 disables bootstrap CIs.",
+    )
+    parser.add_argument(
+        "--bootstrap-confidence-level",
+        type=parse_confidence_level,
+        default=0.95,
+        help="Equal-tailed bootstrap confidence level. Default: 0.95",
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=0,
+        help="Random seed for reproducible bootstrap resampling. Default: 0",
+    )
+    parser.add_argument(
+        "--bootstrap-block-length-frames",
+        type=parse_positive_int,
+        default=1,
+        help="Circular contiguous frame block length for frame-scoped bootstrap metrics. Default: 1",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Do not print generated artifact paths as JSON.",
@@ -96,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
             frames=args.frames,
             truth_path=args.truth_path,
             truth_iou_threshold=args.truth_iou_threshold,
+            bootstrap_samples=args.bootstrap_samples,
+            bootstrap_confidence_level=args.bootstrap_confidence_level,
+            bootstrap_seed=args.bootstrap_seed,
+            bootstrap_block_length_frames=args.bootstrap_block_length_frames,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
@@ -109,6 +174,10 @@ def main(argv: list[str] | None = None) -> int:
                     "images": {key: str(path) for key, path in artifacts.images.items()},
                     "truth_path": None if args.truth_path is None else str(args.truth_path),
                     "truth_iou_threshold": args.truth_iou_threshold,
+                    "bootstrap_samples": args.bootstrap_samples,
+                    "bootstrap_confidence_level": args.bootstrap_confidence_level,
+                    "bootstrap_seed": args.bootstrap_seed,
+                    "bootstrap_block_length_frames": args.bootstrap_block_length_frames,
                 },
                 indent=2,
             ),

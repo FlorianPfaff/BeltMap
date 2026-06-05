@@ -47,6 +47,7 @@ beltmap-apply = "beltmap.cli.apply:main"
 beltmap-validate = "beltmap.cli.validate_visual:main"
 beltmap-benchmark = "beltmap.cli.benchmark:main"
 beltmap-compare = "beltmap.cli.compare:main"
+beltmap-texture-stress = "beltmap.cli.texture_stress:main"
 beltmap-evaluate = "beltmap.cli.evaluate:main"
 beltmap-filter-tracks = "beltmap.cli.filter_tracks:main"
 beltmap-filter-recurrent-artifacts = "beltmap.cli.filter_recurrent_artifacts:main"
@@ -69,6 +70,7 @@ beltmap-map-only-negative-control = "beltmap.cli.map_only_negative_control:main"
 beltmap-suggest-label-frames = "beltmap.cli.suggest_label_frames:main"
 beltmap-quality-contract = "beltmap.cli.quality_contract:main"
 beltmap-prepare-zenodo = "beltmap.cli.prepare_zenodo_dataset:main"
+beltmap-evaluate-tracklets = "beltmap.cli.evaluate_tracklets:main"
 
 [project.optional-dependencies]
 test = [
