@@ -77,6 +77,61 @@ SYNTHETIC_REGRESSION_CONTRACT_TEMPLATE: dict[str, Any] = {
     "peak_memory_mb_max": None,
 }
 
+LABEL_PLAN_BUCKETS: tuple[tuple[str, str, str], ...] = (
+    (
+        "detection_spikes",
+        "box_all_particles",
+        "high detection-count frame; useful for finding threshold-driven ghosts and merged components",
+    ),
+    (
+        "empty_or_low_detection_frames",
+        "empty_check",
+        "particle-free or low-count candidate; keep a blank label row only after inspecting the full frame",
+    ),
+    (
+        "low_registration_score",
+        "box_all_particles",
+        "low registration score; probes phase errors that can create belt-texture residuals",
+    ),
+    (
+        "large_phase_correction",
+        "box_all_particles",
+        "large phase correction; probes sensitivity to motion-model or phase-estimation errors",
+    ),
+    (
+        "recurrent_rejections",
+        "box_all_particles",
+        "many recurrent-artifact rejections; probes belt-fixed ghost suppression",
+    ),
+    (
+        "photometric_rmse",
+        "box_all_particles",
+        "large photometric residual; probes illumination mismatch and low-frequency artifacts",
+    ),
+)
+
+LABEL_PLAN_FIELDS = [
+    "frame_index",
+    "review_priority",
+    "annotation_role",
+    "primary_bucket",
+    "secondary_buckets",
+    "reason",
+    "metric",
+    "metric_value",
+    "n_detections",
+    "registration_score",
+    "abs_correction_px",
+    "recurrent_rejections",
+    "photometric_rmse_gray",
+    "notes",
+]
+
+LABEL_TEMPLATE_FIELDS = [
+    "frame_index", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
+    "annotation_role", "reason", "label_status", "review_notes",
+]
+
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
     """Read a CSV file into dictionaries, returning an empty list if missing."""
@@ -637,43 +692,271 @@ def adaptive_map_frame_plan(output_dir: Path, *, frame_count: int | None = None,
     return selected[:top_n]
 
 
-def suggest_label_frames(output_dir: Path, *, frame_count: int = 50) -> list[dict[str, Any]]:
-    """Return a diverse set of frames to annotate for real-data validation."""
+def label_plan_bucket_info(bucket: str) -> tuple[str, str]:
+    """Return ``(annotation_role, reason)`` for a label-plan bucket."""
 
-    tables = worst_frame_tables(output_dir, top_n=max(5, frame_count))
-    selected: dict[int, set[str]] = {}
-    bucket_order = [
-        "detection_spikes",
-        "empty_or_low_detection_frames",
-        "low_registration_score",
-        "large_phase_correction",
-        "recurrent_rejections",
-        "photometric_rmse",
+    for name, role, reason in LABEL_PLAN_BUCKETS:
+        if name == bucket:
+            return role, reason
+    if bucket == "regular_control":
+        return "box_all_particles", "regular interval control frame; checks ordinary operating regime"
+    return "box_all_particles", bucket
+
+
+def label_frame_diagnostics(output_dir: Path) -> dict[int, dict[str, Any]]:
+    """Collect per-frame diagnostics used to explain sparse label suggestions."""
+
+    output_dir = Path(output_dir)
+    diagnostics: dict[int, dict[str, Any]] = {}
+    for frame, count in detection_count_by_frame(output_dir).items():
+        diagnostics.setdefault(frame, {})["n_detections"] = count
+
+    for row in phase_rows(output_dir):
+        frame = finite_int(row.get("frame_index"))
+        if frame is None:
+            continue
+        score = finite_float(row.get("score"))
+        correction = finite_float(row.get("correction_px"))
+        if score is not None:
+            diagnostics.setdefault(frame, {})["registration_score"] = score
+        if correction is not None:
+            diagnostics.setdefault(frame, {})["abs_correction_px"] = abs(correction)
+
+    recurrent_rows = read_csv_rows(output_dir / "recurrent_artifact_detections.csv")
+    for row in recurrent_rows:
+        frame = finite_int(row.get("frame_index"))
+        rejected = str(row.get("recurrent_artifact_rejected", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if frame is not None and rejected:
+            entry = diagnostics.setdefault(frame, {})
+            entry["recurrent_rejections"] = int(entry.get("recurrent_rejections", 0)) + 1
+
+    for row in read_csv_rows(output_dir / "photometric_fits.csv"):
+        frame = finite_int(row.get("frame_index"))
+        rmse = finite_float(row.get("rmse_gray"))
+        if frame is not None and rmse is not None:
+            diagnostics.setdefault(frame, {})["photometric_rmse_gray"] = rmse
+    return diagnostics
+
+
+def _append_unique_semicolon(value: Any, addition: str) -> str:
+    parts = [part for part in str(value or "").split(";") if part]
+    if addition not in parts:
+        parts.append(addition)
+    return ";".join(parts)
+
+
+def _far_enough_from_selected(frame: int, selected: Mapping[int, Mapping[str, Any]], *, min_gap_frames: int) -> bool:
+    if min_gap_frames <= 0:
+        return True
+    return all(abs(frame - other) >= min_gap_frames for other in selected)
+
+
+def _regular_control_rows(output_dir: Path, *, top_n: int) -> list[dict[str, Any]]:
+    """Return evenly spaced ordinary frames for sanity-control annotation."""
+
+    if top_n <= 0:
+        return []
+    metadata = load_metadata(output_dir)
+    n_images = finite_int(metadata.get("n_images"))
+    if n_images is not None and n_images > 0:
+        count = min(max(3 * top_n, top_n), n_images)
+        frames = sorted({int(round(value)) for value in np.linspace(0, n_images - 1, count)})
+    else:
+        observed = sorted(label_frame_diagnostics(output_dir))
+        if not observed:
+            return []
+        if len(observed) <= 3 * top_n:
+            frames = observed
+        else:
+            positions = np.linspace(0, len(observed) - 1, 3 * top_n)
+            frames = sorted({observed[int(round(pos))] for pos in positions})
+    return [
+        {"frame_index": frame, "metric": "regular_interval", "value": frame}
+        for frame in frames
     ]
-    per_bucket = max(1, math.ceil(frame_count / max(1, len(bucket_order))))
-    for bucket in bucket_order:
-        for row in tables.get(bucket, [])[:per_bucket]:
-            frame = finite_int(row.get("frame_index"))
-            if frame is not None:
-                selected.setdefault(frame, set()).add(bucket)
-    for bucket in bucket_order:
+
+
+def _add_label_plan_row(
+    selected: dict[int, dict[str, Any]],
+    *,
+    frame: int,
+    bucket: str,
+    metric: Any,
+    metric_value: Any,
+    diagnostics: Mapping[int, Mapping[str, Any]],
+    min_gap_frames: int,
+) -> bool:
+    """Add or merge one candidate frame into the adversarial label plan."""
+
+    role, reason = label_plan_bucket_info(bucket)
+    existing = selected.get(frame)
+    if existing is None:
+        if not _far_enough_from_selected(frame, selected, min_gap_frames=min_gap_frames):
+            return False
+        diag = diagnostics.get(frame, {})
+        selected[frame] = {
+            "frame_index": frame,
+            "review_priority": len(selected) + 1,
+            "annotation_role": role,
+            "primary_bucket": bucket,
+            "secondary_buckets": "",
+            "reason": reason,
+            "metric": metric,
+            "metric_value": metric_value,
+            "n_detections": diag.get("n_detections", ""),
+            "registration_score": diag.get("registration_score", ""),
+            "abs_correction_px": diag.get("abs_correction_px", ""),
+            "recurrent_rejections": diag.get("recurrent_rejections", ""),
+            "photometric_rmse_gray": diag.get("photometric_rmse_gray", ""),
+            "notes": "",
+        }
+        return True
+
+    if bucket != existing.get("primary_bucket"):
+        existing["secondary_buckets"] = _append_unique_semicolon(existing.get("secondary_buckets"), bucket)
+    existing["reason"] = _append_unique_semicolon(existing.get("reason"), reason)
+    if existing.get("annotation_role") != "empty_check" and role == "empty_check":
+        existing["annotation_role"] = "empty_check"
+    return False
+
+
+def suggest_label_frames(
+    output_dir: Path,
+    *,
+    frame_count: int = 50,
+    empty_frame_count: int | None = None,
+    min_gap_frames: int = 0,
+) -> list[dict[str, Any]]:
+    """Return a sparse but adversarial frame set for real-data annotation.
+
+    The selector intentionally over-samples likely failure modes: detection
+    spikes, empty/low-detection frames, poor registration, large phase
+    corrections, recurrent-artifact-heavy frames, photometric outliers, and a
+    small set of regular controls.  Empty/low-detection candidates become
+    explicit negative controls once the annotator confirms that the frame truly
+    contains no particles.
+    """
+
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
+    if min_gap_frames < 0:
+        raise ValueError("min_gap_frames must be non-negative")
+    if empty_frame_count is None:
+        empty_frame_count = max(1, min(10, math.ceil(0.2 * frame_count)))
+    if empty_frame_count < 0:
+        raise ValueError("empty_frame_count must be non-negative")
+    empty_frame_count = min(empty_frame_count, frame_count)
+
+    output_dir = Path(output_dir)
+    top_n = max(20, 4 * frame_count)
+    tables = worst_frame_tables(output_dir, top_n=top_n)
+    diagnostics = label_frame_diagnostics(output_dir)
+    selected: dict[int, dict[str, Any]] = {}
+
+    def add_from_bucket(bucket: str, *, limit: int | None = None) -> None:
         for row in tables.get(bucket, []):
             if len(selected) >= frame_count:
                 break
+            if limit is not None and sum(
+                1 for item in selected.values() if item.get("primary_bucket") == bucket
+            ) >= limit:
+                break
             frame = finite_int(row.get("frame_index"))
-            if frame is not None:
-                selected.setdefault(frame, set()).add(bucket)
+            if frame is None:
+                continue
+            _add_label_plan_row(
+                selected,
+                frame=frame,
+                bucket=bucket,
+                metric=row.get("metric", bucket),
+                metric_value=row.get("value", ""),
+                diagnostics=diagnostics,
+                min_gap_frames=min_gap_frames,
+            )
+
+    add_from_bucket("empty_or_low_detection_frames", limit=empty_frame_count)
+
+    non_empty_buckets = [name for name, _role, _reason in LABEL_PLAN_BUCKETS if name != "empty_or_low_detection_frames"]
+    per_bucket = max(1, math.ceil((frame_count - len(selected)) / max(1, len(non_empty_buckets))))
+    for bucket in non_empty_buckets:
+        add_from_bucket(bucket, limit=per_bucket)
+
+    # Fill any remaining budget in a round-robin pass over all adversarial buckets.
+    while len(selected) < frame_count:
+        before = len(selected)
+        for bucket, _role, _reason in LABEL_PLAN_BUCKETS:
+            add_from_bucket(bucket, limit=None)
+            if len(selected) >= frame_count:
+                break
+        if len(selected) == before:
+            break
+
+    # Add ordinary control frames if the failure-mode tables were sparse.
+    for row in _regular_control_rows(output_dir, top_n=frame_count):
         if len(selected) >= frame_count:
             break
+        frame = finite_int(row.get("frame_index"))
+        if frame is None:
+            continue
+        _add_label_plan_row(
+            selected,
+            frame=frame,
+            bucket="regular_control",
+            metric=row.get("metric", "regular_interval"),
+            metric_value=row.get("value", ""),
+            diagnostics=diagnostics,
+            min_gap_frames=min_gap_frames,
+        )
+
+    return [selected[frame] for frame in sorted(selected)[:frame_count]]
+
+
+def label_template_rows(label_plan: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Convert a frame-selection plan into a ready-to-fill box-label template."""
+
     return [
-        {"frame_index": frame, "reason": ";".join(sorted(reasons))}
-        for frame, reasons in sorted(selected.items())[:frame_count]
+        {
+            "frame_index": row.get("frame_index", ""),
+            "bbox_top": "",
+            "bbox_left": "",
+            "bbox_bottom": "",
+            "bbox_right": "",
+            "annotation_role": row.get("annotation_role", ""),
+            "reason": row.get("reason", ""),
+            "label_status": "",
+            "review_notes": "",
+        }
+        for row in label_plan
     ]
 
 
-def write_label_plan(output_dir: Path, *, output_path: Path, frame_count: int = 50) -> list[dict[str, Any]]:
-    rows = suggest_label_frames(output_dir, frame_count=frame_count)
-    write_csv(output_path, rows, ["frame_index", "reason"])
+def write_label_template(label_plan: Sequence[Mapping[str, Any]], *, output_path: Path) -> list[dict[str, Any]]:
+    """Write a sparse-label CSV template compatible with ``beltmap-compare``."""
+
+    rows = label_template_rows(label_plan)
+    write_csv(output_path, rows, LABEL_TEMPLATE_FIELDS)
+    return rows
+
+
+def write_label_plan(
+    output_dir: Path,
+    *,
+    output_path: Path,
+    frame_count: int = 50,
+    empty_frame_count: int | None = None,
+    min_gap_frames: int = 0,
+) -> list[dict[str, Any]]:
+    rows = suggest_label_frames(
+        output_dir,
+        frame_count=frame_count,
+        empty_frame_count=empty_frame_count,
+        min_gap_frames=min_gap_frames,
+    )
+    write_csv(output_path, rows, LABEL_PLAN_FIELDS)
     return rows
 
 

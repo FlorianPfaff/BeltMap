@@ -201,6 +201,7 @@ def build_belt_map(
     local_illumination_tile_px: int = 64,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
     sample_indices_override: Sequence[int] | None = None,
+    allowed_sample_frame_indices: Sequence[int] | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
         paths=paths,
@@ -226,6 +227,7 @@ def build_belt_map(
         local_illumination_tile_px=local_illumination_tile_px,
         phase_feedback_config=phase_feedback_config,
         sample_indices_override=sample_indices_override,
+        allowed_sample_frame_indices=allowed_sample_frame_indices,
     )
     if result.phase_refinement_rows:
         rt.write_csv(rt.OUT / "phase_refinement.csv", result.phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
@@ -263,6 +265,7 @@ def build_belt_map_result(
     local_illumination_tile_px: int = 64,
     phase_feedback_config: PhaseFeedbackConfig | None = None,
     sample_indices_override: Sequence[int] | None = None,
+    allowed_sample_frame_indices: Sequence[int] | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
         raise ValueError("paths must contain at least one image")
@@ -325,6 +328,7 @@ def build_belt_map_result(
             crop_height=crop_height,
             sampling_strategy=sampling_strategy,
             adaptive_candidate_frames=map_adaptive_candidate_frames,
+            allowed_indices=allowed_sample_frame_indices,
         )
         sample_source = "selected"
     else:

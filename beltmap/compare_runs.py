@@ -53,9 +53,20 @@ SUMMARY_FIELDS = [
     "labeled_true_positives",
     "labeled_false_positives",
     "labeled_false_negatives",
+    "labeled_false_positives_per_frame",
+    "labeled_empty_scored_frames",
+    "labeled_empty_frame_false_positives",
+    "labeled_empty_frame_fp_per_frame",
     "labeled_precision",
     "labeled_recall",
     "labeled_f1",
+    "labeled_froc_available",
+    "labeled_froc_score_field",
+    "labeled_froc_points",
+    "labeled_froc_auc_fp_per_frame_le_1",
+    "labeled_froc_recall_at_0_1_fp_per_frame",
+    "labeled_froc_recall_at_0_5_fp_per_frame",
+    "labeled_froc_recall_at_1_0_fp_per_frame",
     "labeled_mean_matched_iou",
     "labeled_mean_centroid_error_px",
     *BOOTSTRAP_SUMMARY_FIELDS,
@@ -129,6 +140,15 @@ LABELED_METRIC_FIELDS = (
     "mean_matched_iou",
     "mean_centroid_error_px",
 )
+
+FROC_SCORE_FIELDS = (
+    "peak_signal",
+    "mean_signal",
+    "score",
+    "confidence",
+)
+FROC_FP_PER_FRAME_LIMITS = (0.1, 0.5, 1.0)
+FROC_AUC_FP_PER_FRAME_LIMIT = 1.0
 
 
 @dataclass(frozen=True)
@@ -491,6 +511,29 @@ def truth_frame_indices(truth: dict[str, Any]) -> set[int]:
     return frames
 
 
+def truth_particle_frame_indices(truth: dict[str, Any]) -> set[int]:
+    """Return frames that contain at least one labeled particle box."""
+
+    frames: set[int] = set()
+    for particle in truth.get("particles", []):
+        if isinstance(particle, dict):
+            frame_index = row_frame_index(particle)
+            if frame_index is not None:
+                frames.add(frame_index)
+    return frames
+
+
+def empty_labeled_frame_indices(truth: dict[str, Any]) -> set[int]:
+    """Return scored frames that have no labeled particle boxes.
+
+    Blank CSV rows with only ``frame_index`` therefore become explicit negative
+    controls. Detections on these frames are counted as empty-frame false
+    positives in addition to the standard matched-box metrics.
+    """
+
+    return truth_frame_indices(truth) - truth_particle_frame_indices(truth)
+
+
 def restrict_detection_rows_to_frames(
     rows: list[dict[str, str]],
     frame_indices: set[int],
@@ -500,6 +543,239 @@ def restrict_detection_rows_to_frames(
     if not frame_indices:
         return []
     return [row for row in rows if row_frame_index(row) in frame_indices]
+
+
+def detection_score_field(
+    rows: Iterable[dict[str, Any]],
+    *,
+    score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
+) -> str | None:
+    """Return the first finite per-detection score field available in rows."""
+
+    buffered_rows = list(rows)
+    for field in score_fields:
+        if any(finite_float(row.get(field)) is not None for row in buffered_rows):
+            return field
+    return None
+
+
+def froc_frame_denominator(
+    detection_rows: list[dict[str, str]],
+    truth: dict[str, Any],
+    *,
+    scored_frames: set[int] | None = None,
+) -> int:
+    """Return the evaluated-frame denominator for false positives per frame."""
+
+    if scored_frames:
+        return len(scored_frames)
+    frames = truth_frame_indices(truth)
+    for row in detection_rows:
+        frame_index = row_frame_index(row)
+        if frame_index is not None:
+            frames.add(frame_index)
+    return len(frames)
+
+
+def froc_point_from_metrics(
+    metrics: dict[str, Any],
+    *,
+    score_threshold: float | None,
+    evaluated_frames: int,
+) -> dict[str, Any]:
+    """Convert labeled detection metrics at one score threshold to a FROC point."""
+
+    false_positives = int(metrics.get("false_positives") or 0)
+    recall = finite_float(metrics.get("recall"))
+    precision = finite_float(metrics.get("precision"))
+    return {
+        "score_threshold": score_threshold,
+        "false_positives_per_frame": (
+            false_positives / evaluated_frames if evaluated_frames > 0 else None
+        ),
+        "recall": recall,
+        "precision": precision,
+        "true_positives": metrics.get("true_positives"),
+        "false_positives": false_positives,
+        "false_negatives": metrics.get("false_negatives"),
+        "predicted_boxes": metrics.get("predicted_boxes"),
+    }
+
+
+def monotone_froc_points(points: list[dict[str, Any]]) -> list[tuple[float, float]]:
+    """Return a monotone recall envelope sorted by false positives per frame."""
+
+    best_by_fp: dict[float, float] = {}
+    for point in points:
+        false_positives_per_frame = finite_float(point.get("false_positives_per_frame"))
+        recall = finite_float(point.get("recall"))
+        if false_positives_per_frame is None or recall is None:
+            continue
+        best_by_fp[false_positives_per_frame] = max(
+            recall,
+            best_by_fp.get(false_positives_per_frame, 0.0),
+        )
+
+    envelope: list[tuple[float, float]] = []
+    best_recall = 0.0
+    for false_positives_per_frame, recall in sorted(best_by_fp.items()):
+        best_recall = max(best_recall, recall)
+        envelope.append((false_positives_per_frame, best_recall))
+    return envelope
+
+
+def froc_recall_at_fp_per_frame(
+    points: list[dict[str, Any]],
+    *,
+    max_fp_per_frame: float,
+) -> float | None:
+    """Return best recall attainable at or below a false-positive budget."""
+
+    envelope = monotone_froc_points(points)
+    if not envelope:
+        return None
+    feasible = [recall for fp_per_frame, recall in envelope if fp_per_frame <= max_fp_per_frame]
+    return max(feasible) if feasible else 0.0
+
+
+def froc_auc_up_to_fp_per_frame(
+    points: list[dict[str, Any]],
+    *,
+    max_fp_per_frame: float,
+) -> float | None:
+    """Return normalized trapezoidal FROC AUC up to a fixed FP/frame budget."""
+
+    if max_fp_per_frame <= 0:
+        return None
+    envelope = monotone_froc_points(points)
+    if not envelope:
+        return None
+
+    clipped: list[tuple[float, float]] = [(0.0, 0.0)]
+    for false_positives_per_frame, recall in envelope:
+        if false_positives_per_frame < 0:
+            continue
+        if false_positives_per_frame > max_fp_per_frame:
+            break
+        if clipped[-1][0] == false_positives_per_frame:
+            clipped[-1] = (
+                false_positives_per_frame,
+                max(clipped[-1][1], recall),
+            )
+        else:
+            clipped.append((false_positives_per_frame, recall))
+    if clipped[-1][0] < max_fp_per_frame:
+        clipped.append((max_fp_per_frame, clipped[-1][1]))
+
+    area = 0.0
+    for (x0, y0), (x1, y1) in zip(clipped, clipped[1:]):
+        area += 0.5 * (y0 + y1) * (x1 - x0)
+    return float(area / max_fp_per_frame)
+
+
+def detection_froc_curve(
+    detection_rows: list[dict[str, str]],
+    truth: dict[str, Any],
+    *,
+    scored_frames: set[int] | None = None,
+    iou_threshold: float = 0.25,
+    score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
+) -> dict[str, Any]:
+    """Compute a detection FROC curve by sweeping a per-detection score.
+
+    The curve is limited to detections already emitted by a run. It is therefore
+    a within-run confidence sweep, not a replacement for rerunning a lower
+    detector threshold when sub-threshold candidates were never written.
+    """
+
+    evaluated_frames = froc_frame_denominator(
+        detection_rows,
+        truth,
+        scored_frames=scored_frames,
+    )
+    if evaluated_frames == 0:
+        return {
+            "available": False,
+            "reason": "no evaluated frames for FROC denominator",
+            "score_field": None,
+            "points": [],
+            "point_count": 0,
+        }
+
+    score_field = detection_score_field(detection_rows, score_fields=score_fields)
+    empty_metrics = detection_metrics([], truth, iou_threshold=iou_threshold)
+    truth_boxes = int(empty_metrics.get("truth_boxes") or 0)
+    points = [
+        froc_point_from_metrics(
+            empty_metrics,
+            score_threshold=None,
+            evaluated_frames=evaluated_frames,
+        )
+    ]
+
+    skipped_score_rows = 0
+    thresholds: list[float] = []
+    if score_field is not None:
+        for row in detection_rows:
+            score = finite_float(row.get(score_field))
+            if score is None:
+                skipped_score_rows += 1
+                continue
+            thresholds.append(score)
+        for threshold in sorted(set(thresholds), reverse=True):
+            kept_rows = [
+                row
+                for row in detection_rows
+                if (score := finite_float(row.get(score_field))) is not None
+                and score >= threshold
+            ]
+            metrics = detection_metrics(kept_rows, truth, iou_threshold=iou_threshold)
+            points.append(
+                froc_point_from_metrics(
+                    metrics,
+                    score_threshold=threshold,
+                    evaluated_frames=evaluated_frames,
+                )
+            )
+    elif detection_rows:
+        metrics = detection_metrics(detection_rows, truth, iou_threshold=iou_threshold)
+        points.append(
+            froc_point_from_metrics(
+                metrics,
+                score_threshold=None,
+                evaluated_frames=evaluated_frames,
+            )
+        )
+
+    recall_limits = {
+        limit: froc_recall_at_fp_per_frame(points, max_fp_per_frame=limit)
+        for limit in FROC_FP_PER_FRAME_LIMITS
+    }
+    available = truth_boxes > 0 and (score_field is not None or not detection_rows)
+    reason = None
+    if truth_boxes == 0:
+        reason = "no truth boxes on scored frames"
+    elif score_field is None and detection_rows:
+        reason = "no finite per-detection score field available for threshold sweep"
+
+    return {
+        "available": available,
+        "reason": reason,
+        "score_field": score_field,
+        "score_fields_considered": list(score_fields),
+        "evaluated_frames": evaluated_frames,
+        "truth_boxes": truth_boxes,
+        "skipped_score_rows": skipped_score_rows,
+        "points": points,
+        "point_count": len(points),
+        "auc_fp_per_frame_le_1": froc_auc_up_to_fp_per_frame(
+            points,
+            max_fp_per_frame=FROC_AUC_FP_PER_FRAME_LIMIT,
+        ),
+        "recall_at_0_1_fp_per_frame": recall_limits[0.1],
+        "recall_at_0_5_fp_per_frame": recall_limits[0.5],
+        "recall_at_1_0_fp_per_frame": recall_limits[1.0],
+    }
 
 
 def load_run_data(spec: RunSpec) -> RunData:
@@ -565,9 +841,20 @@ def empty_labeled_metrics() -> dict[str, Any]:
         "labeled_true_positives": None,
         "labeled_false_positives": None,
         "labeled_false_negatives": None,
+        "labeled_false_positives_per_frame": None,
+        "labeled_empty_scored_frames": None,
+        "labeled_empty_frame_false_positives": None,
+        "labeled_empty_frame_fp_per_frame": None,
         "labeled_precision": None,
         "labeled_recall": None,
         "labeled_f1": None,
+        "labeled_froc_available": False,
+        "labeled_froc_score_field": None,
+        "labeled_froc_points": None,
+        "labeled_froc_auc_fp_per_frame_le_1": None,
+        "labeled_froc_recall_at_0_1_fp_per_frame": None,
+        "labeled_froc_recall_at_0_5_fp_per_frame": None,
+        "labeled_froc_recall_at_1_0_fp_per_frame": None,
         "labeled_mean_matched_iou": None,
         "labeled_mean_centroid_error_px": None,
     }
@@ -675,6 +962,11 @@ def summarize_run(
             labeled_truth,
             iou_threshold=truth_iou_threshold,
         )
+        false_positives = finite_int(metrics.get("false_positives")) or 0
+        empty_frames = empty_labeled_frame_indices(labeled_truth)
+        empty_frame_false_positives = len(
+            restrict_detection_rows_to_frames(data.detections, empty_frames)
+        )
         row.update(
             {
                 "labeled_detection_available": metrics.get("available"),
@@ -685,7 +977,34 @@ def summarize_run(
                 "labeled_true_positives": metrics.get("true_positives"),
                 "labeled_false_positives": metrics.get("false_positives"),
                 "labeled_false_negatives": metrics.get("false_negatives"),
+                "labeled_false_positives_per_frame": safe_share(
+                    false_positives,
+                    len(scored_frames),
+                ),
+                "labeled_empty_scored_frames": len(empty_frames),
+                "labeled_empty_frame_false_positives": empty_frame_false_positives,
+                "labeled_empty_frame_fp_per_frame": safe_share(
+                    empty_frame_false_positives,
+                    len(empty_frames),
+                ),
                 **{f"labeled_{field}": metrics.get(field) for field in LABELED_METRIC_FIELDS},
+            }
+        )
+        froc = detection_froc_curve(
+            scored_detections,
+            labeled_truth,
+            scored_frames=scored_frames,
+            iou_threshold=truth_iou_threshold,
+        )
+        row.update(
+            {
+                "labeled_froc_available": froc.get("available"),
+                "labeled_froc_score_field": froc.get("score_field"),
+                "labeled_froc_points": froc.get("point_count"),
+                "labeled_froc_auc_fp_per_frame_le_1": froc.get("auc_fp_per_frame_le_1"),
+                "labeled_froc_recall_at_0_1_fp_per_frame": froc.get("recall_at_0_1_fp_per_frame"),
+                "labeled_froc_recall_at_0_5_fp_per_frame": froc.get("recall_at_0_5_fp_per_frame"),
+                "labeled_froc_recall_at_1_0_fp_per_frame": froc.get("recall_at_1_0_fp_per_frame"),
             }
         )
     if bootstrap_samples > 0:
@@ -843,6 +1162,42 @@ def draw_velocity_ratio_histogram(path: Path, runs: list[RunData]) -> None:
     )
 
 
+def draw_labeled_froc_plot(
+    path: Path,
+    runs: list[RunData],
+    *,
+    labeled_truth: dict[str, Any],
+    truth_iou_threshold: float,
+) -> None:
+    """Draw labeled detection FROC curves for the comparison report."""
+
+    scored_frames = truth_frame_indices(labeled_truth)
+    labeled_series: list[tuple[str, list[float], list[float]]] = []
+    for run in runs:
+        froc = detection_froc_curve(
+            run.detections,
+            labeled_truth,
+            scored_frames=scored_frames,
+            iou_threshold=truth_iou_threshold,
+        )
+        points = monotone_froc_points(list(froc.get("points") or []))
+        labeled_series.append(
+            (
+                run.spec.label,
+                [false_positives_per_frame for false_positives_per_frame, _recall in points],
+                [recall for _false_positives_per_frame, recall in points],
+            )
+        )
+
+    draw_multiline_plot(
+        path,
+        title="Labeled detection FROC",
+        labeled_series=labeled_series,
+        x_label="false positives per scored frame",
+        y_label="recall",
+    )
+
+
 def detection_count_for_frame(data: RunData, frame_index: int, *, filtered: bool = False) -> int:
     """Return the loaded detection count for a frame."""
 
@@ -973,13 +1328,21 @@ def draw_detection_contact_sheet(
     sheet.save(path)
 
 
-def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path], dict[str, Path]]:
+def write_plots(
+    report_dir: Path,
+    runs: list[RunData],
+    *,
+    labeled_truth: dict[str, Any] | None = None,
+    truth_iou_threshold: float = 0.25,
+) -> tuple[dict[str, Path], dict[str, Path]]:
     """Write comparison plots and contact sheets."""
 
     plots = {
         "detections_per_frame": report_dir / "detections_per_frame_comparison.png",
         "velocity_ratio_histogram": report_dir / "velocity_ratio_histogram_comparison.png",
     }
+    if labeled_truth is not None:
+        plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
     images = {
         "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
         "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
@@ -1017,6 +1380,13 @@ def write_plots(report_dir: Path, runs: list[RunData]) -> tuple[dict[str, Path],
         y_label="n_detections",
     )
     draw_velocity_ratio_histogram(plots["velocity_ratio_histogram"], runs)
+    if labeled_truth is not None:
+        draw_labeled_froc_plot(
+            plots["labeled_detection_froc"],
+            runs,
+            labeled_truth=labeled_truth,
+            truth_iou_threshold=truth_iou_threshold,
+        )
     return plots, images
 
 
@@ -1097,9 +1467,18 @@ def build_markdown_report(
             ("labeled_true_positives", "TP"),
             ("labeled_false_positives", "FP"),
             ("labeled_false_negatives", "FN"),
+            ("labeled_false_positives_per_frame", "FP/frame"),
+            ("labeled_empty_scored_frames", "empty frames"),
+            ("labeled_empty_frame_false_positives", "empty FP"),
+            ("labeled_empty_frame_fp_per_frame", "empty FP/frame"),
             ("labeled_precision", "precision"),
             ("labeled_recall", "recall"),
             ("labeled_f1", "F1"),
+            ("labeled_froc_score_field", "FROC score"),
+            ("labeled_froc_auc_fp_per_frame_le_1", "FROC AUC<=1 FP/frame"),
+            ("labeled_froc_recall_at_0_1_fp_per_frame", "recall @0.1 FP/frame"),
+            ("labeled_froc_recall_at_0_5_fp_per_frame", "recall @0.5 FP/frame"),
+            ("labeled_froc_recall_at_1_0_fp_per_frame", "recall @1.0 FP/frame"),
             ("labeled_mean_matched_iou", "mean IoU"),
             ("labeled_mean_centroid_error_px", "centroid px"),
         ]
@@ -1110,6 +1489,7 @@ def build_markdown_report(
                 "",
                 f"Truth labels: `{truth_path}`; detection matching IoU threshold: {format_value(truth_iou_threshold)}.",
                 "Detections outside the scored frame set are ignored so sparse labels do not penalize unlabeled frames.",
+                "Use labeled F1 and fixed-budget FROC recall as the primary labeled target metrics.",
                 "",
                 "| " + " | ".join(label for _field, label in labeled_fields) + " |",
                 "| " + " | ".join("---" for _ in labeled_fields) + " |",
@@ -1189,6 +1569,18 @@ def build_markdown_report(
                     )
                     + " |"
                 )
+    if "labeled_detection_froc" in plots:
+        lines.extend(
+            [
+                "",
+                "### Labeled detection FROC",
+                "",
+                "The FROC curve sweeps the loaded detections by their per-component score, using `peak_signal` when available. It measures recall against false positives per scored frame, so empty scored frames contribute to the false-positive budget. Because detections below the run's original detector threshold were never written, use this plot as a within-run confidence sweep; full threshold sweeps still require rerunning the detector.",
+                "",
+                f"![Labeled detection FROC]({markdown_link(plots['labeled_detection_froc'], relative_to=report_dir)})",
+                "",
+            ]
+        )
     lines.extend(["", "## Visual comparison", ""])
     if "raw_detection_contact_sheet" in images:
         lines.extend(
@@ -1250,7 +1642,7 @@ def build_markdown_report(
     )
     if truth_path is not None:
         lines.append(
-            "- Prefer the highest labeled F1; use precision/recall to decide whether the remaining error is false positives or misses."
+            "- Prefer higher labeled recall at a fixed false-positive-per-frame budget or higher labeled FROC AUC; empty-frame FP counts are the fastest ghost-artifact warning."
         )
     lines.extend(
         [
@@ -1307,7 +1699,12 @@ def generate_comparison_report(
         )
     summary_csv = report_dir / "summary.csv"
     write_summary_csv(summary_csv, rows)
-    plots, images = write_plots(report_dir, runs)
+    plots, images = write_plots(
+        report_dir,
+        runs,
+        labeled_truth=labeled_truth,
+        truth_iou_threshold=truth_iou_threshold,
+    )
     contact_sheet_specs = [
         ("detection_contact_sheet", "residual", False),
         ("filtered_detection_contact_sheet", "residual", True),

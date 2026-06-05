@@ -126,9 +126,14 @@ comparison_report/
   summary.csv
   detections_per_frame_comparison.png
   velocity_ratio_histogram_comparison.png
+  labeled_detection_froc.png  # only when --truth-path is supplied
   detection_contact_sheet.png
   filtered_detection_contact_sheet.png
 ```
+
+When `beltmap-compare --truth-path` is used with sparse real-data labels, the
+comparison summary also reports FROC metrics from a within-run sweep over
+per-detection scores such as `peak_signal`.
 
 `config_resolved.json` is produced by the `beltmap-apply` CLI before the legacy
 image driver is invoked. Running `scripts/apply_beltmap_to_images.py` directly
