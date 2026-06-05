@@ -6,7 +6,12 @@ import pytest
 from PIL import Image
 
 from beltmap.cli import compare as cli_compare
-from beltmap.compare_runs import RunSpec, generate_comparison_report, parse_run_spec
+from beltmap.compare_runs import (
+    RunSpec,
+    detection_froc_curve,
+    generate_comparison_report,
+    parse_run_spec,
+)
 
 
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
@@ -181,6 +186,23 @@ def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     run_b = tmp_path / "T3p5"
     make_run(run_a, threshold=4.0, count_offset=0)
     make_run(run_b, threshold=3.5, count_offset=1)
+    with (run_b / "detections.csv").open(newline="", encoding="utf-8") as handle:
+        run_b_detections = list(csv.DictReader(handle))
+    run_b_detections.append(
+        {
+            "frame_index": 2,
+            "label": 2,
+            "y": 7.0,
+            "x": 7.0,
+            "area_px": 9,
+            "peak_signal": 4.0,
+            "bbox_top": 6,
+            "bbox_left": 6,
+            "bbox_bottom": 8,
+            "bbox_right": 8,
+        }
+    )
+    write_csv(run_b / "detections.csv", run_b_detections)
     truth_path = tmp_path / "labels.csv"
     write_csv(
         truth_path,
@@ -205,8 +227,12 @@ def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     )
 
     report = artifacts.report.read_text(encoding="utf-8")
+    assert "labeled_detection_froc" in artifacts.plots
+    assert artifacts.plots["labeled_detection_froc"].is_file()
     assert "## Labeled real-data target" in report
+    assert "### Labeled detection FROC" in report
     assert "labeled F1" in report
+    assert "recall @0.1 FP/frame" in report
     rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
     assert rows[0]["labeled_detection_available"] == "True"
     assert rows[0]["labeled_scored_frames"] == "2"
@@ -215,7 +241,65 @@ def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     assert rows[0]["labeled_true_positives"] == "1"
     assert rows[0]["labeled_false_positives"] == "0"
     assert rows[0]["labeled_false_negatives"] == "0"
+    assert rows[0]["labeled_false_positives_per_frame"] == "0.0"
+    assert rows[0]["labeled_empty_scored_frames"] == "1"
+    assert rows[0]["labeled_empty_frame_false_positives"] == "0"
+    assert rows[0]["labeled_empty_frame_fp_per_frame"] == "0.0"
     assert rows[0]["labeled_f1"] == "1.0"
+    assert rows[1]["labeled_froc_score_field"] == "peak_signal"
+    assert rows[1]["labeled_froc_points"] == "3"
+    assert float(rows[1]["labeled_froc_recall_at_0_1_fp_per_frame"]) == pytest.approx(1.0)
+    assert float(rows[1]["labeled_froc_recall_at_0_5_fp_per_frame"]) == pytest.approx(1.0)
+
+
+def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            }
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "1",
+            "bbox_left": "2",
+            "bbox_bottom": "4",
+            "bbox_right": "5",
+            "y": "2.0",
+            "x": "3.0",
+            "peak_signal": "12.0",
+        },
+        {
+            "frame_index": "2",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "22",
+            "bbox_right": "22",
+            "y": "21.0",
+            "x": "21.0",
+            "peak_signal": "6.0",
+        },
+    ]
+
+    froc = detection_froc_curve(
+        detections,
+        truth,
+        scored_frames={0, 2},
+        iou_threshold=0.25,
+    )
+
+    assert froc["available"] is True
+    assert froc["score_field"] == "peak_signal"
+    assert froc["point_count"] == 3
+    assert froc["recall_at_0_1_fp_per_frame"] == pytest.approx(1.0)
+    assert froc["recall_at_0_5_fp_per_frame"] == pytest.approx(1.0)
+    assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
 
 
 def test_compare_main_prints_artifact_paths(tmp_path, capsys):

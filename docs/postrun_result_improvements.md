@@ -10,7 +10,12 @@ they consume standard output files and write additional diagnostics.
 ```bash
 beltmap-postrun-audit --output-dir outputs --frame-rate-hz 100
 beltmap-map-uncertainty --output-dir outputs --write-full-counts
-beltmap-suggest-label-frames --output-dir outputs --frames 50 --output labels/label_plan.csv
+beltmap-suggest-label-frames \
+  --output-dir outputs \
+  --frames 50 \
+  --empty-frames 10 \
+  --output labels/label_plan.csv \
+  --template-output labels/validation_boxes.csv
 beltmap-quality-contract --output-dir outputs
 beltmap-quality-contract --write-template quality_contract.json
 beltmap-quality-contract --write-synthetic-template synthetic_contract.json
@@ -62,10 +67,29 @@ size.
 ## Worst-frame review and label planning
 
 Worst-frame tables are built from existing run CSVs.  They intentionally select
-frames that are likely to expose failure modes rather than only the first few
-frames.  The label-plan command combines detection spikes, empty/low-detection
-frames, low registration score, large phase correction, recurrent-artifact
-rejection, and photometric-fit RMSE when available.
+frames that are likely to expose failure modes rather than only the first few or
+random frames.  The label-plan command now writes a sparse but adversarial
+validation plan.  It combines:
+
+- detection spikes, which are likely threshold, split, or ghost failures;
+- empty/low-detection candidates, which become explicit negative controls when
+  the annotator confirms that no particle is present;
+- low registration score and large phase correction, which probe phase-induced
+  belt-texture residuals;
+- recurrent-artifact rejections, which stress-test belt-fixed ghost filtering;
+- photometric-fit RMSE outliers, which probe illumination mismatch; and
+- regular control frames when the failure-mode tables do not fill the budget.
+
+The optional `--template-output` CSV is directly compatible with
+`beltmap-compare --truth-path`: add one row per particle bounding box using
+crop-local half-open coordinates (`bbox_top`, `bbox_left`, `bbox_bottom`,
+`bbox_right`).  Keep a blank row only after the full frame has been inspected and
+is intentionally scored as empty.  Empty scored frames are important because
+they turn ghost detections into measured false positives instead of proxy
+diagnostics.
+
+Use `--min-gap-frames` when the plan otherwise selects near-duplicate adjacent
+frames from the same failure burst.
 
 ## Detection confidence
 

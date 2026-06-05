@@ -8,6 +8,7 @@ import math
 import shutil
 import subprocess
 import sys
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -326,7 +327,96 @@ def markdown_value(value: Any) -> str:
     return str(value)
 
 
-def write_summary_report(rows: list[dict[str, Any]], path: Path) -> None:
+def markdown_link(path: Path, *, relative_to: Path) -> str:
+    try:
+        target = path.relative_to(relative_to)
+    except ValueError:
+        target = path
+    return str(target).replace("\\", "/")
+
+
+def sweep_froc_points(rows: list[dict[str, Any]]) -> list[tuple[float, float, str]]:
+    """Return finite FROC points as FP/frame, recall, threshold-label tuples."""
+
+    points: list[tuple[float, float, str]] = []
+    for row in rows:
+        false_positives_per_frame = finite_number(row.get("false_positives_per_frame"))
+        recall = finite_number(row.get("detection_recall"))
+        if false_positives_per_frame is None or recall is None:
+            continue
+        threshold = row.get("detection_threshold")
+        label = "" if threshold in (None, "") else str(threshold)
+        points.append((false_positives_per_frame, recall, label))
+    return sorted(points, key=lambda item: (item[0], item[1]))
+
+
+def write_froc_curve_svg(rows: list[dict[str, Any]], path: Path) -> None:
+    """Write a lightweight SVG FROC curve from benchmark-sweep rows."""
+
+    points = sweep_froc_points(rows)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = 900, 500
+    left, right, top, bottom = 78, 36, 48, 72
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    baseline = top + plot_height
+
+    if points:
+        x_max = max(1.0, max(point[0] for point in points))
+    else:
+        x_max = 1.0
+
+    def sx(value: float) -> float:
+        return left + value / x_max * plot_width
+
+    def sy(value: float) -> float:
+        return baseline - max(0.0, min(1.0, value)) * plot_height
+
+    polyline = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y, _label in points)
+    point_marks = "\n".join(
+        f'<circle cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="4" fill="#1f77b4" />'
+        for x, y, _label in points
+    )
+    threshold_labels = ""
+    if len(points) <= 12:
+        threshold_labels = "\n".join(
+            f'<text x="{sx(x) + 6:.1f}" y="{sy(y) - 6:.1f}" font-size="11">t={escape(label)}</text>'
+            for x, y, label in points
+            if label
+        )
+    no_data = ""
+    if not points:
+        no_data = (
+            f'<text x="{left + 18}" y="{top + 42}" font-size="16">'
+            "No finite detection recall / false-positive values available"
+            "</text>"
+        )
+
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="white" />
+  <text x="{left}" y="24" font-size="18" font-weight="bold">Detection FROC</text>
+  <line x1="{left}" y1="{baseline}" x2="{left + plot_width}" y2="{baseline}" stroke="black" />
+  <line x1="{left}" y1="{top}" x2="{left}" y2="{baseline}" stroke="black" />
+  <text x="{left + plot_width / 2 - 110:.1f}" y="{height - 24}" font-size="14">false positives per frame</text>
+  <text x="12" y="{top + 18}" font-size="14">recall</text>
+  <text x="{left - 8}" y="{baseline + 18}" text-anchor="end" font-size="11">0</text>
+  <text x="{left + plot_width}" y="{baseline + 18}" text-anchor="middle" font-size="11">{x_max:.3g}</text>
+  <text x="{left - 8}" y="{top + 4}" text-anchor="end" font-size="11">1</text>
+  <polyline fill="none" stroke="#1f77b4" stroke-width="2" points="{polyline}" />
+  {point_marks}
+  {threshold_labels}
+  {no_data}
+</svg>
+'''
+    path.write_text(svg, encoding="utf-8")
+
+
+def write_summary_report(
+    rows: list[dict[str, Any]],
+    path: Path,
+    *,
+    froc_plot: Path | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# BeltMap benchmark sweep",
@@ -335,9 +425,24 @@ def write_summary_report(rows: list[dict[str, Any]], path: Path) -> None:
         "The table is intended for precision-recall, F1-threshold, FP-recall,",
         "fragmentation-threshold, and velocity-bias-threshold plots.",
         "",
+    ]
+    if froc_plot is not None:
+        lines.extend(
+            [
+                "## Detection FROC",
+                "",
+                "This plot uses detection recall on the y-axis and false positives per frame on the x-axis. Each point is one executed sweep run, so this is the full rerun-based FROC view rather than a single operating-point F1 score.",
+                "",
+                f"![Detection FROC]({markdown_link(froc_plot, relative_to=path.parent)})",
+                "",
+            ]
+        )
+    lines.extend(
+        [
         "| Run | Threshold | Precision | Recall | F1 | FP/frame | Event F1 | Single-frame tracks | Median track length | Track fragmentation | Velocity bias | Map RMSE |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ]
+        ]
+    )
     for row in rows:
         lines.append(
             "| "
@@ -422,9 +527,14 @@ def main(argv: list[str] | None = None) -> int:
     manifest_path = args.output_root / "sweep_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if summary_rows:
-        write_summary_csv(summary_rows, args.summary_csv or args.output_root / "sweep_metrics.csv")
-        write_summary_json(summary_rows, args.summary_json or args.output_root / "sweep_metrics.json")
-        write_summary_report(summary_rows, args.summary_report or args.output_root / "sweep_report.md")
+        summary_csv = args.summary_csv or args.output_root / "sweep_metrics.csv"
+        summary_json = args.summary_json or args.output_root / "sweep_metrics.json"
+        summary_report = args.summary_report or args.output_root / "sweep_report.md"
+        froc_plot = summary_report.with_name("sweep_froc_curve.svg")
+        write_summary_csv(summary_rows, summary_csv)
+        write_summary_json(summary_rows, summary_json)
+        write_froc_curve_svg(summary_rows, froc_plot)
+        write_summary_report(summary_rows, summary_report, froc_plot=froc_plot)
     print(manifest_path)
     return 0
 

@@ -85,6 +85,7 @@ outputs/threshold_sweep/faint_particles/
   sweep_manifest.json
   sweep_metrics.csv
   sweep_metrics.json
+  sweep_froc_curve.svg
   sweep_report.md
 ```
 
@@ -96,6 +97,8 @@ these columns as precision-recall, F1-vs-threshold,
 false-positives-vs-recall, track-length-vs-threshold,
 fragmentation-vs-threshold, and velocity-bias-vs-threshold curves. This is
 stronger evidence than reporting one F1 value at one arbitrary threshold.
+The Markdown report embeds `sweep_froc_curve.svg` as the ready-made detection
+FROC view.
 
 ## Why synthetic first?
 

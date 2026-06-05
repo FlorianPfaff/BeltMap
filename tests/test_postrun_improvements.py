@@ -1,3 +1,4 @@
+import csv
 import json
 
 import numpy as np
@@ -76,8 +77,31 @@ def test_label_plan_combines_failure_buckets(tmp_path):
 
     rows = pri.suggest_label_frames(out, frame_count=3)
 
-    assert rows
+    assert len(rows) == 3
     assert {row["frame_index"] for row in rows}.issubset({0, 1, 2})
+    assert all("annotation_role" in row for row in rows)
+    assert any(row["annotation_role"] == "empty_check" for row in rows)
+
+
+def test_write_label_plan_can_write_box_template(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(json.dumps({"n_images": 3}), encoding="utf-8")
+    (out / "detections_per_frame.csv").write_text("frame_index,n_detections\n0,0\n1,12\n2,3\n", encoding="utf-8")
+    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,0,0.9\n1,8,0.1\n2,1,0.8\n", encoding="utf-8")
+
+    plan_path = tmp_path / "label_plan.csv"
+    template_path = tmp_path / "validation_boxes.csv"
+    plan_rows = pri.write_label_plan(out, output_path=plan_path, frame_count=3, empty_frame_count=1)
+    template_rows = pri.write_label_template(plan_rows, output_path=template_path)
+
+    assert plan_path.is_file()
+    assert template_path.is_file()
+    assert len(template_rows) == len(plan_rows)
+    loaded = list(csv.DictReader(template_path.open(newline="", encoding="utf-8")))
+    assert loaded
+    assert {"frame_index", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"}.issubset(loaded[0])
+    assert any(row["annotation_role"] == "empty_check" for row in loaded)
 
 
 def test_color_residual_score_returns_spatial_score():
