@@ -188,7 +188,25 @@ This writes `comparison_report.md`, `summary.csv`, detection-count and
 velocity-ratio plots, and a side-by-side residual preview contact sheet with
 detection boxes.
 
-When a small real-data validation subset has been labeled, pass it to the same
+For real conveyor data, first create a sparse but adversarial labeling plan from
+one representative run:
+
+```bash
+beltmap-suggest-label-frames \
+  --output-dir outputs/T12_area50 \
+  --frames 60 \
+  --empty-frames 12 \
+  --output labels/brick_validation_plan.csv \
+  --template-output labels/brick_validation_boxes.csv
+```
+
+The plan deliberately mixes detection spikes, particle-free or low-detection
+candidate frames, poor registration frames, large phase-correction frames,
+recurrent-artifact-heavy frames, photometric outliers, and regular controls.
+Fill one template row per particle box; keep a blank row only when the whole
+frame has been inspected and is intentionally scored as empty.
+
+When this small real-data validation subset has been labeled, pass it to the same
 comparison command to rank variants by detection precision, recall, and F1 on
 the labeled frames rather than by proxy metrics alone:
 
@@ -206,7 +224,7 @@ The label file may be a CSV with `frame_index`, `bbox_top`, `bbox_left`,
 `bbox_bottom`, and `bbox_right` columns, or a JSON object/list with equivalent
 `top`, `left`, `bottom`, and `right` fields. Coordinates are crop-local and use
 the same half-open bounding-box convention as `detections.csv`. To include
-labeled empty frames, add CSV rows containing only `frame_index`, or use a JSON
+labeled empty frames, leave CSV rows containing only `frame_index`, or use a JSON
 object with `scored_frames`. Detections outside the scored frame set are ignored
 by the labeled metrics.
 

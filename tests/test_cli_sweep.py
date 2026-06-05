@@ -121,6 +121,9 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
         "detection_precision"
     ] == 0.9
     report = (tmp_path / "sweep" / "sweep_report.md").read_text(encoding="utf-8")
+    assert (tmp_path / "sweep" / "sweep_froc_curve.svg").is_file()
+    assert "Detection FROC" in report
+    assert "sweep_froc_curve.svg" in report
     assert "FP/frame" in report
     assert "Track fragmentation" in report
     assert "Single-frame tracks" in report
