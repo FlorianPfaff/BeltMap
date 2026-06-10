@@ -809,6 +809,61 @@ def parse_preview_frames(value: str, *, frame_count: int) -> set[int]:
     return frames
 
 
+def require_finite(value: float, name: str) -> None:
+    if not math.isfinite(value):
+        raise SystemExit(f"{name} must be finite")
+
+
+def validate_numeric_args(args: argparse.Namespace) -> None:
+    require_finite(args.belt_velocity_px_per_frame, "--belt-velocity-px-per-frame")
+    require_finite(args.threshold, "--threshold")
+    if args.threshold <= 0:
+        raise SystemExit("--threshold must be positive")
+    if args.low_threshold is not None:
+        require_finite(args.low_threshold, "--low-threshold")
+        if args.low_threshold > args.threshold:
+            raise SystemExit("--low-threshold must be less than or equal to --threshold")
+    if args.min_area_px < 1:
+        raise SystemExit("--min-area-px must be positive")
+    if args.max_area_px is not None and args.max_area_px < args.min_area_px:
+        raise SystemExit("--max-area-px must be greater than or equal to --min-area-px")
+    if args.min_bbox_width_px < 1:
+        raise SystemExit("--min-bbox-width-px must be positive")
+    if args.min_bbox_height_px < 1:
+        raise SystemExit("--min-bbox-height-px must be positive")
+    require_finite(args.max_bbox_aspect_ratio, "--max-bbox-aspect-ratio")
+    if args.max_bbox_aspect_ratio < 1.0:
+        raise SystemExit("--max-bbox-aspect-ratio must be at least 1")
+    require_finite(args.min_bbox_extent, "--min-bbox-extent")
+    if not 0.0 <= args.min_bbox_extent <= 1.0:
+        raise SystemExit("--min-bbox-extent must be in [0, 1]")
+    if args.split_min_projection_gap_px < 0:
+        raise SystemExit("--split-min-projection-gap-px must be non-negative")
+    if args.split_min_component_area_px < 1:
+        raise SystemExit("--split-min-component-area-px must be positive")
+    if args.min_track_length < 1:
+        raise SystemExit("--min-track-length must be positive")
+    require_finite(args.tracking_max_frame_gap, "--tracking-max-frame-gap")
+    if args.tracking_max_frame_gap <= 0:
+        raise SystemExit("--tracking-max-frame-gap must be positive")
+    if args.track_filter_min_length < 1:
+        raise SystemExit("--track-filter-min-length must be positive")
+    require_finite(args.track_filter_min_velocity_ratio_y, "--track-filter-min-velocity-ratio-y")
+    require_finite(args.track_filter_max_velocity_ratio_y, "--track-filter-max-velocity-ratio-y")
+    if args.track_filter_min_velocity_ratio_y > args.track_filter_max_velocity_ratio_y:
+        raise SystemExit(
+            "--track-filter-min-velocity-ratio-y must be less than or equal to "
+            "--track-filter-max-velocity-ratio-y"
+        )
+    if args.track_filter_max_abs_x_velocity_px_per_frame is not None:
+        require_finite(
+            args.track_filter_max_abs_x_velocity_px_per_frame,
+            "--track-filter-max-abs-x-velocity-px-per-frame",
+        )
+        if args.track_filter_max_abs_x_velocity_px_per_frame < 0:
+            raise SystemExit("--track-filter-max-abs-x-velocity-px-per-frame must be non-negative")
+
+
 def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
     fields = [
         "label",
@@ -861,6 +916,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--average-sample-frames must be positive")
     if args.progress_interval < 1:
         raise SystemExit("--progress-interval must be positive")
+    validate_numeric_args(args)
 
     all_paths = list_images(args.image_dir)
     selected_paths = all_paths[:: args.frame_stride]
