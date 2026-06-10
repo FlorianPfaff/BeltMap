@@ -602,6 +602,17 @@ def test_velocity_metrics_ignores_rows_without_velocity_estimates():
     assert metrics["velocity_y_error_px_per_frame"] == pytest.approx(0.01)
 
 
+def test_velocity_metrics_counts_rows_without_velocity_estimates():
+    metrics = velocity_metrics(
+        [{"track_id": 10, "n_detections": 5, "velocity_y_px_per_frame": "", "velocity_ratio_y": ""}],
+        {"true_particle_velocity_y_px_per_frame": 1.0},
+    )
+
+    assert metrics["available"] is False
+    assert metrics["velocity_rows"] == 1
+    assert metrics["velocity_y_rows_with_estimate"] == 0
+
+
 def test_event_metrics_distinguishes_frame_coverage_from_event_recall():
     truth = {
         "particles": [

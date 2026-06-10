@@ -1005,7 +1005,7 @@ def velocity_metrics(
             "prediction_source": prediction_source,
             "truth_velocity_y_px_per_frame": true_velocity,
             "truth_velocity_ratio_y": true_ratio,
-            "velocity_rows": 0,
+            "velocity_rows": len(velocity_rows),
             **distribution,
         }
 
