@@ -642,13 +642,18 @@ def estimate_particle_velocities_vs_belt(
         raise ValueError("belt_image_velocity_px_per_frame must be finite")
     if belt_image_velocity_px_per_frame == 0:
         raise ValueError("belt_image_velocity_px_per_frame must be non-zero")
-    if min_track_length < 2:
+    min_track_length_value = _finite_config_value(
+        min_track_length,
+        "min_track_length",
+    )
+    if min_track_length_value < 2 or not min_track_length_value.is_integer():
         raise ValueError("min_track_length must be at least 2")
+    min_track_length_int = int(min_track_length_value)
     fit_method = _validate_velocity_fit_method(fit_method)
 
     velocities: list[ParticleVelocity] = []
     for track in tracks:
-        if track.n_detections < min_track_length:
+        if track.n_detections < min_track_length_int:
             continue
         frames = np.asarray([d.frame_index for d in track.detections], dtype=np.float64)
         if np.unique(frames).size < 2:

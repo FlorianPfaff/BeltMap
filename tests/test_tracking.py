@@ -241,6 +241,16 @@ def test_velocity_extraction_skips_tracks_without_finite_fit_points():
     assert velocities[0].velocity_ratio_y == 0.5
 
 
+@pytest.mark.parametrize("min_track_length", [float("nan"), 2.5])
+def test_estimate_particle_velocities_rejects_invalid_min_track_length(min_track_length):
+    with pytest.raises(ValueError, match="min_track_length"):
+        estimate_particle_velocities_vs_belt(
+            [],
+            belt_image_velocity_px_per_frame=1.0,
+            min_track_length=min_track_length,
+        )
+
+
 def test_track_particle_detections_predicts_from_recent_track_velocity():
     detections_by_frame = [
         [
