@@ -1130,6 +1130,20 @@ def test_score_particle_velocities_requires_tracks_for_enabled_recurrent_gate():
         )
 
 
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (TrackFilterConfig(min_track_length=float("nan")), "min_track_length"),
+        (TrackFilterConfig(max_abs_x_velocity_px_per_frame=float("nan")), "max_abs_x_velocity_px_per_frame"),
+        (TrackFilterConfig(max_recurrent_artifact_track_score=float("nan")), "max_recurrent_artifact_track_score"),
+        (TrackFilterConfig(recurrent_artifact_detection_threshold=float("nan")), "recurrent_artifact_detection_threshold"),
+    ],
+)
+def test_score_particle_velocities_rejects_nonfinite_filter_config(config, message):
+    with pytest.raises(ValueError, match=message):
+        score_particle_velocities([], config=config, tracks=[])
+
+
 def test_track_particle_detections_drops_tracks_across_explicit_empty_frame_gap():
     detections_by_frame = [
         [ParticleDetection(0, 1, y=10.0, x=5.0, area_px=4, bbox_top=9, bbox_left=4, bbox_bottom=11, bbox_right=6)],
