@@ -431,7 +431,9 @@ def detection_boxes_by_frame(output_dir: Path) -> dict[int, list[dict[str, float
     grouped: dict[int, list[dict[str, float]]] = {}
     for row in rows:
         try:
-            frame = int(float(row["frame_index"]))
+            frame = finite_int(row["frame_index"])
+            if frame is None:
+                continue
             box = {
                 "top": float(row["bbox_top"]),
                 "left": float(row["bbox_left"]),
@@ -459,7 +461,9 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
         raise ValueError("label JSON must contain a 'frames' list")
     result: dict[int, list[dict[str, float]]] = {}
     for frame in frames:
-        frame_index = int(frame["frame_index"])
+        frame_index = finite_int(frame.get("frame_index"))
+        if frame_index is None:
+            continue
         boxes = []
         for box in frame.get("boxes", []):
             boxes.append({key: float(box[key]) for key in ("top", "left", "bottom", "right")})
@@ -535,7 +539,9 @@ def finite_float(value: Any) -> float | None:
 
 def finite_int(value: Any) -> int | None:
     parsed = finite_float(value)
-    return None if parsed is None else int(parsed)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def quality_flags(output_dir: Path) -> dict[str, Any]:
