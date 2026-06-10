@@ -395,6 +395,45 @@ def test_generate_comparison_report_scores_reviewed_frame_box_json(tmp_path):
     assert rows[1]["labeled_empty_frame_false_positives"] == "1"
 
 
+def test_generate_comparison_report_scores_all_empty_reviewed_frames(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=0)
+    truth_path = tmp_path / "labels.csv"
+    write_csv(
+        truth_path,
+        [
+            {"frame_index": 2, "bbox_top": "", "bbox_left": "", "bbox_bottom": "", "bbox_right": ""},
+        ],
+    )
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+        frames=[2],
+        truth_path=truth_path,
+        truth_iou_threshold=0.25,
+        bootstrap_samples=10,
+        bootstrap_seed=3,
+    )
+
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["labeled_detection_available"] == "True"
+    assert rows[0]["labeled_scored_frames"] == "1"
+    assert rows[0]["labeled_truth_boxes"] == "0"
+    assert rows[0]["labeled_predicted_boxes"] == "0"
+    assert rows[0]["labeled_false_positives_per_frame"] == "0.0"
+    assert rows[0]["labeled_empty_scored_frames"] == "1"
+    assert rows[0]["labeled_empty_frame_false_positives"] == "0"
+    assert rows[0]["labeled_precision"] == "1.0"
+    assert rows[0]["labeled_recall"] == "1.0"
+    assert rows[0]["labeled_f1"] == "1.0"
+    assert rows[0]["labeled_f1_bootstrap_median"] == "1.0"
+    assert rows[0]["labeled_f1_ci_low"] == "1.0"
+    assert rows[0]["labeled_f1_ci_high"] == "1.0"
+
+
 def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
     truth = {
         "particles": [

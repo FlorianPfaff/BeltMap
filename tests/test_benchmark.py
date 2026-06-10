@@ -261,6 +261,22 @@ def test_detection_metrics_no_matches_report_zero_f1():
     assert metrics["f1"] == 0.0
 
 
+def test_detection_metrics_scores_clean_reviewed_empty_frames():
+    metrics = detection_metrics(
+        [],
+        {"particles": []},
+        scored_frames={42},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["available"] is True
+    assert metrics["truth_boxes"] == 0
+    assert metrics["predicted_boxes"] == 0
+    assert metrics["precision"] == pytest.approx(1.0)
+    assert metrics["recall"] == pytest.approx(1.0)
+    assert metrics["f1"] == pytest.approx(1.0)
+
+
 def test_detection_metrics_accept_frame_box_truth_layout():
     truth = {
         "frames": [

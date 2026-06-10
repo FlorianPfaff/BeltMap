@@ -1075,6 +1075,7 @@ def summarize_run(
             scored_detections,
             labeled_truth,
             iou_threshold=truth_iou_threshold,
+            scored_frames=scored_frames,
         )
         false_positives = finite_int(metrics.get("false_positives")) or 0
         empty_frames = empty_labeled_frame_indices(labeled_truth)
