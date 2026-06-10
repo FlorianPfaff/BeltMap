@@ -249,6 +249,15 @@ def test_track_particle_detections_rejects_nonfinite_frame_indices():
         )
 
 
+@pytest.mark.parametrize("frame_indices", [[0, 0], [1, 0]])
+def test_track_particle_detections_rejects_nonincreasing_frame_indices(frame_indices):
+    with pytest.raises(ValueError, match="strictly increasing"):
+        track_particle_detections(
+            [[], []],
+            frame_indices=frame_indices,
+        )
+
+
 @pytest.mark.parametrize("min_track_length", [float("nan"), 2.5])
 def test_estimate_particle_velocities_rejects_invalid_min_track_length(min_track_length):
     with pytest.raises(ValueError, match="min_track_length"):

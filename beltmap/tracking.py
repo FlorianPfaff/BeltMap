@@ -279,6 +279,14 @@ def track_particle_detections(
         raise ValueError("frame_indices must have the same length as detections_by_frame")
     if not all(np.isfinite(index) for index in effective_frame_indices):
         raise ValueError("frame_indices must be finite")
+    if any(
+        current <= previous
+        for previous, current in zip(
+            effective_frame_indices,
+            effective_frame_indices[1:],
+        )
+    ):
+        raise ValueError("frame_indices must be strictly increasing")
 
     tracks: list[list[ParticleDetection]] = []
     active_track_ids: list[int] = []
