@@ -169,11 +169,13 @@ class PhaseDriftFilter:
 
 
 def wrap_phase(phase_px: float, period_px: float | None) -> float:
+    phase = _finite_float_value(phase_px, "phase_px")
     if period_px is None:
-        return float(phase_px)
-    if period_px <= 0:
+        return phase
+    period = _finite_float_value(period_px, "period_px")
+    if period <= 0:
         raise ValueError("period_px must be positive")
-    return float(phase_px % period_px)
+    return float(phase % period)
 
 
 def render_belt_view(
@@ -193,13 +195,14 @@ def render_belt_view(
     belt = _as_float_image(belt_map, name="belt_map")
     if belt.ndim != 2:
         raise ValueError("belt_map must be a 2-D array")
+    phase = _finite_float_value(phase_px, "phase_px")
     if height <= 0:
         raise ValueError("height must be positive")
     if x_slice is not None:
         belt = belt[:, x_slice]
 
     map_height = belt.shape[0]
-    rows = np.arange(height, dtype=np.float64) + float(phase_px)
+    rows = np.arange(height, dtype=np.float64) + phase
     if periodic:
         rows = rows % map_height
         row0 = np.floor(rows).astype(np.int64)
@@ -516,6 +519,13 @@ def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
     if arr.size == 0:
         raise ValueError(f"{name} must not be empty")
     return arr
+
+
+def _finite_float_value(value: float, name: str) -> float:
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
 
 
 def _prepare_mask(mask: ArrayLike | None, shape: tuple[int, int]) -> NDArray[np.bool_] | None:

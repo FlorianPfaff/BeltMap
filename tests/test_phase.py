@@ -16,6 +16,7 @@ from beltmap.phase import (
     _refine_quadratic_offset,
     _registration_loss_diagnostics,
     _uniform_filter_axis,
+    wrap_phase,
 )
 
 
@@ -100,6 +101,25 @@ def test_render_belt_view_can_mark_nonperiodic_out_of_support_rows():
     assert after_end[0, 0] == pytest.approx(3.5)
     assert np.isnan(after_end[1, 0])
     assert np.isnan(after_end[2, 0])
+
+
+@pytest.mark.parametrize(
+    ("phase_px", "period_px", "message"),
+    [
+        (float("nan"), None, "phase_px"),
+        (0.0, float("nan"), "period_px"),
+    ],
+)
+def test_wrap_phase_rejects_nonfinite_values(phase_px, period_px, message):
+    with pytest.raises(ValueError, match=message):
+        wrap_phase(phase_px, period_px)
+
+
+def test_render_belt_view_rejects_nonfinite_phase():
+    belt = np.arange(5, dtype=float)[:, None]
+
+    with pytest.raises(ValueError, match="phase_px"):
+        render_belt_view(belt, phase_px=float("nan"), height=3)
 
 
 def test_quadratic_refinement_returns_consistent_loss_offset_pair():
