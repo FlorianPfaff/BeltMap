@@ -467,9 +467,9 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
         frame_index = finite_int(frame.get("frame_index"))
         if frame_index is None:
             continue
-        boxes = []
+        boxes: list[dict[str, float]] = []
         for box in frame.get("boxes", []):
-            boxes.append({key: float(box[key]) for key in ("top", "left", "bottom", "right")})
+            boxes.append(_parse_real_label_box(box))
         result[frame_index] = boxes
     return result
 
@@ -497,6 +497,21 @@ def _validate_reviewed_truth_status(data: dict[str, Any]) -> None:
             f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
             "only after all scored frames have been reviewed"
         )
+
+
+def _parse_real_label_box(box: Mapping[str, Any]) -> dict[str, float]:
+    try:
+        top = float(box["top"])
+        left = float(box["left"])
+        bottom = float(box["bottom"])
+        right = float(box["right"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("label boxes must contain numeric top/left/bottom/right") from exc
+    if not all(math.isfinite(value) for value in (top, left, bottom, right)):
+        raise ValueError("label box coordinates must be finite")
+    if bottom <= top or right <= left:
+        raise ValueError("label boxes must have positive half-open area")
+    return {"top": top, "left": left, "bottom": bottom, "right": right}
 
 
 def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5) -> RealLabelMetrics:
