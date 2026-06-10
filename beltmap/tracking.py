@@ -919,30 +919,69 @@ def extract_particle_velocities_vs_belt(
 
 
 def _validate_component_config(config: ParticleComponentConfig) -> None:
-    if config.min_area_px < 1:
+    min_area_px = _finite_config_value(config.min_area_px, "min_area_px")
+    if min_area_px < 1:
         raise ValueError("min_area_px must be positive")
-    if config.max_area_px is not None and config.max_area_px < config.min_area_px:
+    max_area_px = _optional_finite_config_value(config.max_area_px, "max_area_px")
+    if max_area_px is not None and max_area_px < min_area_px:
         raise ValueError("max_area_px must be greater than or equal to min_area_px")
-    if config.min_bbox_width_px is not None and config.min_bbox_width_px < 1:
+    min_bbox_width_px = _optional_finite_config_value(
+        config.min_bbox_width_px,
+        "min_bbox_width_px",
+    )
+    if min_bbox_width_px is not None and min_bbox_width_px < 1:
         raise ValueError("min_bbox_width_px must be positive when set")
-    if config.min_bbox_height_px is not None and config.min_bbox_height_px < 1:
+    min_bbox_height_px = _optional_finite_config_value(
+        config.min_bbox_height_px,
+        "min_bbox_height_px",
+    )
+    if min_bbox_height_px is not None and min_bbox_height_px < 1:
         raise ValueError("min_bbox_height_px must be positive when set")
+    max_bbox_aspect_ratio = _optional_finite_config_value(
+        config.max_bbox_aspect_ratio,
+        "max_bbox_aspect_ratio",
+    )
     if (
-        config.max_bbox_aspect_ratio is not None
-        and config.max_bbox_aspect_ratio < 1.0
+        max_bbox_aspect_ratio is not None
+        and max_bbox_aspect_ratio < 1.0
     ):
         raise ValueError("max_bbox_aspect_ratio must be at least 1 when set")
-    if config.min_bbox_extent is not None and not (0.0 <= config.min_bbox_extent <= 1.0):
+    min_bbox_extent = _optional_finite_config_value(
+        config.min_bbox_extent,
+        "min_bbox_extent",
+    )
+    if min_bbox_extent is not None and not (0.0 <= min_bbox_extent <= 1.0):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
     if config.connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
-    if config.split_min_projection_gap_px < 1:
+    split_min_projection_gap_px = _finite_config_value(
+        config.split_min_projection_gap_px,
+        "split_min_projection_gap_px",
+    )
+    if split_min_projection_gap_px < 1:
         raise ValueError("split_min_projection_gap_px must be positive")
+    split_min_component_area_px = _optional_finite_config_value(
+        config.split_min_component_area_px,
+        "split_min_component_area_px",
+    )
     if (
-        config.split_min_component_area_px is not None
-        and config.split_min_component_area_px < 1
+        split_min_component_area_px is not None
+        and split_min_component_area_px < 1
     ):
         raise ValueError("split_min_component_area_px must be positive when set")
+
+
+def _finite_config_value(value: float, name: str) -> float:
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_config_value(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_config_value(value, name)
 
 
 def _validate_velocity_fit_method(method: str) -> str:
