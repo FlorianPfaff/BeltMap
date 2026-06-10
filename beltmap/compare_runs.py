@@ -811,7 +811,12 @@ def detection_froc_curve(
         if score_field is not None or not detection_rows
         else incomplete_score_row_count(detection_rows, score_fields=score_fields)
     )
-    empty_metrics = detection_metrics([], truth, iou_threshold=iou_threshold)
+    empty_metrics = detection_metrics(
+        [],
+        truth,
+        iou_threshold=iou_threshold,
+        scored_frames=scored_frames,
+    )
     truth_boxes = int(empty_metrics.get("truth_boxes") or 0)
     points = [
         froc_point_from_metrics(
@@ -834,7 +839,12 @@ def detection_froc_curve(
                 if (score := finite_float(row.get(score_field))) is not None
                 and score >= threshold
             ]
-            metrics = detection_metrics(kept_rows, truth, iou_threshold=iou_threshold)
+            metrics = detection_metrics(
+                kept_rows,
+                truth,
+                iou_threshold=iou_threshold,
+                scored_frames=scored_frames,
+            )
             points.append(
                 froc_point_from_metrics(
                     metrics,
@@ -843,7 +853,12 @@ def detection_froc_curve(
                 )
             )
     elif detection_rows:
-        metrics = detection_metrics(detection_rows, truth, iou_threshold=iou_threshold)
+        metrics = detection_metrics(
+            detection_rows,
+            truth,
+            iou_threshold=iou_threshold,
+            scored_frames=scored_frames,
+        )
         points.append(
             froc_point_from_metrics(
                 metrics,

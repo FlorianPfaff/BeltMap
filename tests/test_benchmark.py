@@ -278,6 +278,48 @@ def test_detection_metrics_scores_clean_reviewed_empty_frames():
     assert metrics["f1"] == pytest.approx(1.0)
 
 
+def test_detection_metrics_restricts_counts_to_scored_frames():
+    truth = {
+        "particles": [
+            {"frame_index": 0, "top": 0, "left": 0, "bottom": 10, "right": 10},
+            {"frame_index": 99, "top": 0, "left": 0, "bottom": 10, "right": 10},
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "0",
+            "bbox_left": "0",
+            "bbox_bottom": "10",
+            "bbox_right": "10",
+            "y": "5",
+            "x": "5",
+        },
+        {
+            "frame_index": "99",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "30",
+            "bbox_right": "30",
+            "y": "25",
+            "x": "25",
+        },
+    ]
+
+    metrics = detection_metrics(
+        detections,
+        truth,
+        scored_frames={0},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["truth_boxes"] == 1
+    assert metrics["predicted_boxes"] == 1
+    assert metrics["false_positives"] == 0
+    assert metrics["false_negatives"] == 0
+    assert metrics["recall"] == pytest.approx(1.0)
+
+
 def test_detection_metrics_accept_frame_box_truth_layout():
     truth = {
         "frames": [
