@@ -103,6 +103,29 @@ def test_real_label_metrics_ignore_fractional_detection_frame_indices(tmp_path):
     assert metrics.f1 is None
 
 
+def test_real_label_metrics_score_clean_empty_labeled_frames(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"frames": [{"frame_index": 0, "boxes": []}]}),
+        encoding="utf-8",
+    )
+
+    metrics = evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+    assert metrics.frames == 1
+    assert metrics.detection_boxes == 0
+    assert metrics.truth_boxes == 0
+    assert metrics.precision == 1.0
+    assert metrics.recall == 1.0
+    assert metrics.f1 == 1.0
+
+
 def test_real_label_metrics_zero_match_f1_is_zero_not_missing(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()

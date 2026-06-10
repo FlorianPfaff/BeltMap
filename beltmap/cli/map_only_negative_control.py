@@ -202,8 +202,12 @@ def _build_config(
         split_min_component_area_px=split_min_component_area,
         highpass_radius_px=args.highpass_radius_px,
         highpass_min_scale_gray=args.highpass_min_scale_gray,
-        crop_height_px=args.crop_height_px or _crop_height_from_defaults(output_config, metadata),
-        frame_count=None if args.frame_count is None or args.frame_count <= 0 else args.frame_count,
+        crop_height_px=(
+            args.crop_height_px
+            if args.crop_height_px is not None
+            else _crop_height_from_defaults(output_config, metadata)
+        ),
+        frame_count=None if args.frame_count is None or args.frame_count == 0 else args.frame_count,
         belt_velocity_px_per_frame=_belt_velocity_from_defaults(args, output_config, metadata),
         period_px=_period_from_defaults(args, output_config, metadata),
         noise_sigma=args.noise_sigma,
@@ -232,7 +236,7 @@ def _build_config(
             if args.track_filter_max_abs_x_velocity_px_per_frame is not None
             else _float_option(None, output_config, "track_filter_max_abs_x_velocity_px_per_frame", ("track_filter", "max_abs_x_velocity_px_per_frame"), 0.0)
         ),
-        long_track_length=args.long_track_length or 10,
+        long_track_length=args.long_track_length if args.long_track_length is not None else 10,
     )
 
 
@@ -278,10 +282,14 @@ def _float_option(
     nested_path: tuple[str, ...],
     default: float,
 ) -> float:
-    for value in (cli_value, _config_value(config, flat_name, nested_path), default):
+    config_value = _config_value(config, flat_name, nested_path)
+    for value in (cli_value, config_value, default):
+        if _is_missing(value):
+            continue
         parsed = _finite_float(value)
         if parsed is not None:
             return parsed
+        raise ValueError(f"{flat_name} must be finite")
     raise ValueError(f"{flat_name} must be finite")
 
 
@@ -292,10 +300,14 @@ def _int_option(
     nested_path: tuple[str, ...],
     default: int,
 ) -> int:
-    for value in (cli_value, _config_value(config, flat_name, nested_path), default):
-        parsed = _finite_float(value)
+    config_value = _config_value(config, flat_name, nested_path)
+    for value in (cli_value, config_value, default):
+        if _is_missing(value):
+            continue
+        parsed = _finite_int(value)
         if parsed is not None:
-            return int(parsed)
+            return parsed
+        raise ValueError(f"{flat_name} must be an integer")
     raise ValueError(f"{flat_name} must be an integer")
 
 
@@ -372,16 +384,13 @@ def _crop_height_from_defaults(
 
 def _region_height(value: Any) -> int | None:
     if isinstance(value, dict):
-        parsed = _finite_float(value.get("height"))
-        return None if parsed is None else int(parsed)
+        return _finite_int(value.get("height"))
     if isinstance(value, (list, tuple)) and len(value) == 4:
-        parsed = _finite_float(value[2])
-        return None if parsed is None else int(parsed)
+        return _finite_int(value[2])
     if isinstance(value, str):
         parts = [part.strip() for part in value.replace(";", ",").split(",")]
         if len(parts) == 4:
-            parsed = _finite_float(parts[2])
-            return None if parsed is None else int(parsed)
+            return _finite_int(parts[2])
     return None
 
 
@@ -406,6 +415,13 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _finite_int(value: Any) -> int | None:
+    parsed = _finite_float(value)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def _is_missing(value: Any) -> bool:

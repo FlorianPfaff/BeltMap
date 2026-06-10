@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import argparse
 import csv
 import json
 from pathlib import Path
@@ -5,10 +8,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from scripts.compare_raw_baselines import (
-    DETECTION_FIELDS,
-    load_existing_beltmap_detections,
-)
+from scripts import compare_raw_baselines as crb
 
 
 def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
@@ -17,6 +17,30 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def valid_args(**updates):
+    values = {
+        "belt_velocity_px_per_frame": 59.16,
+        "threshold": 5.0,
+        "low_threshold": None,
+        "min_area_px": 4,
+        "max_area_px": None,
+        "min_bbox_width_px": 3,
+        "min_bbox_height_px": 3,
+        "max_bbox_aspect_ratio": 4.0,
+        "min_bbox_extent": 0.15,
+        "split_min_projection_gap_px": 1,
+        "split_min_component_area_px": 4,
+        "min_track_length": 2,
+        "tracking_max_frame_gap": 2.0,
+        "track_filter_min_length": 5,
+        "track_filter_min_velocity_ratio_y": 0.0,
+        "track_filter_max_velocity_ratio_y": 1.1,
+        "track_filter_max_abs_x_velocity_px_per_frame": None,
+    }
+    values.update(updates)
+    return argparse.Namespace(**values)
 
 
 def test_load_existing_beltmap_detections_rejects_fractional_frame_stride(tmp_path):
@@ -31,13 +55,58 @@ def test_load_existing_beltmap_detections_rejects_fractional_frame_stride(tmp_pa
         json.dumps({"n_images": 1, "frame_stride": 1.5}),
         encoding="utf-8",
     )
-    write_csv(run_dir / "detections.csv", [], DETECTION_FIELDS)
+    write_csv(run_dir / "detections.csv", [], crb.DETECTION_FIELDS)
 
     with pytest.raises(ValueError, match="frame_stride"):
-        load_existing_beltmap_detections(
+        crb.load_existing_beltmap_detections(
             run_dir,
             paths=[image_path],
             image_dir=image_dir,
             current_frame_stride=1,
             strict_frame_match=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"threshold": float("nan")}, "--threshold must be finite"),
+        ({"belt_velocity_px_per_frame": float("nan")}, "--belt-velocity-px-per-frame must be finite"),
+        ({"low_threshold": 6.0}, "--low-threshold must be less than or equal"),
+        ({"tracking_max_frame_gap": float("nan")}, "--tracking-max-frame-gap must be finite"),
+        (
+            {"track_filter_min_velocity_ratio_y": 1.2, "track_filter_max_velocity_ratio_y": 1.0},
+            "--track-filter-min-velocity-ratio-y must be less than or equal",
+        ),
+    ],
+)
+def test_raw_baseline_numeric_args_reject_invalid_values(updates, message):
+    with pytest.raises(SystemExit, match=message):
+        crb.validate_numeric_args(valid_args(**updates))
+
+
+def test_raw_baseline_summary_preserves_zero_detections_per_frame(tmp_path):
+    crb.write_summary(
+        [
+            {
+                "label": "raw_zscore",
+                "source_run": "",
+                "same_tracker_recomputed": False,
+                "n_images": 4,
+                "n_detections": 0,
+                "detections_per_frame": 0.0,
+                "n_tracks": 0,
+                "n_velocity_estimates": 0,
+                "n_filtered_velocity_estimates": 0,
+                "detection_area_median_px": None,
+                "elapsed_s": 0.25,
+                "output_dir": str(tmp_path / "raw_zscore"),
+            }
+        ],
+        tmp_path,
+    )
+
+    report = (tmp_path / "raw_baseline_summary.md").read_text(encoding="utf-8")
+
+    assert "| raw_zscore | 0 | 0 | 0 | 0 | 0 |  | 0.2 |" in report
+    assert "nan" not in report.lower()

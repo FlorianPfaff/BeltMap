@@ -362,23 +362,37 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         raise ValueError("min_bbox_width_px must be positive when set")
     if config.min_bbox_height_px is not None and config.min_bbox_height_px < 1:
         raise ValueError("min_bbox_height_px must be positive when set")
-    if config.max_bbox_aspect_ratio is not None and config.max_bbox_aspect_ratio < 1.0:
+    if config.max_bbox_aspect_ratio is not None and (
+        not math.isfinite(config.max_bbox_aspect_ratio)
+        or config.max_bbox_aspect_ratio < 1.0
+    ):
         raise ValueError("max_bbox_aspect_ratio must be at least 1 when set")
-    if config.min_bbox_extent is not None and not (0.0 <= config.min_bbox_extent <= 1.0):
+    if config.min_bbox_extent is not None and (
+        not math.isfinite(config.min_bbox_extent)
+        or not (0.0 <= config.min_bbox_extent <= 1.0)
+    ):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
     if config.highpass_radius_px < 0:
         raise ValueError("highpass_radius_px must be non-negative")
-    if config.highpass_min_scale_gray <= 0:
+    if config.highpass_min_scale_gray <= 0 or not math.isfinite(config.highpass_min_scale_gray):
         raise ValueError("highpass_min_scale_gray must be positive")
     if config.crop_height_px is not None and config.crop_height_px < 1:
         raise ValueError("crop_height_px must be positive when set")
     if config.frame_count is not None and config.frame_count < 1:
         raise ValueError("frame_count must be positive when set")
-    if config.period_px is not None and config.period_px <= 0:
+    if config.belt_velocity_px_per_frame is not None and not math.isfinite(
+        config.belt_velocity_px_per_frame
+    ):
+        raise ValueError("belt_velocity_px_per_frame must be finite when set")
+    if config.period_px is not None and (
+        config.period_px <= 0 or not math.isfinite(config.period_px)
+    ):
         raise ValueError("period_px must be positive when set")
     if config.noise_sigma < 0 or not math.isfinite(config.noise_sigma):
         raise ValueError("noise_sigma must be finite and non-negative")
-    if config.max_match_distance_px is not None and config.max_match_distance_px <= 0:
+    if config.max_match_distance_px is not None and (
+        config.max_match_distance_px <= 0 or not math.isfinite(config.max_match_distance_px)
+    ):
         raise ValueError("max_match_distance_px must be positive when set")
     if config.tracking_max_frame_gap <= 0 or not math.isfinite(config.tracking_max_frame_gap):
         raise ValueError("tracking_max_frame_gap must be finite and positive")
@@ -386,6 +400,20 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         raise ValueError("min_track_length must be at least 2")
     if config.track_filter_min_length < 1:
         raise ValueError("track_filter_min_length must be positive")
+    if not math.isfinite(config.track_filter_min_velocity_ratio_y):
+        raise ValueError("track_filter_min_velocity_ratio_y must be finite")
+    if not math.isfinite(config.track_filter_max_velocity_ratio_y):
+        raise ValueError("track_filter_max_velocity_ratio_y must be finite")
+    if config.track_filter_min_velocity_ratio_y > config.track_filter_max_velocity_ratio_y:
+        raise ValueError(
+            "track_filter_min_velocity_ratio_y must be less than or equal to "
+            "track_filter_max_velocity_ratio_y"
+        )
+    if config.track_filter_max_abs_x_velocity_px_per_frame is not None and (
+        config.track_filter_max_abs_x_velocity_px_per_frame < 0
+        or not math.isfinite(config.track_filter_max_abs_x_velocity_px_per_frame)
+    ):
+        raise ValueError("track_filter_max_abs_x_velocity_px_per_frame must be non-negative when set")
     if config.long_track_length < 1:
         raise ValueError("long_track_length must be positive")
 

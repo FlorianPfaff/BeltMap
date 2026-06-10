@@ -255,9 +255,17 @@ def rows_from_tracklet_container(items: Any) -> list[dict[str, Any]]:
             nested = item.get(key)
             if isinstance(nested, list):
                 nested_rows = nested
+                if key == "frames":
+                    frame_rows, _frame_scored = rows_from_frame_container(nested)
+                    for row in frame_rows:
+                        if parent_tracklet_id is not None and tracklet_id_from_row(row) is None:
+                            row["tracklet_id"] = parent_tracklet_id
+                        rows.append(row)
+                    nested_rows = None
                 break
         if nested_rows is None:
-            rows.append(dict(item))
+            if not any(isinstance(item.get(key), list) for key in NESTED_BOX_KEYS):
+                rows.append(dict(item))
             continue
         for child in nested_rows:
             if not isinstance(child, dict):

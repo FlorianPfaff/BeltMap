@@ -121,6 +121,20 @@ def test_summarize_output_dir_reports_zero_for_present_empty_csv_fallbacks(
     assert "metadata.json" in summary["missing_files"]
 
 
+def test_summarize_output_dir_ignores_fractional_metadata_counts(tmp_path: Path) -> None:
+    output_dir = tmp_path / "fractional"
+    write_run(output_dir)
+    metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_detections"] = 4.5
+    metadata["n_tracks"] = 2.5
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    summary = summarize_output_dir(RunSpec(name="fractional", output_dir=output_dir))
+
+    assert summary["n_detections"] == 4
+    assert summary["n_tracks"] is None
+
+
 def test_write_evaluation_writes_json_csv_and_markdown(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline"
     eval_dir = tmp_path / "eval"

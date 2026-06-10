@@ -115,13 +115,14 @@ def scalar_from_sources(
     *keys: str,
     fallback: int | float | None = None,
 ) -> int | float | None:
+    """Return an integer metadata count, falling back when metadata is malformed."""
+
     for key in keys:
         value = finite_float(metadata.get(key))
         if value is None:
             continue
         if float(value).is_integer():
             return int(value)
-        return value
     return fallback
 
 

@@ -137,6 +137,22 @@ def test_filter_tracks_accepts_float_formatted_track_ids(tmp_path):
     assert [row["track_id"] for row in filtered_track_rows] == ["0.0"]
 
 
+def test_filter_tracks_rejects_fractional_velocity_counts(tmp_path):
+    make_velocities(tmp_path)
+    velocity_rows = list(csv.DictReader((tmp_path / "velocities.csv").open()))
+    velocity_rows[0]["n_detections"] = "6.5"
+    write_csv(tmp_path / "velocities.csv", velocity_rows)
+
+    with pytest.raises(ValueError, match="n_detections must be an integer"):
+        cli_filter_tracks.filter_tracks(
+            tmp_path,
+            config=cli_filter_tracks.TrackFilterConfig(
+                min_track_length=5,
+                max_velocity_ratio_y=1.1,
+            ),
+        )
+
+
 def test_filter_tracks_cli_treats_zero_lateral_gate_as_disabled(tmp_path, capsys):
     make_velocities(tmp_path)
 
@@ -317,3 +333,53 @@ def test_filter_tracks_reconstructs_missing_track_membership(tmp_path):
     assert (tmp_path / "tracks.csv").is_file()
     filtered_track_rows = list(csv.DictReader((tmp_path / "filtered_tracks.csv").open()))
     assert [row["frame_index"] for row in filtered_track_rows] == ["0", "1"]
+
+
+def test_filter_tracks_rejects_fractional_detection_frame_when_reconstructing_tracks(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "metadata.json").write_text(
+        json.dumps({"belt_velocity_px_per_frame": 5.0}),
+        encoding="utf-8",
+    )
+    write_csv(
+        tmp_path / "velocities.csv",
+        [
+            {
+                "track_id": 0,
+                "n_detections": 1,
+                "frame_start": 0,
+                "frame_end": 0,
+                "velocity_y_px_per_frame": 4.0,
+                "velocity_x_px_per_frame": 0.0,
+                "speed_px_per_frame": 4.0,
+                "belt_velocity_y_px_per_frame": 5.0,
+                "velocity_ratio_y": 0.8,
+                "belt_minus_particle_velocity_y_px_per_frame": 1.0,
+            },
+        ],
+    )
+    write_csv(
+        tmp_path / "detections.csv",
+        [
+            {
+                "frame_index": "0.5",
+                "image": "frame0.bmp",
+                "label": 1,
+                "y": 10.0,
+                "x": 5.0,
+                "area_px": 6,
+                "bbox_top": 9,
+                "bbox_left": 4,
+                "bbox_bottom": 12,
+                "bbox_right": 7,
+                "mean_signal": 4.5,
+                "peak_signal": 7.5,
+            },
+        ],
+    )
+
+    with pytest.raises(ValueError, match="frame_index must be an integer"):
+        cli_filter_tracks.filter_tracks(
+            tmp_path,
+            config=cli_filter_tracks.TrackFilterConfig(min_track_length=1),
+        )
