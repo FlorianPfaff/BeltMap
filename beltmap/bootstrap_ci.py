@@ -212,7 +212,7 @@ def labeled_frame_outcomes(
     pred_by_frame = group_detection_boxes(
         [dict(row) for row in detection_rows if source_frame_index(dict(row)) in scored_frames]
     )
-    frame_indices = sorted(scored_frames | set(truth_by_frame) | set(pred_by_frame))
+    frame_indices = sorted(scored_frames)
     outcomes: list[LabeledFrameOutcome] = []
 
     for frame_index in frame_indices:
