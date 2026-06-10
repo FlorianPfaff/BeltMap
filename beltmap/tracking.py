@@ -1385,6 +1385,11 @@ def _fit_slope(times: FloatArray, values: FloatArray, *, method: str) -> float:
 
 
 def _linear_slope(times: FloatArray, values: FloatArray) -> float:
+    finite = np.isfinite(times) & np.isfinite(values)
+    times = np.asarray(times[finite], dtype=np.float64)
+    values = np.asarray(values[finite], dtype=np.float64)
+    if np.unique(times).size < 2:
+        raise ValueError("at least two distinct frame indices are required")
     centered_times = times - float(np.mean(times))
     denominator = float(np.sum(np.square(centered_times)))
     if denominator <= 0:
