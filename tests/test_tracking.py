@@ -241,6 +241,14 @@ def test_velocity_extraction_skips_tracks_without_finite_fit_points():
     assert velocities[0].velocity_ratio_y == 0.5
 
 
+def test_track_particle_detections_rejects_nonfinite_frame_indices():
+    with pytest.raises(ValueError, match="frame_indices must be finite"):
+        track_particle_detections(
+            [[]],
+            frame_indices=[float("nan")],
+        )
+
+
 @pytest.mark.parametrize("min_track_length", [float("nan"), 2.5])
 def test_estimate_particle_velocities_rejects_invalid_min_track_length(min_track_length):
     with pytest.raises(ValueError, match="min_track_length"):

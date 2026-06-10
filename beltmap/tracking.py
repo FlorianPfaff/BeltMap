@@ -277,6 +277,8 @@ def track_particle_detections(
     )
     if len(effective_frame_indices) != len(detections_by_frame):
         raise ValueError("frame_indices must have the same length as detections_by_frame")
+    if not all(np.isfinite(index) for index in effective_frame_indices):
+        raise ValueError("frame_indices must be finite")
 
     tracks: list[list[ParticleDetection]] = []
     active_track_ids: list[int] = []
