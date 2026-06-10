@@ -3,11 +3,13 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from beltmap.cli import map_only_negative_control as cli_map_only_negative_control
 from beltmap.map_only_negative_control import (
     MapOnlyNegativeControlConfig,
     generate_map_only_negative_control_report,
+    load_phase_samples,
 )
 
 
@@ -93,6 +95,29 @@ def test_map_only_negative_control_flat_map_has_no_ghosts(tmp_path):
     with result.artifacts.detections.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert rows == []
+
+
+def test_load_phase_samples_rejects_fractional_frame_indices(tmp_path):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(
+        "frame_index,image,phase_px\n0.5,frame_000000.png,0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-integer frame_index"):
+        load_phase_samples(phase_path)
+
+
+def test_load_phase_samples_uses_sequence_order_for_blank_frame_indices(tmp_path):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(
+        "frame_index,image,phase_px\n,frame_000000.png,0\n",
+        encoding="utf-8",
+    )
+
+    samples = load_phase_samples(phase_path)
+
+    assert samples[0].frame_index == 0.0
 
 
 def test_map_only_negative_control_cli_writes_metrics(tmp_path):

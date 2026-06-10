@@ -326,9 +326,16 @@ def load_phase_samples(
             phase = _finite_float(row.get("phase_px"))
             if phase is None:
                 raise ValueError(f"non-finite phase_px in {path} row {row_number + 2}")
-            frame = _finite_float(row.get("frame_index"))
-            if frame is None:
+            raw_frame = row.get("frame_index")
+            if raw_frame is None or str(raw_frame).strip() == "":
                 frame = float(len(samples))
+            else:
+                frame_index = _finite_int(raw_frame)
+                if frame_index is None:
+                    raise ValueError(
+                        f"non-integer frame_index in {path} row {row_number + 2}"
+                    )
+                frame = float(frame_index)
             image = row.get("image", "").strip() or f"map_only_frame_{len(samples):06d}.png"
             samples.append(
                 PhaseSample(
@@ -812,6 +819,13 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _finite_int(value: Any) -> int | None:
+    parsed = _finite_float(value)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def _finite_or_none(value: Any) -> float | None:
