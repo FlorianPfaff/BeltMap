@@ -282,10 +282,14 @@ def _float_option(
     nested_path: tuple[str, ...],
     default: float,
 ) -> float:
-    for value in (cli_value, _config_value(config, flat_name, nested_path), default):
+    config_value = _config_value(config, flat_name, nested_path)
+    for value in (cli_value, config_value, default):
+        if _is_missing(value):
+            continue
         parsed = _finite_float(value)
         if parsed is not None:
             return parsed
+        raise ValueError(f"{flat_name} must be finite")
     raise ValueError(f"{flat_name} must be finite")
 
 

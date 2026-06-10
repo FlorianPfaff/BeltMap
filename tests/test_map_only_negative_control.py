@@ -154,6 +154,17 @@ def test_map_only_cli_rejects_fractional_integer_config_options():
         )
 
 
+def test_map_only_cli_rejects_nonfinite_float_config_options():
+    with pytest.raises(ValueError, match="detection_threshold must be finite"):
+        cli_map_only_negative_control._float_option(
+            None,
+            {"options": {"detection_threshold": {"value": "nan"}}},
+            "detection_threshold",
+            ("detection", "threshold"),
+            5.0,
+        )
+
+
 def test_map_only_cli_ignores_fractional_crop_region_height():
     assert cli_map_only_negative_control._region_height(
         {"top": 0, "left": 0, "height": "12.5", "width": 40}
@@ -166,6 +177,7 @@ def test_map_only_cli_ignores_fractional_crop_region_height():
         ("--long-track-length", "0", "long_track_length must be positive"),
         ("--frame-count", "-1", "frame_count must be positive"),
         ("--crop-height-px", "0", "crop_height_px must be positive"),
+        ("--threshold", "nan", "detection_threshold must be finite"),
     ],
 )
 def test_map_only_cli_rejects_explicit_invalid_integer_values(
