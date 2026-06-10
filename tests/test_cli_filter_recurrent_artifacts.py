@@ -78,6 +78,23 @@ def test_load_phase_px_by_frame_does_not_truncate_fractional_frames(tmp_path):
         fra.load_phase_px_by_frame(phase_path, frame_count=1)
 
 
+def test_infer_region_rejects_fractional_metadata_dimensions():
+    with pytest.raises(ValueError, match="belt_region.height must be an integer"):
+        fra.infer_region(
+            {"belt_region": {"top": 0, "left": 0, "height": "5.5", "width": 10}},
+            {},
+        )
+
+
+def test_int_option_rejects_fractional_config_values():
+    with pytest.raises(ValueError, match="min_track_length must be an integer"):
+        fra.int_option(
+            {"options": {"min_track_length": {"value": "2.5"}}},
+            "min_track_length",
+            2,
+        )
+
+
 def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_path):
     input_dir = tmp_path / "source"
     output_dir = tmp_path / "filtered"

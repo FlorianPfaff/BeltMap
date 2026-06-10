@@ -367,14 +367,17 @@ def infer_region(metadata: dict[str, Any], config: dict[str, Any]) -> tuple[int,
     region = metadata.get("belt_region")
     if isinstance(region, dict):
         return (
-            int(region["top"]),
-            int(region["left"]),
-            int(region["height"]),
-            int(region["width"]),
+            parse_required_int(region["top"], name="belt_region.top"),
+            parse_required_int(region["left"], name="belt_region.left"),
+            parse_required_int(region["height"], name="belt_region.height"),
+            parse_required_int(region["width"], name="belt_region.width"),
         )
     value = option_value(config, "belt_region")
     if value:
-        parts = [int(part.strip()) for part in value.split(",")]
+        parts = [
+            parse_required_int(part.strip(), name="belt_region")
+            for part in value.split(",")
+        ]
         if len(parts) == 4:
             return tuple(parts)  # type: ignore[return-value]
     raise ValueError("cannot infer belt region from metadata/config_resolved.json")
@@ -397,7 +400,7 @@ def optional_nonnegative_float(value: float | None, *, name: str) -> float | Non
 
 def int_option(config: dict[str, Any], name: str, default: int) -> int:
     value = option_value(config, name)
-    return default if value is None else int(float(value))
+    return default if value is None else parse_required_int(value, name=name)
 
 
 def float_option(config: dict[str, Any], name: str, default: float) -> float:
@@ -548,7 +551,10 @@ def filter_recurrent_artifacts(
     detection_rows = read_csv_rows(input_dir / "detections.csv")
     frame_count = infer_frame_count(metadata, detection_rows)
     region = infer_region(metadata, config)
-    map_height = int(metadata.get("belt_map_height_px") or metadata.get("belt_period_px_input") or region[2])
+    map_height = parse_required_int(
+        metadata.get("belt_map_height_px") or metadata.get("belt_period_px_input") or region[2],
+        name="belt_map_height_px",
+    )
     detection_threshold = float(
         metadata.get("detection_threshold", option_value(config, "detection_threshold") or 0.0)
     )
@@ -651,7 +657,10 @@ def filter_recurrent_artifacts(
         or str(metadata.get("tracking_velocity_fit_method") or option_value(config, "tracking_velocity_fit_method") or "linear")
     )
     track_filter_config = track_filter_config or TrackFilterConfig(
-        min_track_length=int(metadata.get("track_filter_min_length", max(5, min_track_length))),
+        min_track_length=parse_required_int(
+            metadata.get("track_filter_min_length", max(5, min_track_length)),
+            name="track_filter_min_length",
+        ),
         min_velocity_ratio_y=float(metadata.get("track_filter_min_velocity_ratio_y", 0.0)),
         max_velocity_ratio_y=float(metadata.get("track_filter_max_velocity_ratio_y", 1.1)),
         max_abs_x_velocity_px_per_frame=metadata.get("track_filter_max_abs_x_velocity_px_per_frame"),
