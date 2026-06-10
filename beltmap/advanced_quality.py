@@ -435,12 +435,9 @@ def detection_boxes_by_frame(output_dir: Path) -> dict[int, list[dict[str, float
             frame = finite_int(row["frame_index"])
             if frame is None:
                 continue
-            box = {
-                "top": float(row["bbox_top"]),
-                "left": float(row["bbox_left"]),
-                "bottom": float(row["bbox_bottom"]),
-                "right": float(row["bbox_right"]),
-            }
+            box = _parse_detection_box(row)
+            if box is None:
+                continue
         except (KeyError, TypeError, ValueError):
             continue
         grouped.setdefault(frame, []).append(box)
@@ -511,6 +508,21 @@ def _parse_real_label_box(box: Mapping[str, Any]) -> dict[str, float]:
         raise ValueError("label box coordinates must be finite")
     if bottom <= top or right <= left:
         raise ValueError("label boxes must have positive half-open area")
+    return {"top": top, "left": left, "bottom": bottom, "right": right}
+
+
+def _parse_detection_box(row: Mapping[str, Any]) -> dict[str, float] | None:
+    values = [
+        finite_float(row.get(key))
+        for key in ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right")
+    ]
+    if any(value is None for value in values):
+        return None
+    top, left, bottom, right = values
+    assert top is not None and left is not None
+    assert bottom is not None and right is not None
+    if bottom <= top or right <= left:
+        return None
     return {"top": top, "left": left, "bottom": bottom, "right": right}
 
 

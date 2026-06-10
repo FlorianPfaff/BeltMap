@@ -268,6 +268,8 @@ def parse_detection_records(rows: Iterable[dict[str, Any]]) -> list[DetectionRec
         assert x is not None and y is not None
         assert top is not None and left is not None
         assert bottom is not None and right is not None
+        if bottom <= top or right <= left:
+            continue
         records.append(
             DetectionRecord(
                 frame_index=frame_index,

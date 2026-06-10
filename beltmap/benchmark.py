@@ -257,6 +257,8 @@ def bbox_from_detection(row: dict[str, Any]) -> dict[str, float] | None:
     top, left, bottom, right = values
     assert top is not None and left is not None
     assert bottom is not None and right is not None
+    if bottom <= top or right <= left:
+        return None
     box = {"top": top, "left": left, "bottom": bottom, "right": right}
     y = finite_float(row.get("y"))
     x = finite_float(row.get("x"))

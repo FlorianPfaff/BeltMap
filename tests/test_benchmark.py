@@ -320,6 +320,31 @@ def test_detection_metrics_restricts_counts_to_scored_frames():
     assert metrics["recall"] == pytest.approx(1.0)
 
 
+def test_detection_metrics_ignores_degenerate_detection_boxes():
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "10",
+            "bbox_left": "0",
+            "bbox_bottom": "10",
+            "bbox_right": "10",
+            "y": "10",
+            "x": "5",
+        }
+    ]
+
+    metrics = detection_metrics(
+        detections,
+        {"particles": []},
+        scored_frames={0},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["predicted_boxes"] == 0
+    assert metrics["false_positives"] == 0
+    assert metrics["precision"] == pytest.approx(1.0)
+
+
 def test_detection_metrics_accept_frame_box_truth_layout():
     truth = {
         "frames": [
