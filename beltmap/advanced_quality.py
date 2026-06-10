@@ -504,14 +504,19 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
             ty, tx = _box_centroid(truth_boxes[t_idx])
             dy, dx = _box_centroid(frame_detections[d_idx])
             centroid_errors.append(float(math.hypot(ty - dy, tx - dx)))
-    precision = None if detection_count == 0 else matches / detection_count
-    recall = None if truth_count == 0 else matches / truth_count
-    if precision is None or recall is None:
-        f1 = None
-    elif precision + recall == 0:
-        f1 = 0.0
+    if detection_count == 0 and truth_count == 0:
+        precision = 1.0
+        recall = 1.0
+        f1 = 1.0
     else:
-        f1 = 2.0 * precision * recall / (precision + recall)
+        precision = None if detection_count == 0 else matches / detection_count
+        recall = None if truth_count == 0 else matches / truth_count
+        if precision is None or recall is None:
+            f1 = None
+        elif precision + recall == 0:
+            f1 = 0.0
+        else:
+            f1 = 2.0 * precision * recall / (precision + recall)
     return RealLabelMetrics(
         frames=len(truth),
         truth_boxes=truth_count,
