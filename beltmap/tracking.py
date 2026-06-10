@@ -655,8 +655,13 @@ def estimate_particle_velocities_vs_belt(
             continue
         ys = np.asarray([d.y for d in track.detections], dtype=np.float64)
         xs = np.asarray([d.x for d in track.detections], dtype=np.float64)
-        vy = _fit_slope(frames, ys, method=fit_method)
-        vx = _fit_slope(frames, xs, method=fit_method)
+        try:
+            vy = _fit_slope(frames, ys, method=fit_method)
+            vx = _fit_slope(frames, xs, method=fit_method)
+        except ValueError:
+            continue
+        if not np.isfinite(vy) or not np.isfinite(vx):
+            continue
         velocities.append(
             ParticleVelocity(
                 track_id=track.track_id,
