@@ -259,7 +259,9 @@ def finite_int(value: Any) -> int | None:
     """Parse an integer value through finite-float handling."""
 
     parsed = finite_float(value)
-    return None if parsed is None else int(parsed)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def nonempty_value(row: dict[str, Any], key: str) -> Any | None:
@@ -944,7 +946,7 @@ def summarize_run(
         "label": data.spec.label,
         "output_dir": str(data.spec.output_dir),
         "complete": (data.spec.output_dir / "metadata.json").is_file(),
-        "n_images": data.metadata.get("n_images") or len(data.detections_per_frame) or None,
+        "n_images": metadata_or_count(data, "n_images", data.detections_per_frame),
         "detection_threshold": detection_threshold,
         "n_detections": metadata_or_count(data, "n_detections", data.detections),
         "n_tracks": data.metadata.get("n_tracks"),

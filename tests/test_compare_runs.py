@@ -9,6 +9,7 @@ from beltmap.cli import compare as cli_compare
 from beltmap.compare_runs import (
     RunSpec,
     detection_froc_curve,
+    finite_int,
     generate_comparison_report,
     parse_run_spec,
 )
@@ -115,6 +116,12 @@ def test_parse_run_spec_supports_label_and_default_label():
     assert parse_run_spec("outputs/T4p0") == RunSpec("T4p0", Path("outputs/T4p0"))
 
 
+def test_finite_int_rejects_fractional_values():
+    assert finite_int("7") == 7
+    assert finite_int("7.0") == 7
+    assert finite_int("7.5") is None
+
+
 def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"
@@ -150,6 +157,25 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     assert rows[0]["small_accepted_tracks_lt_50"] == "1"
     assert rows[0]["near_threshold_peak_share"] == "1.0"
     assert "small accepted tracks" in report
+
+
+def test_generate_comparison_report_preserves_zero_image_metadata(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=2)
+    metadata_path = run_a / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["n_images"] = 0
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+    )
+
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["n_images"] == "0"
 
 
 def test_generate_comparison_report_includes_fixed_and_raw_preview_sheets(tmp_path):

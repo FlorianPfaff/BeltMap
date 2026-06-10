@@ -4,6 +4,9 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
+from beltmap.cli import filter_recurrent_artifacts as fra
 from beltmap.cli.filter_recurrent_artifacts import main
 
 
@@ -32,6 +35,47 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def detection_row(**updates):
+    row = {
+        "frame_index": 0,
+        "image": "frame_0.png",
+        "label": 1,
+        "y": 1.5,
+        "x": 1.5,
+        "area_px": 1,
+        "bbox_top": 1,
+        "bbox_left": 1,
+        "bbox_bottom": 2,
+        "bbox_right": 2,
+        "mean_signal": 6.0,
+        "peak_signal": 6.0,
+        "recurrent_artifact_overlap_fraction": "",
+        "recurrent_artifact_probability": "",
+        "recurrent_artifact_required_peak_signal": "",
+    }
+    row.update(updates)
+    return row
+
+
+def test_group_detections_rejects_fractional_frame_indices():
+    with pytest.raises(ValueError, match="frame_index must be an integer-valued field"):
+        fra.group_detections([detection_row(frame_index="0.5")], frame_count=1)
+
+
+def test_load_phase_px_by_frame_does_not_truncate_fractional_frames(tmp_path):
+    phase_path = tmp_path / "phase_estimates.csv"
+    write_csv(
+        phase_path,
+        [
+            {"frame_index": "0.5", "phase_px": 2.0},
+        ],
+        ["frame_index", "phase_px"],
+    )
+
+    with pytest.raises(ValueError, match="missing 1 frames"):
+        fra.load_phase_px_by_frame(phase_path, frame_count=1)
 
 
 def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_path):

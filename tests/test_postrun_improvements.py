@@ -19,6 +19,23 @@ def test_uncertainty_from_counts_marks_unobserved_rows():
     assert uncertainty[2] == 1.0
 
 
+def test_finite_int_rejects_fractional_values():
+    assert pri.finite_int("7") == 7
+    assert pri.finite_int("7.0") == 7
+    assert pri.finite_int("7.5") is None
+
+
+def test_detection_count_by_frame_ignores_fractional_frame_indices(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections_per_frame.csv").write_text(
+        "frame_index,n_detections\n0.5,7\n1,2\n",
+        encoding="utf-8",
+    )
+
+    assert pri.detection_count_by_frame(out) == {1: 2}
+
+
 def test_map_uncertainty_creates_explicit_report_dir(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
@@ -63,6 +80,37 @@ def test_quality_contract_uses_metadata_registration_search_radius(tmp_path):
     (out / "filtered_velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
 
     results = pri.evaluate_quality_contract(out, {"max_registration_boundary_share": 0.05})
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
+
+
+def test_postrun_quality_flags_preserve_zero_detection_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
+
+    flags = pri.quality_flags_from_outputs(out)
+
+    flag = next(flag for flag in flags if flag.code == "heavy_recurrent_filtering")
+    assert flag.value == 1.0
+
+
+def test_quality_contract_preserves_zero_detection_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(out, {"max_recurrent_rejection_share": 0.75})
 
     assert len(results) == 1
     assert not results[0].passed

@@ -111,6 +111,32 @@ def test_filter_tracks_writes_scores_and_filtered_velocities(tmp_path, capsys):
     assert [row["accepted"] for row in score_rows] == ["True", "False"]
 
 
+def test_filter_tracks_accepts_float_formatted_track_ids(tmp_path):
+    make_velocities(tmp_path)
+    velocity_rows = list(csv.DictReader((tmp_path / "velocities.csv").open()))
+    for row in velocity_rows:
+        row["track_id"] = f"{float(row['track_id']):.1f}"
+        row["n_detections"] = f"{float(row['n_detections']):.1f}"
+    write_csv(tmp_path / "velocities.csv", velocity_rows)
+    track_rows = list(csv.DictReader((tmp_path / "tracks.csv").open()))
+    for row in track_rows:
+        row["track_id"] = f"{float(row['track_id']):.1f}"
+    write_csv(tmp_path / "tracks.csv", track_rows)
+
+    payload = cli_filter_tracks.filter_tracks(
+        tmp_path,
+        config=cli_filter_tracks.TrackFilterConfig(
+            min_track_length=5,
+            max_velocity_ratio_y=1.1,
+        ),
+    )
+
+    assert payload["accepted_velocity_estimates"] == 1
+    assert payload["accepted_track_detection_rows"] == 1
+    filtered_track_rows = list(csv.DictReader((tmp_path / "filtered_tracks.csv").open()))
+    assert [row["track_id"] for row in filtered_track_rows] == ["0.0"]
+
+
 def test_filter_tracks_cli_treats_zero_lateral_gate_as_disabled(tmp_path, capsys):
     make_velocities(tmp_path)
 

@@ -431,7 +431,9 @@ def detection_boxes_by_frame(output_dir: Path) -> dict[int, list[dict[str, float
     grouped: dict[int, list[dict[str, float]]] = {}
     for row in rows:
         try:
-            frame = int(float(row["frame_index"]))
+            frame = finite_int(row["frame_index"])
+            if frame is None:
+                continue
             box = {
                 "top": float(row["bbox_top"]),
                 "left": float(row["bbox_left"]),
@@ -459,7 +461,9 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
         raise ValueError("label JSON must contain a 'frames' list")
     result: dict[int, list[dict[str, float]]] = {}
     for frame in frames:
-        frame_index = int(frame["frame_index"])
+        frame_index = finite_int(frame.get("frame_index"))
+        if frame_index is None:
+            continue
         boxes = []
         for box in frame.get("boxes", []):
             boxes.append({key: float(box[key]) for key in ("top", "left", "bottom", "right")})
@@ -533,6 +537,13 @@ def finite_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def finite_int(value: Any) -> int | None:
+    parsed = finite_float(value)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
 def quality_flags(output_dir: Path) -> dict[str, Any]:
     """Return machine-readable warnings for common poor-result modes."""
 
@@ -566,10 +577,18 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     if ratios.size and float(np.mean((0.0 <= ratios) & (ratios <= 1.1))) < 0.5:
         flags.append({"severity": "warning", "code": "implausible_velocity_ratios", "message": "many velocity ratios are outside the expected belt-relative interval", "share_0_to_1p1": float(np.mean((0.0 <= ratios) & (ratios <= 1.1)))})
 
-    recurrent_rejected = int(metadata.get("n_recurrent_artifact_rejected") or 0)
-    n_detections = int(metadata.get("n_detections") or len(detections))
-    if recurrent_rejected and n_detections and recurrent_rejected / max(1, recurrent_rejected + n_detections) > 0.75:
-        flags.append({"severity": "info", "code": "heavy_recurrent_filtering", "message": "recurrent artifact filtering rejected most first-pass detections", "rejected": recurrent_rejected})
+    recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
+    metadata_detection_count = finite_int(metadata.get("n_detections"))
+    n_detections = (
+        metadata_detection_count
+        if metadata_detection_count is not None
+        else len(detections)
+    )
+    recurrent_denominator = recurrent_rejected + n_detections
+    if recurrent_denominator > 0:
+        recurrent_share = recurrent_rejected / recurrent_denominator
+        if recurrent_share > 0.75:
+            flags.append({"severity": "info", "code": "heavy_recurrent_filtering", "message": "recurrent artifact filtering rejected most first-pass detections", "rejected": recurrent_rejected, "share": recurrent_share})
 
     return {"output_dir": str(output_dir), "metadata_present": bool(metadata), "flags": flags}
 
