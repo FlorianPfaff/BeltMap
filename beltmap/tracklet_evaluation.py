@@ -21,9 +21,16 @@ TRACKLET_ID_KEYS = (
 )
 PREDICTION_ID_KEYS = ("track_id", "tracklet_id", "particle_id", "event_id", "id")
 FRAME_KEYS = ("frame_index", "frame", "image_index")
-SCORED_FRAME_KEYS = ("scored_frames", "labeled_frames", "frames")
+SCORED_FRAME_KEYS = (
+    "scored_frames",
+    "labeled_frames",
+    "frames",
+    "empty_frames",
+    "frame_reviews",
+)
 TRACKLET_CONTAINER_KEYS = ("tracklets", "tracks", "annotations", "particles", "labels")
 NESTED_BOX_KEYS = ("boxes", "frames", "detections")
+REVIEWED_GROUND_TRUTH_STATUS = "reviewed_ground_truth"
 BOX_FIELD_SETS = (
     ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right"),
     ("top", "left", "bottom", "right"),
@@ -137,6 +144,35 @@ def parse_frame_set(value: Any) -> set[int]:
         if frame_index is not None:
             frames.add(frame_index)
     return frames
+
+
+def boolean_review_flag(value: Any) -> bool:
+    """Parse common JSON review flags without treating ``"false"`` as true."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "n"}:
+            return False
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+    return bool(value)
+
+
+def validate_reviewed_truth_status(data: dict[str, Any]) -> None:
+    """Reject tracklet label scaffolds that still declare pending review."""
+
+    status = data.get("status")
+    requires_manual_review = data.get("requires_manual_review")
+    if status is None and requires_manual_review is None:
+        return
+    if status != REVIEWED_GROUND_TRUTH_STATUS or boolean_review_flag(
+        requires_manual_review
+    ):
+        raise ValueError(
+            "tracklet truth JSON is not reviewed ground truth; set status="
+            f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
+            "only after all scored frames have been reviewed"
+        )
 
 
 def tracklet_id_from_row(
@@ -273,7 +309,7 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
 
     rows: list[dict[str, Any]] = []
     scored_frames: set[int] = set()
-    for key in ("scored_frames", "labeled_frames"):
+    for key in SCORED_FRAME_KEYS:
         scored_frames.update(parse_frame_set(data.get(key)))
 
     frame_rows, frame_scored = rows_from_frame_container(data.get("frames"))
@@ -304,7 +340,10 @@ def load_tracklet_truth(path: Path) -> TrackletTruth:
         rows: list[dict[str, Any]] = list(read_csv_rows(path))
         scored_frames: set[int] = set()
     elif suffix == ".json":
-        rows, scored_frames = label_rows_from_json(json.loads(path.read_text(encoding="utf-8")))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            validate_reviewed_truth_status(data)
+        rows, scored_frames = label_rows_from_json(data)
     else:
         raise ValueError("tracklet labels must be a CSV or JSON file")
 

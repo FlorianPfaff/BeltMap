@@ -211,3 +211,49 @@ def test_tracklet_truth_loader_accepts_json_tracklet_container(tmp_path):
 
     assert sorted(truth.scored_frames) == [10, 11, 12]
     assert [box.tracklet_id for box in truth.boxes] == ["p01", "p01"]
+
+
+def test_tracklet_truth_rejects_unreviewed_json_scaffold(tmp_path):
+    label_path = tmp_path / "tracklets.json"
+    label_path.write_text(
+        json.dumps(
+            {
+                "status": "template_not_ground_truth_do_not_use_for_metrics_until_filled",
+                "requires_manual_review": True,
+                "scored_frames": [10],
+                "tracklets": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="reviewed_ground_truth"):
+        load_tracklet_truth(label_path)
+
+
+def test_tracklet_truth_loader_counts_reviewed_empty_frame_metadata(tmp_path):
+    label_path = tmp_path / "tracklets.json"
+    label_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "tracklets": [
+                    {
+                        "tracklet_id": "p01",
+                        "boxes": [
+                            {"frame_index": 10, "top": 1, "left": 2, "bottom": 5, "right": 8},
+                        ],
+                    }
+                ],
+                "empty_frames": [12],
+                "frame_reviews": [{"frame_index": 13, "review_status": "reviewed_empty"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    truth = load_tracklet_truth(label_path)
+
+    assert sorted(truth.scored_frames) == [10, 12, 13]
+    assert [box.tracklet_id for box in truth.boxes] == ["p01"]
