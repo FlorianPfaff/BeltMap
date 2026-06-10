@@ -811,7 +811,12 @@ def detection_froc_curve(
         if score_field is not None or not detection_rows
         else incomplete_score_row_count(detection_rows, score_fields=score_fields)
     )
-    empty_metrics = detection_metrics([], truth, iou_threshold=iou_threshold)
+    empty_metrics = detection_metrics(
+        [],
+        truth,
+        iou_threshold=iou_threshold,
+        scored_frames=scored_frames,
+    )
     truth_boxes = int(empty_metrics.get("truth_boxes") or 0)
     points = [
         froc_point_from_metrics(
@@ -834,7 +839,12 @@ def detection_froc_curve(
                 if (score := finite_float(row.get(score_field))) is not None
                 and score >= threshold
             ]
-            metrics = detection_metrics(kept_rows, truth, iou_threshold=iou_threshold)
+            metrics = detection_metrics(
+                kept_rows,
+                truth,
+                iou_threshold=iou_threshold,
+                scored_frames=scored_frames,
+            )
             points.append(
                 froc_point_from_metrics(
                     metrics,
@@ -843,7 +853,12 @@ def detection_froc_curve(
                 )
             )
     elif detection_rows:
-        metrics = detection_metrics(detection_rows, truth, iou_threshold=iou_threshold)
+        metrics = detection_metrics(
+            detection_rows,
+            truth,
+            iou_threshold=iou_threshold,
+            scored_frames=scored_frames,
+        )
         points.append(
             froc_point_from_metrics(
                 metrics,
@@ -947,6 +962,17 @@ def metadata_or_count(data: RunData, key: str, rows: list[Any]) -> int | None:
     return int(value)
 
 
+def metadata_count_or_none(data: RunData, key: str) -> int | None:
+    """Return a validated metadata count, or ``None`` when it is absent."""
+
+    if key not in data.metadata:
+        return None
+    value = finite_float(data.metadata.get(key))
+    if value is None or value < 0 or not value.is_integer():
+        raise ValueError(f"metadata {key!r} must be a non-negative integer-like value")
+    return int(value)
+
+
 def empty_labeled_metrics() -> dict[str, Any]:
     """Return blank labeled-target metrics for proxy-only comparisons."""
 
@@ -1032,7 +1058,7 @@ def summarize_run(
         "n_images": metadata_or_count(data, "n_images", data.detections_per_frame),
         "detection_threshold": detection_threshold,
         "n_detections": metadata_or_count(data, "n_detections", data.detections),
-        "n_tracks": data.metadata.get("n_tracks"),
+        "n_tracks": metadata_count_or_none(data, "n_tracks"),
         "n_velocity_estimates": metadata_or_count(data, "n_velocity_estimates", data.velocities),
         "n_filtered_velocity_estimates": metadata_or_count(
             data,

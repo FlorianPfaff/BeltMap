@@ -55,16 +55,26 @@ class RegistrationQualityGateConfig:
             raise ValueError(
                 "RegistrationQualityGateConfig.action must already be normalized"
             )
-        if self.min_score is not None and self.min_score < 0:
-            raise ValueError("min_score must be non-negative when set")
-        if self.min_loss_gap_ratio is not None and self.min_loss_gap_ratio < 0:
-            raise ValueError("min_loss_gap_ratio must be non-negative when set")
-        if self.max_uncertainty_px is not None and self.max_uncertainty_px < 0:
-            raise ValueError("max_uncertainty_px must be non-negative when set")
-        if self.max_abs_correction_px is not None and self.max_abs_correction_px < 0:
-            raise ValueError("max_abs_correction_px must be non-negative when set")
+        _validate_optional_non_negative(self.min_score, "min_score")
+        _validate_optional_non_negative(
+            self.min_loss_gap_ratio,
+            "min_loss_gap_ratio",
+        )
+        _validate_optional_non_negative(
+            self.max_uncertainty_px,
+            "max_uncertainty_px",
+        )
+        _validate_optional_non_negative(
+            self.max_abs_correction_px,
+            "max_abs_correction_px",
+        )
+        _require_finite(self.noise_inflation_factor, "noise_inflation_factor")
         if self.noise_inflation_factor < 1.0:
             raise ValueError("noise_inflation_factor must be at least 1")
+        _require_finite(
+            self.uncertainty_inflation_scale,
+            "uncertainty_inflation_scale",
+        )
         if self.uncertainty_inflation_scale < 0.0:
             raise ValueError("uncertainty_inflation_scale must be non-negative")
 
@@ -261,3 +271,16 @@ def _at_most(value: float | None, threshold: float) -> bool:
 
 def _csv_float(value: float | None) -> float | str:
     return "" if value is None else float(value)
+
+
+def _validate_optional_non_negative(value: float | None, name: str) -> None:
+    if value is None:
+        return
+    _require_finite(value, name)
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative when set")
+
+
+def _require_finite(value: float, name: str) -> None:
+    if not np.isfinite(float(value)):
+        raise ValueError(f"{name} must be finite")

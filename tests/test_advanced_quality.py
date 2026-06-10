@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from beltmap.advanced_quality import (
     bbox_iou,
@@ -146,6 +147,81 @@ def test_real_label_metrics_zero_match_f1_is_zero_not_missing(tmp_path):
     assert metrics.precision == 0.0
     assert metrics.recall == 0.0
     assert metrics.f1 == 0.0
+
+
+def test_real_label_metrics_reject_unreviewed_json_scaffold(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "template_not_ground_truth_do_not_use_for_metrics_until_filled",
+                "requires_manual_review": True,
+                "frames": [{"frame_index": 0, "boxes": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="reviewed ground truth"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+@pytest.mark.parametrize(
+    ("box", "message"),
+    [
+        ({"top": 0, "left": 0, "bottom": float("nan"), "right": 10}, "finite"),
+        ({"top": 10, "left": 0, "bottom": 10, "right": 10}, "positive"),
+    ],
+)
+def test_real_label_metrics_reject_invalid_reviewed_boxes(tmp_path, box, message):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [{"frame_index": 0, "boxes": [box]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+def test_real_label_metrics_ignore_degenerate_detection_boxes(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
+        "0,10,0,10,10\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"frames": [{"frame_index": 0, "boxes": []}]}),
+        encoding="utf-8",
+    )
+
+    metrics = evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+    assert metrics.detection_boxes == 0
+    assert metrics.precision == 1.0
+    assert metrics.recall == 1.0
+    assert metrics.f1 == 1.0
 
 
 def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(tmp_path):

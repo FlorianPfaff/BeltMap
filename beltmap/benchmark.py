@@ -257,6 +257,8 @@ def bbox_from_detection(row: dict[str, Any]) -> dict[str, float] | None:
     top, left, bottom, right = values
     assert top is not None and left is not None
     assert bottom is not None and right is not None
+    if bottom <= top or right <= left:
+        return None
     box = {"top": top, "left": left, "bottom": bottom, "right": right}
     y = finite_float(row.get("y"))
     x = finite_float(row.get("x"))
@@ -813,7 +815,11 @@ def detection_metrics(
 
     truth_by_frame = group_truth_boxes(truth)
     pred_by_frame = group_detection_boxes(detection_rows)
-    frame_indices = sorted((scored_frames or set()) | set(truth_by_frame) | set(pred_by_frame))
+    frame_indices = (
+        sorted(set(truth_by_frame) | set(pred_by_frame))
+        if scored_frames is None
+        else sorted(scored_frames)
+    )
 
     true_positives = 0
     false_positives = 0
@@ -856,8 +862,8 @@ def detection_metrics(
     return {
         "available": bool(frame_indices),
         "iou_threshold": iou_threshold,
-        "truth_boxes": sum(len(items) for items in truth_by_frame.values()),
-        "predicted_boxes": sum(len(items) for items in pred_by_frame.values()),
+        "truth_boxes": sum(len(truth_by_frame.get(frame, [])) for frame in frame_indices),
+        "predicted_boxes": sum(len(pred_by_frame.get(frame, [])) for frame in frame_indices),
         "true_positives": true_positives,
         "false_positives": false_positives,
         "false_negatives": false_negatives,

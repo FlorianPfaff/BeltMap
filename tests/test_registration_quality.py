@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap.phase import PhaseEstimate
 from beltmap.registration_quality import (
@@ -58,6 +59,24 @@ def test_registration_quality_reasons_cover_score_gap_uncertainty_and_correction
         "uncertainty_px",
         "correction_px",
     ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"min_score": float("nan")},
+        {"min_loss_gap_ratio": float("nan")},
+        {"max_uncertainty_px": float("nan")},
+        {"max_abs_correction_px": float("nan")},
+        {"noise_inflation_factor": float("nan")},
+        {"uncertainty_inflation_scale": float("nan")},
+    ],
+)
+def test_registration_quality_config_rejects_nonfinite_thresholds(kwargs):
+    config = RegistrationQualityGateConfig(**kwargs)
+
+    with pytest.raises(ValueError, match="must be finite"):
+        config.validate()
 
 
 def test_registration_quality_inflates_low_quality_residual_noise():

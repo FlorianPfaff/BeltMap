@@ -172,6 +172,55 @@ def test_track_particle_detections_uses_velocity_prior():
     assert velocity.belt_minus_particle_velocity_y_px_per_frame == 2.0
 
 
+def test_linear_velocity_fit_ignores_nonfinite_track_points():
+    track = ParticleTrack(
+        track_id=0,
+        detections=(
+            ParticleDetection(0, 1, y=0.0, x=5.0, area_px=4, bbox_top=0, bbox_left=4, bbox_bottom=2, bbox_right=6),
+            ParticleDetection(1, 1, y=float("nan"), x=5.0, area_px=4, bbox_top=0, bbox_left=4, bbox_bottom=2, bbox_right=6),
+            ParticleDetection(2, 1, y=4.0, x=5.0, area_px=4, bbox_top=4, bbox_left=4, bbox_bottom=6, bbox_right=6),
+        ),
+    )
+
+    velocities = estimate_particle_velocities_vs_belt(
+        [track],
+        belt_image_velocity_px_per_frame=4.0,
+        min_track_length=2,
+        fit_method="linear",
+    )
+
+    assert len(velocities) == 1
+    assert velocities[0].velocity_y_px_per_frame == 2.0
+    assert velocities[0].velocity_ratio_y == 0.5
+
+
+def test_velocity_extraction_skips_tracks_without_finite_fit_points():
+    bad_track = ParticleTrack(
+        track_id=0,
+        detections=(
+            ParticleDetection(0, 1, y=float("nan"), x=5.0, area_px=4, bbox_top=0, bbox_left=4, bbox_bottom=2, bbox_right=6),
+            ParticleDetection(1, 1, y=float("nan"), x=5.0, area_px=4, bbox_top=0, bbox_left=4, bbox_bottom=2, bbox_right=6),
+        ),
+    )
+    good_track = ParticleTrack(
+        track_id=1,
+        detections=(
+            ParticleDetection(0, 1, y=0.0, x=5.0, area_px=4, bbox_top=0, bbox_left=4, bbox_bottom=2, bbox_right=6),
+            ParticleDetection(1, 1, y=2.0, x=5.0, area_px=4, bbox_top=2, bbox_left=4, bbox_bottom=4, bbox_right=6),
+        ),
+    )
+
+    velocities = estimate_particle_velocities_vs_belt(
+        [bad_track, good_track],
+        belt_image_velocity_px_per_frame=4.0,
+        min_track_length=2,
+        fit_method="linear",
+    )
+
+    assert [velocity.track_id for velocity in velocities] == [1]
+    assert velocities[0].velocity_ratio_y == 0.5
+
+
 def test_track_particle_detections_predicts_from_recent_track_velocity():
     detections_by_frame = [
         [

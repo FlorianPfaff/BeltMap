@@ -484,6 +484,50 @@ def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
     assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
 
 
+def test_detection_froc_curve_restricts_truth_to_scored_frames():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            },
+            {
+                "frame_index": 99,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            },
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "1",
+            "bbox_left": "2",
+            "bbox_bottom": "4",
+            "bbox_right": "5",
+            "y": "2.0",
+            "x": "3.0",
+            "peak_signal": "12.0",
+        }
+    ]
+
+    froc = detection_froc_curve(
+        detections,
+        truth,
+        scored_frames={0},
+        iou_threshold=0.25,
+    )
+
+    assert froc["truth_boxes"] == 1
+    assert froc["recall_at_0_1_fp_per_frame"] == pytest.approx(1.0)
+    assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
+
+
 def test_detection_froc_curve_rejects_partial_score_fields():
     truth = {
         "particles": [
@@ -704,6 +748,22 @@ def test_compare_rejects_fractional_metadata_counts(tmp_path):
     (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
     with pytest.raises(ValueError, match="n_detections"):
+        generate_comparison_report(
+            [RunSpec("a", run_a), RunSpec("b", run_b)],
+            report_dir=tmp_path / "comparison",
+        )
+
+
+def test_compare_rejects_fractional_track_metadata_count(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    metadata = json.loads((run_b / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_tracks"] = 2.5
+    (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="n_tracks"):
         generate_comparison_report(
             [RunSpec("a", run_a), RunSpec("b", run_b)],
             report_dir=tmp_path / "comparison",

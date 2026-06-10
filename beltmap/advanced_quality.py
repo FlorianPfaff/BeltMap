@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 FloatArray = NDArray[np.floating]
+REVIEWED_GROUND_TRUTH_STATUS = "reviewed_ground_truth"
 
 
 @dataclass(frozen=True)
@@ -434,12 +435,9 @@ def detection_boxes_by_frame(output_dir: Path) -> dict[int, list[dict[str, float
             frame = finite_int(row["frame_index"])
             if frame is None:
                 continue
-            box = {
-                "top": float(row["bbox_top"]),
-                "left": float(row["bbox_left"]),
-                "bottom": float(row["bbox_bottom"]),
-                "right": float(row["bbox_right"]),
-            }
+            box = _parse_detection_box(row)
+            if box is None:
+                continue
         except (KeyError, TypeError, ValueError):
             continue
         grouped.setdefault(frame, []).append(box)
@@ -456,6 +454,8 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
     """
 
     data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        _validate_reviewed_truth_status(data)
     frames = data.get("frames") if isinstance(data, dict) else None
     if not isinstance(frames, list):
         raise ValueError("label JSON must contain a 'frames' list")
@@ -464,11 +464,66 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
         frame_index = finite_int(frame.get("frame_index"))
         if frame_index is None:
             continue
-        boxes = []
+        boxes: list[dict[str, float]] = []
         for box in frame.get("boxes", []):
-            boxes.append({key: float(box[key]) for key in ("top", "left", "bottom", "right")})
+            boxes.append(_parse_real_label_box(box))
         result[frame_index] = boxes
     return result
+
+
+def _review_flag_is_true(value: Any) -> bool:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "n"}:
+            return False
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+    return bool(value)
+
+
+def _validate_reviewed_truth_status(data: dict[str, Any]) -> None:
+    status = data.get("status")
+    requires_manual_review = data.get("requires_manual_review")
+    if status is None and requires_manual_review is None:
+        return
+    if status != REVIEWED_GROUND_TRUTH_STATUS or _review_flag_is_true(
+        requires_manual_review,
+    ):
+        raise ValueError(
+            "label JSON is not reviewed ground truth; set status="
+            f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
+            "only after all scored frames have been reviewed"
+        )
+
+
+def _parse_real_label_box(box: Mapping[str, Any]) -> dict[str, float]:
+    try:
+        top = float(box["top"])
+        left = float(box["left"])
+        bottom = float(box["bottom"])
+        right = float(box["right"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("label boxes must contain numeric top/left/bottom/right") from exc
+    if not all(math.isfinite(value) for value in (top, left, bottom, right)):
+        raise ValueError("label box coordinates must be finite")
+    if bottom <= top or right <= left:
+        raise ValueError("label boxes must have positive half-open area")
+    return {"top": top, "left": left, "bottom": bottom, "right": right}
+
+
+def _parse_detection_box(row: Mapping[str, Any]) -> dict[str, float] | None:
+    values = [
+        finite_float(row.get(key))
+        for key in ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right")
+    ]
+    if any(value is None for value in values):
+        return None
+    top, left, bottom, right = values
+    assert top is not None and left is not None
+    assert bottom is not None and right is not None
+    if bottom <= top or right <= left:
+        return None
+    return {"top": top, "left": left, "bottom": bottom, "right": right}
 
 
 def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5) -> RealLabelMetrics:
