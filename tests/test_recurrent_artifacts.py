@@ -97,6 +97,37 @@ def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
         )
 
 
+@pytest.mark.parametrize("revolution", [float("nan"), 1.5])
+def test_recurrent_artifact_map_rejects_invalid_revolution_values(revolution):
+    with pytest.raises(ValueError, match="revolution_by_frame"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
+            revolution_by_frame=[revolution],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_cross_revolution_scoring_rejects_invalid_revolution_values():
+    recurrent_map = build_recurrent_artifact_map(
+        [[detection(0, 0, 0, 1, 1)]],
+        phase_px_by_frame=[0.0],
+        revolution_by_frame=[0],
+        map_shape=(2, 2),
+        config=RecurrentArtifactConfig(min_revolutions=1),
+    )
+
+    with pytest.raises(ValueError, match="revolution_by_frame"):
+        score_recurrent_artifact_detections_excluding_current_revolution(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
+            revolution_by_frame=[1.5],
+            recurrent_map=recurrent_map,
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
 def test_recurrent_artifact_map_counts_distinct_revolutions_only():
     recurrent = detection(0, 1, 2, 3, 4)
     same_revolution_duplicate = detection(1, 1, 2, 3, 4)

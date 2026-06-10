@@ -92,8 +92,10 @@ def build_recurrent_artifact_map(
         phase_px_by_frame,
         frame_count=len(detections_by_frame),
     )
-    if len(revolution_by_frame) != len(detections_by_frame):
-        raise ValueError("revolution_by_frame must match detections_by_frame length")
+    revolution_values = _validate_revolution_by_frame(
+        revolution_by_frame,
+        frame_count=len(detections_by_frame),
+    )
     map_height, map_width = _validate_map_shape(map_shape)
     frame_height = _validate_frame_shape(frame_shape, map_width)
 
@@ -101,13 +103,13 @@ def build_recurrent_artifact_map(
     exposure_counts = np.zeros(
         (map_height, map_width), dtype=RECURRENT_ARTIFACT_COUNT_DTYPE
     )
-    unique_revolutions = sorted({int(revolution) for revolution in revolution_by_frame})
+    unique_revolutions = sorted(set(revolution_values))
     candidate_detections = 0
     for revolution in unique_revolutions:
         revolution_mask, revolution_candidates = _build_revolution_detection_mask(
             detections_by_frame,
             phase_px_values,
-            revolution_by_frame,
+            revolution_values,
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
@@ -117,7 +119,7 @@ def build_recurrent_artifact_map(
         )
         revolution_exposure = _build_revolution_exposure_mask(
             phase_px_values,
-            revolution_by_frame,
+            revolution_values,
             revolution=revolution,
             map_shape=(map_height, map_width),
             frame_height=frame_height,
@@ -169,8 +171,10 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
         phase_px_by_frame,
         frame_count=len(detections_by_frame),
     )
-    if len(revolution_by_frame) != len(detections_by_frame):
-        raise ValueError("revolution_by_frame must match detections_by_frame length")
+    revolution_values = _validate_revolution_by_frame(
+        revolution_by_frame,
+        frame_count=len(detections_by_frame),
+    )
 
     counts = np.asarray(recurrent_map.counts, dtype=np.int64)
     map_height, map_width = _validate_map_shape(counts.shape)
@@ -181,14 +185,14 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
         raise ValueError("recurrent_map exposure_counts and counts shapes must match")
     frame_height = _validate_frame_shape(frame_shape, map_width)
 
-    unique_revolutions = sorted({int(revolution) for revolution in revolution_by_frame})
+    unique_revolutions = sorted(set(revolution_values))
     other_revolutions_required = max(1, cfg.min_revolutions - 1)
     artifact_maps_by_revolution: dict[int, NDArray[np.bool_]] = {}
     for revolution in unique_revolutions:
         revolution_mask, _ = _build_revolution_detection_mask(
             detections_by_frame,
             phase_px_values,
-            revolution_by_frame,
+            revolution_values,
             revolution=revolution,
             map_shape=(map_height, map_width),
             margin_px=cfg.margin_px,
@@ -198,7 +202,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
         )
         revolution_exposure = _build_revolution_exposure_mask(
             phase_px_values,
-            revolution_by_frame,
+            revolution_values,
             revolution=revolution,
             map_shape=(map_height, map_width),
             frame_height=frame_height,
@@ -229,7 +233,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
 
     scored: list[list[RecurrentArtifactDetectionScore]] = []
     for frame_index, detections in enumerate(detections_by_frame):
-        revolution = int(revolution_by_frame[frame_index])
+        revolution = revolution_values[frame_index]
         frame_scores = score_recurrent_artifact_detections(
             [detections],
             [phase_px_values[frame_index]],
@@ -675,6 +679,22 @@ def _validate_phase_px_by_frame(
     values = [float(value) for value in phase_px_by_frame]
     if not all(np.isfinite(value) for value in values):
         raise ValueError("phase_px_by_frame values must be finite")
+    return values
+
+
+def _validate_revolution_by_frame(
+    revolution_by_frame: Sequence[int],
+    *,
+    frame_count: int,
+) -> list[int]:
+    if len(revolution_by_frame) != frame_count:
+        raise ValueError("revolution_by_frame must match detections_by_frame length")
+    values: list[int] = []
+    for revolution in revolution_by_frame:
+        parsed = float(revolution)
+        if not np.isfinite(parsed) or not parsed.is_integer():
+            raise ValueError("revolution_by_frame values must be finite integers")
+        values.append(int(parsed))
     return values
 
 
