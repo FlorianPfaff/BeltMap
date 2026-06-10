@@ -81,14 +81,19 @@ def source_frame_index(row: dict[str, Any]) -> int | None:
     The image driver writes processed-frame indices after striding/truncation,
     while the synthetic metadata uses original frame indices. For generated
     frames named ``frame_000.png`` this function therefore recovers ``0`` from
-    the ``image`` column and falls back to ``frame_index`` if no number is found.
+    the ``image`` column. If the image stem contains multiple unrelated numbers
+    such as crop coordinates, the explicit ``frame_index`` is safer.
     """
 
     image = str(row.get("image", ""))
     if image:
-        matches = re.findall(r"\d+", Path(image).stem)
-        if matches:
-            return int(matches[-1])
+        stem = Path(image).stem
+        frame_matches = re.findall(r"(?:^|[^A-Za-z0-9])frame[_-]?(\d+)", stem, flags=re.IGNORECASE)
+        if frame_matches:
+            return int(frame_matches[-1])
+        matches = re.findall(r"\d+", stem)
+        if len(matches) == 1:
+            return int(matches[0])
     return finite_int(row.get("frame_index"))
 
 

@@ -13,6 +13,7 @@ from beltmap.benchmark import (
     event_metrics,
     finite_int,
     generate_benchmark_report,
+    source_frame_index,
     track_metrics,
 )
 
@@ -213,6 +214,20 @@ def test_bbox_iou_for_overlapping_half_open_boxes():
 def test_finite_int_accepts_float_like_integer_strings():
     assert finite_int("7.0") == 7
     assert finite_int("7.5") is None
+
+
+def test_source_frame_index_ignores_crop_coordinate_suffixes():
+    assert source_frame_index({"image": "frame_000123_crop_0_220_1330_1800.png"}) == 123
+    assert source_frame_index({"image": "sample_0042.png"}) == 42
+    assert (
+        source_frame_index(
+            {
+                "image": "sample_0042_crop_0_220.png",
+                "frame_index": "7",
+            }
+        )
+        == 7
+    )
 
 
 def test_detection_metrics_no_matches_report_zero_f1():
