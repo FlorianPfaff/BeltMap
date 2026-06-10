@@ -274,13 +274,25 @@ def optional_float(row: dict[str, str], field: str) -> float | None:
     return None if value == "" or value is None else float(value)
 
 
+def integer_value(value: Any, field: str) -> int:
+    """Parse integer-like CSV values without truncating fractional inputs."""
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be an integer-like value") from exc
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{field} must be an integer-like value")
+    return int(parsed)
+
+
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
     return ParticleDetection(
-        frame_index=float(row["frame_index"]),
-        label=int(float(row["label"])),
+        frame_index=float(integer_value(row["frame_index"], "frame_index")),
+        label=integer_value(row["label"], "label"),
         y=float(row["y"]),
         x=float(row["x"]),
-        area_px=int(float(row["area_px"])),
+        area_px=integer_value(row["area_px"], "area_px"),
         bbox_top=int(float(row["bbox_top"])),
         bbox_left=int(float(row["bbox_left"])),
         bbox_bottom=int(float(row["bbox_bottom"])),
@@ -329,14 +341,14 @@ def detection_row(detection: ParticleDetection, *, image: str, track_id: int | N
 def group_by_frame(rows: list[dict[str, str]]) -> dict[int, list[dict[str, str]]]:
     grouped: dict[int, list[dict[str, str]]] = {}
     for row in rows:
-        grouped.setdefault(int(float(row["frame_index"])), []).append(row)
+        grouped.setdefault(integer_value(row["frame_index"], "frame_index"), []).append(row)
     return grouped
 
 
 def detection_key(row: dict[str, Any]) -> tuple[int, int]:
     """Return a stable per-frame detection key used by detections.csv and tracks.csv."""
 
-    return int(float(row["frame_index"])), int(float(row["label"]))
+    return integer_value(row["frame_index"], "frame_index"), integer_value(row["label"], "label")
 
 
 def track_memberships(candidate_run: Path) -> tuple[dict[tuple[int, int], int], dict[int, set[tuple[int, int]]]]:
@@ -347,7 +359,7 @@ def track_memberships(candidate_run: Path) -> tuple[dict[tuple[int, int], int], 
     key_to_track: dict[tuple[int, int], int] = {}
     track_to_keys: dict[int, set[tuple[int, int]]] = {}
     for row in rows:
-        track_id = int(float(row["track_id"]))
+        track_id = integer_value(row["track_id"], "track_id")
         key = detection_key(row)
         key_to_track[key] = track_id
         track_to_keys.setdefault(track_id, set()).add(key)
@@ -472,7 +484,7 @@ def row_is_directly_confirmed(row: dict[str, Any]) -> bool:
 def track_confirmation_summaries(track_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     summaries: dict[int, dict[str, Any]] = {}
     for row in track_rows:
-        track_id = int(row["track_id"])
+        track_id = integer_value(row["track_id"], "track_id")
         summary = summaries.setdefault(
             track_id,
             {
@@ -554,7 +566,7 @@ def suppress_duplicate_rows(
 
     by_frame: dict[int, list[tuple[int, dict[str, Any]]]] = {}
     for index, row in enumerate(rows):
-        by_frame.setdefault(int(float(row["frame_index"])), []).append((index, row))
+        by_frame.setdefault(integer_value(row["frame_index"], "frame_index"), []).append((index, row))
 
     kept_indices: set[int] = set()
     suppressed_indices: set[int] = set()
@@ -664,9 +676,9 @@ def infer_n_images(candidate_run: Path, candidate_rows: list[dict[str, str]]) ->
         return n_images
     per_frame = read_csv_rows(candidate_run / "detections_per_frame.csv")
     if per_frame:
-        return max(int(float(row["frame_index"])) for row in per_frame) + 1
+        return max(integer_value(row["frame_index"], "frame_index") for row in per_frame) + 1
     if candidate_rows:
-        return max(int(float(row["frame_index"])) for row in candidate_rows) + 1
+        return max(integer_value(row["frame_index"], "frame_index") for row in candidate_rows) + 1
     return 0
 
 
@@ -763,12 +775,12 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
 
     n_images = infer_n_images(args.candidate_run, candidate_rows)
     image_by_frame = {
-        int(float(row["frame_index"])): row.get("image", "")
+        integer_value(row["frame_index"], "frame_index"): row.get("image", "")
         for row in candidate_rows
     }
     detections_by_frame: list[list[ParticleDetection]] = [[] for _ in range(n_images)]
     for row in kept_rows:
-        frame_index = int(float(row["frame_index"]))
+        frame_index = integer_value(row["frame_index"], "frame_index")
         if 0 <= frame_index < n_images:
             detections_by_frame[frame_index].append(parse_detection(row))
 

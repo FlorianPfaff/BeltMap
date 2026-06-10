@@ -81,14 +81,19 @@ def source_frame_index(row: dict[str, Any]) -> int | None:
     The image driver writes processed-frame indices after striding/truncation,
     while the synthetic metadata uses original frame indices. For generated
     frames named ``frame_000.png`` this function therefore recovers ``0`` from
-    the ``image`` column and falls back to ``frame_index`` if no number is found.
+    the ``image`` column. If the image stem contains multiple unrelated numbers
+    such as crop coordinates, the explicit ``frame_index`` is safer.
     """
 
     image = str(row.get("image", ""))
     if image:
-        matches = re.findall(r"\d+", Path(image).stem)
-        if matches:
-            return int(matches[-1])
+        stem = Path(image).stem
+        frame_matches = re.findall(r"(?:^|[^A-Za-z0-9])frame[_-]?(\d+)", stem, flags=re.IGNORECASE)
+        if frame_matches:
+            return int(frame_matches[-1])
+        matches = re.findall(r"\d+", stem)
+        if len(matches) == 1:
+            return int(matches[0])
     return finite_int(row.get("frame_index"))
 
 
@@ -273,6 +278,34 @@ def bbox_iou(a: dict[str, float], b: dict[str, float]) -> float:
     area_b = max(0.0, b["bottom"] - b["top"]) * max(0.0, b["right"] - b["left"])
     union = area_a + area_b - intersection
     return 0.0 if union <= 0 else float(intersection / union)
+
+
+def detection_precision(true_positives: int, false_positives: int, false_negatives: int) -> float | None:
+    """Return detection precision with a defined value for clean empty frames."""
+
+    denominator = true_positives + false_positives
+    if denominator:
+        return float(true_positives / denominator)
+    return 1.0 if false_negatives == 0 else 0.0
+
+
+def detection_recall(true_positives: int, false_positives: int, false_negatives: int) -> float | None:
+    """Return detection recall with a defined value for clean empty frames."""
+
+    denominator = true_positives + false_negatives
+    if denominator:
+        return float(true_positives / denominator)
+    return 1.0 if false_positives == 0 else None
+
+
+def f1_score(precision: float | None, recall: float | None) -> float | None:
+    """Return harmonic mean of precision and recall when both are defined."""
+
+    if precision is None or recall is None:
+        return None
+    if precision + recall == 0:
+        return 0.0
+    return float(2.0 * precision * recall / (precision + recall))
 
 
 def truth_center(box: dict[str, float]) -> tuple[float, float]:
@@ -771,6 +804,7 @@ def detection_metrics(
     truth: dict[str, Any],
     *,
     iou_threshold: float = 0.25,
+    scored_frames: set[int] | None = None,
 ) -> dict[str, Any]:
     """Compute greedy IoU detection precision/recall against synthetic boxes."""
 
@@ -779,7 +813,7 @@ def detection_metrics(
 
     truth_by_frame = group_truth_boxes(truth)
     pred_by_frame = group_detection_boxes(detection_rows)
-    frame_indices = sorted(set(truth_by_frame) | set(pred_by_frame))
+    frame_indices = sorted((scored_frames or set()) | set(truth_by_frame) | set(pred_by_frame))
 
     true_positives = 0
     false_positives = 0
@@ -813,14 +847,9 @@ def detection_metrics(
         false_positives += len(preds) - len(matched_preds)
         false_negatives += len(truths) - len(matched_truths)
 
-    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives else None
-    recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives else None
-    if precision is None or recall is None:
-        f1 = None
-    elif precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
+    precision = detection_precision(true_positives, false_positives, false_negatives)
+    recall = detection_recall(true_positives, false_positives, false_negatives)
+    f1 = f1_score(precision, recall)
     centroid_stats = summary_errors(centroid_errors, unit="px")
     iou_values = np.asarray(matched_ious, dtype=np.float64)
 
@@ -848,13 +877,19 @@ def choose_velocity_row(velocity_rows: list[dict[str, str]], true_ratio: float |
     if not velocity_rows:
         return None
 
-    def key(row: dict[str, str]) -> tuple[int, float]:
+    def key(row: dict[str, str]) -> tuple[int, float] | None:
         detections = finite_int(row.get("n_detections")) or 0
+        velocity = finite_float(row.get("velocity_y_px_per_frame"))
         ratio = finite_float(row.get("velocity_ratio_y"))
+        if velocity is None and ratio is None:
+            return None
         ratio_penalty = abs(ratio - true_ratio) if ratio is not None and true_ratio is not None else float("inf")
         return detections, -ratio_penalty
 
-    return max(velocity_rows, key=key)
+    candidates = [(candidate_key, row) for row in velocity_rows if (candidate_key := key(row)) is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def choose_truth_matched_velocity_row(
@@ -970,7 +1005,7 @@ def velocity_metrics(
             "prediction_source": prediction_source,
             "truth_velocity_y_px_per_frame": true_velocity,
             "truth_velocity_ratio_y": true_ratio,
-            "velocity_rows": 0,
+            "velocity_rows": len(velocity_rows),
             **distribution,
         }
 

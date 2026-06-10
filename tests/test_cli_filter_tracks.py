@@ -201,6 +201,15 @@ def test_filter_tracks_preserves_recurrent_artifact_probability(tmp_path):
     assert filtered_track_rows[0]["recurrent_artifact_probability"] == "0.25"
 
 
+def test_parse_tracks_rejects_fractional_track_detection_index(tmp_path):
+    make_velocities(tmp_path)
+    track_rows = list(csv.DictReader((tmp_path / "tracks.csv").open()))
+    track_rows[0]["track_detection_index"] = "0.5"
+
+    with pytest.raises(ValueError, match="track_detection_index must be integer-valued"):
+        cli_filter_tracks.parse_tracks(track_rows)
+
+
 def test_filter_tracks_cli_reports_missing_velocities_without_traceback(tmp_path):
     tmp_path.mkdir(parents=True, exist_ok=True)
 

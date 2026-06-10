@@ -940,7 +940,11 @@ def metadata_or_count(data: RunData, key: str, rows: list[Any]) -> int | None:
     """Use metadata count when present, otherwise fall back to loaded rows."""
 
     value = finite_float(data.metadata.get(key))
-    return int(value) if value is not None else len(rows)
+    if value is None:
+        return len(rows)
+    if value < 0 or not value.is_integer():
+        raise ValueError(f"metadata {key!r} must be a non-negative integer-like value")
+    return int(value)
 
 
 def empty_labeled_metrics() -> dict[str, Any]:
@@ -1075,6 +1079,7 @@ def summarize_run(
             scored_detections,
             labeled_truth,
             iou_threshold=truth_iou_threshold,
+            scored_frames=scored_frames,
         )
         false_positives = finite_int(metrics.get("false_positives")) or 0
         empty_frames = empty_labeled_frame_indices(labeled_truth)

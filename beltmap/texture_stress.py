@@ -406,6 +406,7 @@ def summarize_run_subset(
             scored_detections,
             scoped_truth,
             iou_threshold=truth_iou_threshold,
+            scored_frames=scored_frames,
         )
         row.update(
             {

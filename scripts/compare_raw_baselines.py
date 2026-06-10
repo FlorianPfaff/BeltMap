@@ -421,7 +421,7 @@ def load_existing_beltmap_detections(
 
     source_stride = metadata.get("frame_stride")
     if strict_frame_match and source_stride is not None:
-        source_stride_int = int(float(source_stride))
+        source_stride_int = required_int({"frame_stride": source_stride}, "frame_stride")
         if source_stride_int != current_frame_stride:
             raise ValueError(
                 f"{run_dir} was produced with frame_stride={source_stride_int}, "
