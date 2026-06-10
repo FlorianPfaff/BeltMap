@@ -316,6 +316,23 @@ def test_smooth_phase_estimates_rejects_registration_outlier():
     assert smoothed[4].method == "registration_smoothed"
 
 
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=float("nan")), "window_radius_frames"),
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=1.5), "window_radius_frames"),
+        (PhaseTrajectorySmoothingConfig(min_support=float("nan")), "min_support"),
+        (PhaseTrajectorySmoothingConfig(min_support=1.5), "min_support"),
+        (PhaseTrajectorySmoothingConfig(robust_sigma=float("nan")), "robust_sigma"),
+        (PhaseTrajectorySmoothingConfig(min_score=float("nan")), "min_score"),
+        (PhaseTrajectorySmoothingConfig(max_abs_correction_px=float("nan")), "max_abs_correction_px"),
+    ],
+)
+def test_phase_smoothing_config_rejects_invalid_numeric_settings(config, message):
+    with pytest.raises(ValueError, match=message):
+        config.validate()
+
+
 def test_smooth_phase_estimates_uses_cyclic_corrections():
     estimates = [
         PhaseEstimate(

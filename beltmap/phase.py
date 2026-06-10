@@ -95,15 +95,22 @@ class PhaseTrajectorySmoothingConfig:
     min_support: int = 3
 
     def validate(self) -> None:
-        if self.window_radius_frames < 0:
-            raise ValueError("window_radius_frames must be non-negative")
-        if self.min_support < 1:
-            raise ValueError("min_support must be positive")
-        if self.robust_sigma <= 0:
+        _nonnegative_integer_value(
+            self.window_radius_frames,
+            "window_radius_frames",
+        )
+        _positive_integer_value(self.min_support, "min_support")
+        robust_sigma = _finite_float_value(self.robust_sigma, "robust_sigma")
+        if robust_sigma <= 0:
             raise ValueError("robust_sigma must be positive")
-        if self.min_score is not None and self.min_score < 0:
+        min_score = _optional_finite_float_value(self.min_score, "min_score")
+        if min_score is not None and min_score < 0:
             raise ValueError("min_score must be non-negative when set")
-        if self.max_abs_correction_px is not None and self.max_abs_correction_px < 0:
+        max_abs_correction_px = _optional_finite_float_value(
+            self.max_abs_correction_px,
+            "max_abs_correction_px",
+        )
+        if max_abs_correction_px is not None and max_abs_correction_px < 0:
             raise ValueError("max_abs_correction_px must be non-negative when set")
 
 
@@ -553,10 +560,23 @@ def _finite_float_value(value: float, name: str) -> float:
     return parsed
 
 
+def _optional_finite_float_value(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_float_value(value, name)
+
+
 def _nonnegative_integer_value(value: int, name: str) -> int:
     parsed = _finite_float_value(value, name)
     if parsed < 0 or not parsed.is_integer():
         raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
+
+
+def _positive_integer_value(value: int, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if parsed < 1 or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite positive integer")
     return int(parsed)
 
 
