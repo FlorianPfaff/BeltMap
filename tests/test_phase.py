@@ -7,6 +7,7 @@ from beltmap import (
     PhaseRegistrationConfig,
     PhaseTrajectorySmoothingConfig,
     estimate_phase,
+    refine_phase_by_registration,
     render_belt_view,
     smooth_phase_estimates,
 )
@@ -157,6 +158,34 @@ def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
     ).candidate_offsets()
 
     np.testing.assert_allclose(offsets, [-1.0, -0.6, 0.0, 0.6, 1.0])
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (PhaseRegistrationConfig(search_radius_px=float("nan")), "search_radius_px"),
+        (PhaseRegistrationConfig(search_step_px=float("nan")), "search_step_px"),
+        (PhaseRegistrationConfig(trim_fraction=float("nan")), "trim_fraction"),
+        (PhaseRegistrationConfig(highpass_radius_px=float("nan")), "highpass_radius_px"),
+        (PhaseRegistrationConfig(highpass_radius_px=1.5), "highpass_radius_px"),
+    ],
+)
+def test_registration_config_rejects_invalid_numeric_settings(config, message):
+    with pytest.raises(ValueError, match=message):
+        config.normalized()
+
+
+def test_registration_refinement_validates_full_config_before_search():
+    frame = np.zeros((4, 4), dtype=float)
+    belt = np.zeros((8, 4), dtype=float)
+
+    with pytest.raises(ValueError, match="trim_fraction"):
+        refine_phase_by_registration(
+            frame=frame,
+            belt_map=belt,
+            predicted_phase_px=0.0,
+            config=PhaseRegistrationConfig(trim_fraction=float("nan")),
+        )
 
 
 def test_uniform_filter_axis_matches_edge_padded_reference():

@@ -45,18 +45,43 @@ class PhaseRegistrationConfig:
     robust_normalization: bool = False
 
     def candidate_offsets(self) -> FloatArray:
-        if self.search_radius_px < 0:
+        cfg = self.normalized()
+        radius = cfg.search_radius_px
+        if radius < 0:
             raise ValueError("search_radius_px must be non-negative")
-        if self.search_step_px <= 0:
+        step = cfg.search_step_px
+        if step <= 0:
             raise ValueError("search_step_px must be positive")
-        radius = float(self.search_radius_px)
         if radius == 0.0:
             return np.asarray([0.0], dtype=np.float64)
-        step = float(self.search_step_px)
         positive = step * np.arange(int(np.floor(radius / step)) + 1, dtype=np.float64)
         if not np.any(np.isclose(positive, radius)):
             positive = np.append(positive, radius)
         return np.r_[-positive[:0:-1], positive].astype(np.float64, copy=False)
+
+    def normalized(self) -> PhaseRegistrationConfig:
+        search_radius_px = _finite_float_value(
+            self.search_radius_px,
+            "search_radius_px",
+        )
+        search_step_px = _finite_float_value(
+            self.search_step_px,
+            "search_step_px",
+        )
+        trim_fraction = _finite_float_value(self.trim_fraction, "trim_fraction")
+        highpass_radius_px = _nonnegative_integer_value(
+            self.highpass_radius_px,
+            "highpass_radius_px",
+        )
+        if not 0 <= trim_fraction < 1:
+            raise ValueError("trim_fraction must be in [0, 1)")
+        return replace(
+            self,
+            search_radius_px=search_radius_px,
+            search_step_px=search_step_px,
+            trim_fraction=trim_fraction,
+            highpass_radius_px=highpass_radius_px,
+        )
 
 
 @dataclass(frozen=True)
@@ -257,7 +282,7 @@ def refine_phase_by_registration(
     config: PhaseRegistrationConfig | None = None,
     mask: ArrayLike | None = None,
 ) -> PhaseEstimate:
-    cfg = config or PhaseRegistrationConfig()
+    cfg = (config or PhaseRegistrationConfig()).normalized()
     observed = _as_float_image(frame, name="frame")
     belt = _as_float_image(belt_map, name="belt_map")
     if observed.ndim != 2 or belt.ndim != 2:
@@ -526,6 +551,13 @@ def _finite_float_value(value: float, name: str) -> float:
     if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
     return parsed
+
+
+def _nonnegative_integer_value(value: int, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if parsed < 0 or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
 
 
 def _prepare_mask(mask: ArrayLike | None, shape: tuple[int, int]) -> NDArray[np.bool_] | None:
