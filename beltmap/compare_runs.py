@@ -124,7 +124,14 @@ REQUIRED_CSV_COLUMNS = {
 
 TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
 TRUTH_FRAME_KEYS = ("frame", "image_index")
-TRUTH_FRAME_SET_KEYS = ("scored_frames", "frames", "labeled_frames")
+TRUTH_FRAME_SET_KEYS = (
+    "scored_frames",
+    "frames",
+    "labeled_frames",
+    "empty_frames",
+    "frame_reviews",
+)
+TRUTH_FRAME_BOX_CONTAINER_KEYS = ("boxes", *TRUTH_CONTAINER_KEYS)
 TRUTH_BOX_FIELD_SETS = (
     ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right"),
     ("top", "left", "bottom", "right"),
@@ -132,6 +139,7 @@ TRUTH_BOX_FIELD_SETS = (
     ("y1", "x1", "y2", "x2"),
 )
 TRUTH_EVENT_ID_KEYS = ("event_id", "particle_id", "track_id", "id")
+REVIEWED_GROUND_TRUTH_STATUS = "reviewed_ground_truth"
 
 LABELED_METRIC_FIELDS = (
     "precision",
@@ -394,10 +402,75 @@ def parse_frame_set(value: Any) -> set[int]:
         values = [value]
     frames: set[int] = set()
     for item in values:
-        frame_index = finite_int(item)
+        frame_index = row_frame_index(item) if isinstance(item, dict) else finite_int(item)
         if frame_index is not None:
             frames.add(frame_index)
     return frames
+
+
+def boolean_review_flag(value: Any) -> bool:
+    """Parse common JSON review flags without treating ``"false"`` as true."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "n"}:
+            return False
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+    return bool(value)
+
+
+def validate_reviewed_truth_status(data: dict[str, Any]) -> None:
+    """Reject label scaffolds that still declare pending manual review."""
+
+    status = data.get("status")
+    requires_manual_review = data.get("requires_manual_review")
+    if status is None and requires_manual_review is None:
+        return
+    if status != REVIEWED_GROUND_TRUTH_STATUS or boolean_review_flag(
+        requires_manual_review
+    ):
+        raise ValueError(
+            "truth JSON is not reviewed ground truth; set status="
+            f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
+            "only after all scored frames have been reviewed"
+        )
+
+
+def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
+    """Flatten ``frames[].boxes[]`` style JSON labels into per-box rows."""
+
+    rows: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        frame_index = row_frame_index(frame)
+        for key in TRUTH_FRAME_BOX_CONTAINER_KEYS:
+            boxes = frame.get(key)
+            if not isinstance(boxes, list):
+                continue
+            for box in boxes:
+                if not isinstance(box, dict):
+                    continue
+                row = dict(box)
+                if frame_index is not None and row_frame_index(row) is None:
+                    row["frame_index"] = frame_index
+                rows.append(row)
+            break
+    return rows
+
+
+def has_frame_box_containers(frames: list[Any]) -> bool:
+    """Return true when a ``frames`` list uses nested per-frame box containers."""
+
+    return any(
+        isinstance(frame, dict)
+        and any(
+            isinstance(frame.get(key), list)
+            for key in TRUTH_FRAME_BOX_CONTAINER_KEYS
+        )
+        for frame in frames
+    )
 
 
 def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
@@ -411,6 +484,10 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
     scored_frames: set[int] = set()
     for key in TRUTH_FRAME_SET_KEYS:
         scored_frames.update(parse_frame_set(data.get(key)))
+
+    frame_rows = data.get("frames")
+    if isinstance(frame_rows, list) and has_frame_box_containers(frame_rows):
+        return label_rows_from_frame_objects(frame_rows), scored_frames
 
     for key in TRUTH_CONTAINER_KEYS:
         rows = data.get(key)
@@ -469,6 +546,8 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
         scored_frames: set[int] = set()
     elif suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            validate_reviewed_truth_status(data)
         rows, scored_frames = label_rows_from_json(data)
     else:
         raise ValueError("truth labels must be a CSV or JSON file")
