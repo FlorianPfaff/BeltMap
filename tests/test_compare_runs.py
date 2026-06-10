@@ -11,6 +11,7 @@ from beltmap.compare_runs import (
     detection_froc_curve,
     finite_int,
     generate_comparison_report,
+    load_labeled_detection_truth,
     parse_run_spec,
 )
 
@@ -276,6 +277,99 @@ def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     assert rows[1]["labeled_froc_points"] == "3"
     assert float(rows[1]["labeled_froc_recall_at_0_1_fp_per_frame"]) == pytest.approx(1.0)
     assert float(rows[1]["labeled_froc_recall_at_0_5_fp_per_frame"]) == pytest.approx(1.0)
+
+
+def test_labeled_truth_rejects_unreviewed_json_scaffold(tmp_path):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+            {
+                "status": "template_not_ground_truth_do_not_use_for_metrics_until_filled",
+                "requires_manual_review": True,
+                "scored_frames": [0],
+                "particles": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="reviewed_ground_truth"):
+        load_labeled_detection_truth(truth_path)
+
+
+def test_generate_comparison_report_scores_reviewed_frame_box_json(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    with (run_b / "detections.csv").open(newline="", encoding="utf-8") as handle:
+        run_b_detections = list(csv.DictReader(handle))
+    run_b_detections.append(
+        {
+            "frame_index": 2,
+            "label": 2,
+            "y": 7.0,
+            "x": 7.0,
+            "area_px": 9,
+            "peak_signal": 4.0,
+            "bbox_top": 6,
+            "bbox_left": 6,
+            "bbox_bottom": 8,
+            "bbox_right": 8,
+        }
+    )
+    write_csv(run_b / "detections.csv", run_b_detections)
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [
+                            {
+                                "top": 1,
+                                "left": 2,
+                                "bottom": 4,
+                                "right": 5,
+                                "particle_id": "p0",
+                            }
+                        ],
+                    },
+                    {"frame_index": 2, "boxes": []},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    truth = load_labeled_detection_truth(truth_path)
+    assert truth["scored_frames"] == [0, 2]
+    assert truth["particles"] == [
+        {
+            "frame_index": 0,
+            "top": 1.0,
+            "left": 2.0,
+            "bottom": 4.0,
+            "right": 5.0,
+            "particle_id": "p0",
+        }
+    ]
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+        frames=[0, 2],
+        truth_path=truth_path,
+        truth_iou_threshold=0.25,
+    )
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["labeled_truth_boxes"] == "1"
+    assert rows[0]["labeled_empty_scored_frames"] == "1"
+    assert rows[1]["labeled_false_positives"] == "1"
+    assert rows[1]["labeled_empty_frame_false_positives"] == "1"
 
 
 def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
