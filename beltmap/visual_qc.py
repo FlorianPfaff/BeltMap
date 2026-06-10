@@ -67,12 +67,10 @@ def finite_float(value: Any) -> float | None:
 def finite_int(value: Any) -> int | None:
     """Parse an integer value, returning ``None`` for missing values."""
 
-    if value is None:
+    parsed = finite_float(value)
+    if parsed is None or not parsed.is_integer():
         return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
+    return int(parsed)
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
