@@ -708,3 +708,19 @@ def test_compare_rejects_fractional_metadata_counts(tmp_path):
             [RunSpec("a", run_a), RunSpec("b", run_b)],
             report_dir=tmp_path / "comparison",
         )
+
+
+def test_compare_rejects_fractional_track_metadata_count(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    metadata = json.loads((run_b / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_tracks"] = 2.5
+    (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="n_tracks"):
+        generate_comparison_report(
+            [RunSpec("a", run_a), RunSpec("b", run_b)],
+            report_dir=tmp_path / "comparison",
+        )

@@ -947,6 +947,17 @@ def metadata_or_count(data: RunData, key: str, rows: list[Any]) -> int | None:
     return int(value)
 
 
+def metadata_count_or_none(data: RunData, key: str) -> int | None:
+    """Return a validated metadata count, or ``None`` when it is absent."""
+
+    if key not in data.metadata:
+        return None
+    value = finite_float(data.metadata.get(key))
+    if value is None or value < 0 or not value.is_integer():
+        raise ValueError(f"metadata {key!r} must be a non-negative integer-like value")
+    return int(value)
+
+
 def empty_labeled_metrics() -> dict[str, Any]:
     """Return blank labeled-target metrics for proxy-only comparisons."""
 
@@ -1032,7 +1043,7 @@ def summarize_run(
         "n_images": metadata_or_count(data, "n_images", data.detections_per_frame),
         "detection_threshold": detection_threshold,
         "n_detections": metadata_or_count(data, "n_detections", data.detections),
-        "n_tracks": data.metadata.get("n_tracks"),
+        "n_tracks": metadata_count_or_none(data, "n_tracks"),
         "n_velocity_estimates": metadata_or_count(data, "n_velocity_estimates", data.velocities),
         "n_filtered_velocity_estimates": metadata_or_count(
             data,
