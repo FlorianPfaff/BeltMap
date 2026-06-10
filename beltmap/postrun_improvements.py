@@ -172,7 +172,9 @@ def finite_float(value: Any) -> float | None:
 
 def finite_int(value: Any) -> int | None:
     parsed = finite_float(value)
-    return None if parsed is None else int(parsed)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def metadata_count_or_rows(

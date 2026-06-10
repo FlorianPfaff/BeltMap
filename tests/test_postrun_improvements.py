@@ -19,6 +19,23 @@ def test_uncertainty_from_counts_marks_unobserved_rows():
     assert uncertainty[2] == 1.0
 
 
+def test_finite_int_rejects_fractional_values():
+    assert pri.finite_int("7") == 7
+    assert pri.finite_int("7.0") == 7
+    assert pri.finite_int("7.5") is None
+
+
+def test_detection_count_by_frame_ignores_fractional_frame_indices(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections_per_frame.csv").write_text(
+        "frame_index,n_detections\n0.5,7\n1,2\n",
+        encoding="utf-8",
+    )
+
+    assert pri.detection_count_by_frame(out) == {1: 2}
+
+
 def test_map_uncertainty_creates_explicit_report_dir(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
