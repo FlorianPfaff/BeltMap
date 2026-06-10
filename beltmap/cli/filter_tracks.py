@@ -237,15 +237,26 @@ def parse_detection(row: dict[str, str]) -> ParticleDetection:
     )
 
 
+def parse_track_detection_index(value: str, *, fallback: int) -> int:
+    if value == "":
+        return fallback
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError("track_detection_index must be integer-valued") from exc
+    if not parsed.is_integer():
+        raise ValueError("track_detection_index must be integer-valued")
+    return int(parsed)
+
+
 def parse_tracks(rows: list[dict[str, str]]) -> list[ParticleTrack]:
     grouped: dict[int, list[tuple[int, ParticleDetection]]] = {}
     for row in rows:
         track_id = int(float(row["track_id"]))
         raw_index = row.get("track_detection_index", "")
-        detection_index = (
-            len(grouped.get(track_id, []))
-            if raw_index == ""
-            else int(float(raw_index))
+        detection_index = parse_track_detection_index(
+            raw_index,
+            fallback=len(grouped.get(track_id, [])),
         )
         grouped.setdefault(track_id, []).append((detection_index, parse_detection(row)))
     return [
