@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap import (
     BeltMotionModel,
@@ -58,6 +59,27 @@ def test_render_expected_clean_belt_accepts_explicit_phase_estimate():
 
     np.testing.assert_allclose(render.image[:, 0], [4.5, 5.5, 6.5])
     assert render.phase_estimate is phase
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"belt_region": (0.5, 0, 3, 4), "output_shape": (3, 4)}, "belt_region top"),
+        ({"belt_region": (0, 0, 3, 4), "output_shape": (3.5, 4)}, "output_shape height"),
+        ({"belt_region": BeltRegion(top=0, left=0, height=3.5, width=4), "output_shape": (4, 4)}, "belt_region height"),
+    ],
+)
+def test_render_expected_clean_belt_rejects_fractional_geometry(kwargs, message):
+    belt = np.zeros((8, 4), dtype=float)
+    phase = PhaseEstimate(phase_px=0.0, frame_index=0, predicted_phase_px=0.0)
+
+    with pytest.raises(ValueError, match=message):
+        render_expected_clean_belt(
+            belt_map=belt,
+            frame_index=0,
+            phase_estimate=phase,
+            **kwargs,
+        )
 
 
 def test_render_expected_clean_belt_can_refine_phase_from_observed_frame():
