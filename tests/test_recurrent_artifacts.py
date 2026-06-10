@@ -52,6 +52,30 @@ def test_belt_revolution_indices_rejects_invalid_period(period_px):
         )
 
 
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (RecurrentArtifactConfig(min_revolutions=float("nan")), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions=1.5), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions=1, margin_px=float("nan")), "margin_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, margin_px=1.5), "margin_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=float("nan")), "candidate_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=1.5), "candidate_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, reject_max_area_px=float("nan")), "reject_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, reject_max_area_px=1.5), "reject_max_area_px"),
+    ],
+)
+def test_recurrent_artifact_config_rejects_invalid_integer_settings(config, message):
+    with pytest.raises(ValueError, match=message):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=(2, 2),
+            config=config,
+        )
+
+
 def test_recurrent_artifact_map_counts_distinct_revolutions_only():
     recurrent = detection(0, 1, 2, 3, 4)
     same_revolution_duplicate = detection(1, 1, 2, 3, 4)

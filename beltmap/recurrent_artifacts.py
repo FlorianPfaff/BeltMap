@@ -617,12 +617,13 @@ def _recurrence_probability(
 
 
 def _validate_config(config: RecurrentArtifactConfig) -> None:
-    if config.min_revolutions < 1:
+    if _positive_integer_config_value(config.min_revolutions, "min_revolutions") < 1:
         raise ValueError("min_revolutions must be at least 1")
     _validate_filter_config(config)
 
 
 def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
+    _nonnegative_integer_config_value(config.margin_px, "margin_px")
     if config.margin_px < 0:
         raise ValueError("margin_px must be non-negative")
     if not 0 <= config.max_overlap_fraction <= 1:
@@ -634,20 +635,58 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         raise ValueError(f"mode must be one of {choices}")
     if not np.isfinite(config.soft_penalty_weight) or config.soft_penalty_weight < 0:
         raise ValueError("soft_penalty_weight must be finite and non-negative")
-    if config.candidate_max_area_px is not None and config.candidate_max_area_px < 1:
+    candidate_max_area_px = _optional_positive_integer_config_value(
+        config.candidate_max_area_px,
+        "candidate_max_area_px",
+    )
+    if candidate_max_area_px is not None and candidate_max_area_px < 1:
         raise ValueError("candidate_max_area_px must be positive when set")
     if config.candidate_max_peak_signal is not None and (
         not np.isfinite(config.candidate_max_peak_signal)
         or config.candidate_max_peak_signal < 0
     ):
         raise ValueError("candidate_max_peak_signal must be finite and non-negative when set")
-    if config.reject_max_area_px is not None and config.reject_max_area_px < 1:
+    reject_max_area_px = _optional_positive_integer_config_value(
+        config.reject_max_area_px,
+        "reject_max_area_px",
+    )
+    if reject_max_area_px is not None and reject_max_area_px < 1:
         raise ValueError("reject_max_area_px must be positive when set")
     if config.reject_max_peak_signal is not None and (
         not np.isfinite(config.reject_max_peak_signal)
         or config.reject_max_peak_signal < 0
     ):
         raise ValueError("reject_max_peak_signal must be finite and non-negative when set")
+
+
+def _integer_config_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
+
+
+def _nonnegative_integer_config_value(value: int, name: str) -> int:
+    parsed = _integer_config_value(value, name)
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return parsed
+
+
+def _positive_integer_config_value(value: int, name: str) -> int:
+    parsed = _integer_config_value(value, name)
+    if parsed < 1:
+        raise ValueError(f"{name} must be positive")
+    return parsed
+
+
+def _optional_positive_integer_config_value(
+    value: int | None,
+    name: str,
+) -> int | None:
+    if value is None:
+        return None
+    return _positive_integer_config_value(value, name)
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
