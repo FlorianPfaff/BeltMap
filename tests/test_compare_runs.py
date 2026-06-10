@@ -692,3 +692,19 @@ def test_compare_rejects_existing_csv_with_missing_required_columns(tmp_path):
         assert "bbox_bottom" in str(exc)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("expected schema validation to reject malformed CSV")
+
+
+def test_compare_rejects_fractional_metadata_counts(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    metadata = json.loads((run_b / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_detections"] = 2.5
+    (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="n_detections"):
+        generate_comparison_report(
+            [RunSpec("a", run_a), RunSpec("b", run_b)],
+            report_dir=tmp_path / "comparison",
+        )
