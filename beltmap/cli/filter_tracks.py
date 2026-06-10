@@ -191,8 +191,8 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
 
 def parse_velocity(row: dict[str, str]) -> ParticleVelocity:
     return ParticleVelocity(
-        track_id=int(row["track_id"]),
-        n_detections=int(row["n_detections"]),
+        track_id=int(float(row["track_id"])),
+        n_detections=int(float(row["n_detections"])),
         frame_start=float(row["frame_start"]),
         frame_end=float(row["frame_end"]),
         velocity_y_px_per_frame=float(row["velocity_y_px_per_frame"]),
@@ -366,7 +366,7 @@ def filter_tracks(
     filtered_tracks_result: str | None = None
     if track_rows:
         filtered_track_rows = [
-            row for row in track_rows if int(row["track_id"]) in accepted_ids
+            row for row in track_rows if int(float(row["track_id"])) in accepted_ids
         ]
         write_csv(filtered_tracks_path, filtered_track_rows, TRACK_DETECTION_FIELDS)
         filtered_track_count = len(filtered_track_rows)
