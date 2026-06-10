@@ -2,6 +2,7 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from scripts import filter_run_by_detection_overlap as overlap_filter
@@ -119,6 +120,33 @@ def test_filter_run_keeps_only_detections_confirmed_by_overlap(tmp_path):
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["n_detections"] == 1
     assert metadata["confirmation"]["rejected_detections"] == 1
+
+
+def test_filter_run_rejects_fractional_candidate_frame_indices(tmp_path, capsys):
+    candidate = tmp_path / "candidate"
+    confirming = tmp_path / "confirming"
+    output = tmp_path / "confirmed"
+    make_run(candidate, [detection(1, x=10, y=10)])
+    make_run(confirming, [detection(1, x=10, y=10)])
+    bad_row = detection(1, x=10, y=10)
+    bad_row["frame_index"] = "0.5"
+    write_csv(candidate / "detections.csv", [bad_row], overlap_filter.DETECTION_FIELDS)
+
+    with pytest.raises(SystemExit) as exc_info:
+        overlap_filter.main(
+            [
+                "--candidate-run",
+                str(candidate),
+                "--confirming-run",
+                str(confirming),
+                "--output-dir",
+                str(output),
+                "--quiet",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "frame_index must be an integer-like value" in capsys.readouterr().err
 
 
 def test_filter_run_can_reject_distant_iou_confirmation(tmp_path):
