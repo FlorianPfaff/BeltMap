@@ -550,13 +550,35 @@ def detection_score_field(
     *,
     score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
 ) -> str | None:
-    """Return the first finite per-detection score field available in rows."""
+    """Return the first score field with finite values for every row."""
 
     buffered_rows = list(rows)
+    if not buffered_rows:
+        return None
     for field in score_fields:
-        if any(finite_float(row.get(field)) is not None for row in buffered_rows):
+        if all(finite_float(row.get(field)) is not None for row in buffered_rows):
             return field
     return None
+
+
+def incomplete_score_row_count(
+    rows: Iterable[dict[str, Any]],
+    *,
+    score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
+) -> int:
+    """Return the fewest missing-score rows among candidate score fields."""
+
+    buffered_rows = list(rows)
+    if not buffered_rows:
+        return 0
+    missing_counts: list[int] = []
+    for field in score_fields:
+        finite_count = sum(
+            1 for row in buffered_rows if finite_float(row.get(field)) is not None
+        )
+        if finite_count:
+            missing_counts.append(len(buffered_rows) - finite_count)
+    return min(missing_counts) if missing_counts else len(buffered_rows)
 
 
 def froc_frame_denominator(
@@ -703,6 +725,11 @@ def detection_froc_curve(
         }
 
     score_field = detection_score_field(detection_rows, score_fields=score_fields)
+    skipped_score_rows = (
+        0
+        if score_field is not None or not detection_rows
+        else incomplete_score_row_count(detection_rows, score_fields=score_fields)
+    )
     empty_metrics = detection_metrics([], truth, iou_threshold=iou_threshold)
     truth_boxes = int(empty_metrics.get("truth_boxes") or 0)
     points = [
@@ -713,14 +740,11 @@ def detection_froc_curve(
         )
     ]
 
-    skipped_score_rows = 0
     thresholds: list[float] = []
     if score_field is not None:
         for row in detection_rows:
             score = finite_float(row.get(score_field))
-            if score is None:
-                skipped_score_rows += 1
-                continue
+            assert score is not None
             thresholds.append(score)
         for threshold in sorted(set(thresholds), reverse=True):
             kept_rows = [
@@ -756,7 +780,12 @@ def detection_froc_curve(
     if truth_boxes == 0:
         reason = "no truth boxes on scored frames"
     elif score_field is None and detection_rows:
-        reason = "no finite per-detection score field available for threshold sweep"
+        reason = (
+            "no per-detection score field is finite for every scored detection; "
+            "partial-score FROC sweeps would ignore unscored detections"
+        )
+    if not available:
+        recall_limits = {limit: None for limit in FROC_FP_PER_FRAME_LIMITS}
 
     return {
         "available": available,
@@ -768,9 +797,13 @@ def detection_froc_curve(
         "skipped_score_rows": skipped_score_rows,
         "points": points,
         "point_count": len(points),
-        "auc_fp_per_frame_le_1": froc_auc_up_to_fp_per_frame(
-            points,
-            max_fp_per_frame=FROC_AUC_FP_PER_FRAME_LIMIT,
+        "auc_fp_per_frame_le_1": (
+            froc_auc_up_to_fp_per_frame(
+                points,
+                max_fp_per_frame=FROC_AUC_FP_PER_FRAME_LIMIT,
+            )
+            if available
+            else None
         ),
         "recall_at_0_1_fp_per_frame": recall_limits[0.1],
         "recall_at_0_5_fp_per_frame": recall_limits[0.5],

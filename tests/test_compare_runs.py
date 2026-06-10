@@ -302,6 +302,56 @@ def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
     assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
 
 
+def test_detection_froc_curve_rejects_partial_score_fields():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            }
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "1",
+            "bbox_left": "2",
+            "bbox_bottom": "4",
+            "bbox_right": "5",
+            "y": "2.0",
+            "x": "3.0",
+            "peak_signal": "12.0",
+        },
+        {
+            "frame_index": "2",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "22",
+            "bbox_right": "22",
+            "y": "21.0",
+            "x": "21.0",
+            "peak_signal": "",
+        },
+    ]
+
+    froc = detection_froc_curve(
+        detections,
+        truth,
+        scored_frames={0, 2},
+        iou_threshold=0.25,
+    )
+
+    assert froc["available"] is False
+    assert froc["score_field"] is None
+    assert froc["skipped_score_rows"] == 1
+    assert froc["auc_fp_per_frame_le_1"] is None
+    assert froc["recall_at_0_1_fp_per_frame"] is None
+    assert "partial-score FROC" in froc["reason"]
+
+
 def test_generate_comparison_report_adds_bootstrap_confidence_intervals(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"
