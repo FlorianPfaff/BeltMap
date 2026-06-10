@@ -125,6 +125,10 @@ def scalar_from_sources(
     return fallback
 
 
+def row_count_if_present(path: Path, rows: list[Any]) -> int | None:
+    return len(rows) if path.exists() else None
+
+
 def percentile(values: Iterable[float], q: float) -> float | None:
     arr = np.asarray(list(values), dtype=np.float64)
     if arr.size == 0:
@@ -175,10 +179,14 @@ def summarize_output_dir(run: RunSpec) -> dict[str, Any]:
     output_dir = run.output_dir
     metadata = read_json(output_dir / "metadata.json")
     progress_rows = read_progress_jsonl(output_dir / "progress.jsonl")
-    phase_rows = read_csv_rows(output_dir / "phase_estimates.csv")
-    detection_rows = read_csv_rows(output_dir / "detections_per_frame.csv")
-    detections = read_csv_rows(output_dir / "detections.csv")
-    velocity_rows = read_csv_rows(output_dir / "velocities.csv")
+    phase_path = output_dir / "phase_estimates.csv"
+    detection_count_path = output_dir / "detections_per_frame.csv"
+    detection_path = output_dir / "detections.csv"
+    velocity_path = output_dir / "velocities.csv"
+    phase_rows = read_csv_rows(phase_path)
+    detection_rows = read_csv_rows(detection_count_path)
+    detections = read_csv_rows(detection_path)
+    velocity_rows = read_csv_rows(velocity_path)
 
     corrections = finite_values(phase_rows, "correction_px")
     abs_corrections = [abs(value) for value in corrections]
@@ -205,22 +213,26 @@ def summarize_output_dir(run: RunSpec) -> dict[str, Any]:
         "run": run.name,
         "output_dir": str(output_dir),
         "missing_files": ",".join(missing_standard_files(output_dir)),
-        "n_images": scalar_from_sources(metadata, "n_images", fallback=len(detection_rows) or None),
+        "n_images": scalar_from_sources(
+            metadata,
+            "n_images",
+            fallback=row_count_if_present(detection_count_path, detection_rows),
+        ),
         "n_phase_estimates": scalar_from_sources(
             metadata,
             "n_phase_estimates",
-            fallback=len(phase_rows) or None,
+            fallback=row_count_if_present(phase_path, phase_rows),
         ),
         "n_detections": scalar_from_sources(
             metadata,
             "n_detections",
-            fallback=len(detections) or None,
+            fallback=row_count_if_present(detection_path, detections),
         ),
         "n_tracks": scalar_from_sources(metadata, "n_tracks"),
         "n_velocity_estimates": scalar_from_sources(
             metadata,
             "n_velocity_estimates",
-            fallback=len(velocity_rows) or None,
+            fallback=row_count_if_present(velocity_path, velocity_rows),
         ),
         "phase_correction_abs_median_px": percentile(abs_corrections, 50),
         "phase_correction_abs_q95_px": percentile(abs_corrections, 95),
