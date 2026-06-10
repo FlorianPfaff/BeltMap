@@ -141,3 +141,50 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
     metrics = json.loads((tmp_path / "map_only_negative_control_metrics.json").read_text(encoding="utf-8"))
     assert metrics["detections"]["false_detections"] == 0
     assert metrics["tracks"]["false_tracks"] == 0
+
+
+def test_map_only_cli_rejects_fractional_integer_config_options():
+    with pytest.raises(ValueError, match="min_track_length must be an integer"):
+        cli_map_only_negative_control._int_option(
+            None,
+            {"options": {"min_track_length": {"value": "2.5"}}},
+            "min_track_length",
+            ("tracking", "min_track_length"),
+            2,
+        )
+
+
+def test_map_only_cli_ignores_fractional_crop_region_height():
+    assert cli_map_only_negative_control._region_height(
+        {"top": 0, "left": 0, "height": "12.5", "width": 40}
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("--long-track-length", "0", "long_track_length must be positive"),
+        ("--frame-count", "-1", "frame_count must be positive"),
+        ("--crop-height-px", "0", "crop_height_px must be positive"),
+    ],
+)
+def test_map_only_cli_rejects_explicit_invalid_integer_values(
+    tmp_path,
+    capsys,
+    option,
+    value,
+    message,
+):
+    with pytest.raises(SystemExit) as exc_info:
+        cli_map_only_negative_control.main(
+            [
+                "--output-dir",
+                str(tmp_path),
+                option,
+                value,
+                "--quiet",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert message in capsys.readouterr().err
