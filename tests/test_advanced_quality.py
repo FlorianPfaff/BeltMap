@@ -5,6 +5,7 @@ import numpy as np
 from beltmap.advanced_quality import (
     bbox_iou,
     evaluate_real_detections,
+    quality_flags,
     quadratic_subpixel_minimum,
     robust_gain_offset,
     theil_sen_slope,
@@ -91,3 +92,22 @@ def test_real_label_metrics_zero_match_f1_is_zero_not_missing(tmp_path):
     assert metrics.precision == 0.0
     assert metrics.recall == 0.0
     assert metrics.f1 == 0.0
+
+
+def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text(
+        "frame_index,area_px\n0,10\n1,12\n",
+        encoding="utf-8",
+    )
+
+    payload = quality_flags(out)
+
+    flag = next(flag for flag in payload["flags"] if flag["code"] == "heavy_recurrent_filtering")
+    assert flag["rejected"] == 5
+    assert flag["share"] == 1.0

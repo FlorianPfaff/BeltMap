@@ -69,6 +69,37 @@ def test_quality_contract_uses_metadata_registration_search_radius(tmp_path):
     assert results[0].value == 1.0
 
 
+def test_postrun_quality_flags_preserve_zero_detection_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
+
+    flags = pri.quality_flags_from_outputs(out)
+
+    flag = next(flag for flag in flags if flag.code == "heavy_recurrent_filtering")
+    assert flag.value == 1.0
+
+
+def test_quality_contract_preserves_zero_detection_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(out, {"max_recurrent_rejection_share": 0.75})
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
+
+
 def test_label_plan_combines_failure_buckets(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()

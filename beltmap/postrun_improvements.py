@@ -175,6 +175,17 @@ def finite_int(value: Any) -> int | None:
     return None if parsed is None else int(parsed)
 
 
+def metadata_count_or_rows(
+    metadata: Mapping[str, Any],
+    key: str,
+    rows: Sequence[Any],
+) -> int:
+    """Return a metadata count when present, preserving valid zero values."""
+
+    value = finite_int(metadata.get(key))
+    return value if value is not None else len(rows)
+
+
 def load_metadata(output_dir: Path) -> dict[str, Any]:
     metadata_path = output_dir / "metadata.json"
     if not metadata_path.is_file():
@@ -526,7 +537,7 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
             flags.append(QualityFlag("warning", "implausible_velocity_ratios", "many velocity ratios are outside [0, 1.1]", in_range, 0.5))
 
     recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
-    n_detections = finite_int(metadata.get("n_detections")) or len(detections)
+    n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
     denom = recurrent_rejected + n_detections
     if denom > 0:
         rejected_share = recurrent_rejected / denom
@@ -997,7 +1008,7 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
         results.append(ContractResult("velocity_ratio_in_range_share", in_range_share is None or in_range_share >= threshold, in_range_share, threshold, ">=", f"share of velocity ratios in [{lower}, {upper}]"))
 
     recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
-    n_detections = finite_int(metadata.get("n_detections")) or len(detections)
+    n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
     rejection_share = None if recurrent_rejected + n_detections == 0 else recurrent_rejected / (recurrent_rejected + n_detections)
     threshold = finite_float(contract.get("max_recurrent_rejection_share"))
     if threshold is not None:
