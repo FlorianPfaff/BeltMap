@@ -1334,59 +1334,66 @@ def write_plots(
     *,
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
+    make_metric_plots: bool = True,
+    make_contact_sheets: bool = True,
 ) -> tuple[dict[str, Path], dict[str, Path]]:
     """Write comparison plots and contact sheets."""
 
-    plots = {
-        "detections_per_frame": report_dir / "detections_per_frame_comparison.png",
-        "velocity_ratio_histogram": report_dir / "velocity_ratio_histogram_comparison.png",
-    }
-    if labeled_truth is not None:
-        plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
-    images = {
-        "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
-        "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
-    }
-    if any(run.fixed_preview_paths for run in runs):
-        images.update(
-            {
-                "fixed_scale_detection_contact_sheet": report_dir / "fixed_scale_detection_contact_sheet.png",
-                "fixed_scale_filtered_detection_contact_sheet": report_dir / "fixed_scale_filtered_detection_contact_sheet.png",
-            }
+    plots: dict[str, Path] = {}
+    if make_metric_plots:
+        plots = {
+            "detections_per_frame": report_dir / "detections_per_frame_comparison.png",
+            "velocity_ratio_histogram": report_dir / "velocity_ratio_histogram_comparison.png",
+        }
+        if labeled_truth is not None:
+            plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
+        series = []
+        for run in runs:
+            xs, ys = paired_values(
+                run.detections_per_frame,
+                x_field="frame_index",
+                y_field="n_detections",
+            )
+            if not xs:
+                ys = finite_values(run.detections_per_frame, "n_detections")
+                xs = [float(index) for index in range(len(ys))]
+            series.append((run.spec.label, xs, ys))
+        draw_multiline_plot(
+            plots["detections_per_frame"],
+            title="Detections per frame",
+            labeled_series=series,
+            x_label="frame_index",
+            y_label="n_detections",
         )
-    if any(run.raw_preview_paths for run in runs):
-        images.update(
-            {
-                "raw_detection_contact_sheet": report_dir / "raw_detection_contact_sheet.png",
-                "raw_filtered_detection_contact_sheet": report_dir / "raw_filtered_detection_contact_sheet.png",
-            }
-        )
-    series = []
-    for run in runs:
-        xs, ys = paired_values(
-            run.detections_per_frame,
-            x_field="frame_index",
-            y_field="n_detections",
-        )
-        if not xs:
-            ys = finite_values(run.detections_per_frame, "n_detections")
-            xs = [float(index) for index in range(len(ys))]
-        series.append((run.spec.label, xs, ys))
-    draw_multiline_plot(
-        plots["detections_per_frame"],
-        title="Detections per frame",
-        labeled_series=series,
-        x_label="frame_index",
-        y_label="n_detections",
-    )
-    draw_velocity_ratio_histogram(plots["velocity_ratio_histogram"], runs)
-    if labeled_truth is not None:
-        draw_labeled_froc_plot(
-            plots["labeled_detection_froc"],
-            runs,
-            labeled_truth=labeled_truth,
-            truth_iou_threshold=truth_iou_threshold,
-        )
+        draw_velocity_ratio_histogram(plots["velocity_ratio_histogram"], runs)
+        if labeled_truth is not None:
+            draw_labeled_froc_plot(
+                plots["labeled_detection_froc"],
+                runs,
+                labeled_truth=labeled_truth,
+                truth_iou_threshold=truth_iou_threshold,
+            )
+
+    images: dict[str, Path] = {}
+    if make_contact_sheets:
+        images = {
+            "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
+            "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
+        }
+        if any(run.fixed_preview_paths for run in runs):
+            images.update(
+                {
+                    "fixed_scale_detection_contact_sheet": report_dir / "fixed_scale_detection_contact_sheet.png",
+                    "fixed_scale_filtered_detection_contact_sheet": report_dir / "fixed_scale_filtered_detection_contact_sheet.png",
+                }
+            )
+        if any(run.raw_preview_paths for run in runs):
+            images.update(
+                {
+                    "raw_detection_contact_sheet": report_dir / "raw_detection_contact_sheet.png",
+                    "raw_filtered_detection_contact_sheet": report_dir / "raw_filtered_detection_contact_sheet.png",
+                }
+            )
     return plots, images
 
 
@@ -1581,72 +1588,88 @@ def build_markdown_report(
                 "",
             ]
         )
-    lines.extend(["", "## Visual comparison", ""])
-    if "raw_detection_contact_sheet" in images:
+    if images:
+        lines.extend(["", "## Visual comparison", ""])
+        if "raw_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    "Raw crops use one shared display scale across the sampled frames, so frame-to-frame brightness is comparable.",
+                    "",
+                    f"![Raw detection contact sheet]({markdown_link(images['raw_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "fixed_scale_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    "Fixed residual previews use a fixed normalized-residual display range instead of per-frame percentile stretching.",
+                    "",
+                    f"![Fixed-scale detection contact sheet]({markdown_link(images['fixed_scale_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    "Autoscaled residual previews are kept for compatibility with older runs.",
+                    "",
+                    f"![Detection contact sheet]({markdown_link(images['detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if any(key.endswith("filtered_detection_contact_sheet") for key in images):
+            lines.extend(["## Filtered-track visual comparison", ""])
+        if "raw_filtered_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    f"![Raw filtered detection contact sheet]({markdown_link(images['raw_filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "fixed_scale_filtered_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    f"![Fixed-scale filtered detection contact sheet]({markdown_link(images['fixed_scale_filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "filtered_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    f"![Filtered detection contact sheet]({markdown_link(images['filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+    if "detections_per_frame" in plots:
         lines.extend(
             [
-                "Raw crops use one shared display scale across the sampled frames, so frame-to-frame brightness is comparable.",
                 "",
-                f"![Raw detection contact sheet]({markdown_link(images['raw_detection_contact_sheet'], relative_to=report_dir)})",
+                "## Detection counts",
+                "",
+                f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
                 "",
             ]
         )
-    if "fixed_scale_detection_contact_sheet" in images:
+    if "velocity_ratio_histogram" in plots:
         lines.extend(
             [
-                "Fixed residual previews use a fixed normalized-residual display range instead of per-frame percentile stretching.",
+                "## Velocity ratios",
                 "",
-                f"![Fixed-scale detection contact sheet]({markdown_link(images['fixed_scale_detection_contact_sheet'], relative_to=report_dir)})",
+                f"![Velocity-ratio histogram]({markdown_link(plots['velocity_ratio_histogram'], relative_to=report_dir)})",
                 "",
             ]
         )
-    lines.extend(
-        [
-            "Autoscaled residual previews are kept for compatibility with older runs.",
-            "",
-            f"![Detection contact sheet]({markdown_link(images['detection_contact_sheet'], relative_to=report_dir)})",
-            "",
-            "## Filtered-track visual comparison",
-            "",
-        ]
-    )
-    if "raw_filtered_detection_contact_sheet" in images:
-        lines.extend(
-            [
-                f"![Raw filtered detection contact sheet]({markdown_link(images['raw_filtered_detection_contact_sheet'], relative_to=report_dir)})",
-                "",
-            ]
-        )
-    if "fixed_scale_filtered_detection_contact_sheet" in images:
-        lines.extend(
-            [
-                f"![Fixed-scale filtered detection contact sheet]({markdown_link(images['fixed_scale_filtered_detection_contact_sheet'], relative_to=report_dir)})",
-                "",
-            ]
-        )
-    lines.extend(
-        [
-            f"![Filtered detection contact sheet]({markdown_link(images['filtered_detection_contact_sheet'], relative_to=report_dir)})",
-            "",
-            "## Detection counts",
-            "",
-            f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
-            "",
-            "## Velocity ratios",
-            "",
-            f"![Velocity-ratio histogram]({markdown_link(plots['velocity_ratio_histogram'], relative_to=report_dir)})",
-            "",
-            "## Decision checklist",
-            "",
-        ]
-    )
+    lines.extend(["## Decision checklist", ""])
     if truth_path is not None:
         lines.append(
             "- Prefer higher labeled recall at a fixed false-positive-per-frame budget or higher labeled FROC AUC; empty-frame FP counts are the fastest ghost-artifact warning."
         )
+    if images:
+        lines.append(
+            "- Use the contact sheet to inspect which false positives are belt scratches or map ghosts."
+        )
     lines.extend(
         [
-            "- Use the contact sheet to inspect which false positives are belt scratches or map ghosts.",
             "- Prefer compact filled particles over hollow or fractured particle components when labeled metrics are tied.",
             "- Use velocity-ratio plausibility and long-track counts as secondary checks, not as substitutes for labels.",
             "- Treat total detection count alone as weak evidence because lower thresholds can simply fragment scratches.",
@@ -1667,6 +1690,8 @@ def generate_comparison_report(
     bootstrap_confidence_level: float = 0.95,
     bootstrap_seed: int | None = 0,
     bootstrap_block_length_frames: int = 1,
+    make_metric_plots: bool = True,
+    make_contact_sheets: bool = True,
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
@@ -1704,6 +1729,8 @@ def generate_comparison_report(
         runs,
         labeled_truth=labeled_truth,
         truth_iou_threshold=truth_iou_threshold,
+        make_metric_plots=make_metric_plots,
+        make_contact_sheets=make_contact_sheets,
     )
     contact_sheet_specs = [
         ("detection_contact_sheet", "residual", False),
