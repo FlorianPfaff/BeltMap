@@ -890,12 +890,18 @@ def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
+        detections_per_frame = row["detections_per_frame"]
+        dpf_text = (
+            "n/a"
+            if detections_per_frame is None
+            else f"{float(detections_per_frame):.3g}"
+        )
         lines.append(
-            "| {label} | {n_detections} | {dpf:.3g} | {n_tracks} | {n_velocity_estimates} | "
+            "| {label} | {n_detections} | {dpf} | {n_tracks} | {n_velocity_estimates} | "
             "{n_filtered_velocity_estimates} | {area} | {elapsed:.1f} |".format(
                 label=row["label"],
                 n_detections=row["n_detections"],
-                dpf=row["detections_per_frame"] or math.nan,
+                dpf=dpf_text,
                 n_tracks=row["n_tracks"],
                 n_velocity_estimates=row["n_velocity_estimates"],
                 n_filtered_velocity_estimates=row["n_filtered_velocity_estimates"],

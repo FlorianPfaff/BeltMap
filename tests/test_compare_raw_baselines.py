@@ -83,3 +83,30 @@ def test_load_existing_beltmap_detections_rejects_fractional_frame_stride(tmp_pa
 def test_raw_baseline_numeric_args_reject_invalid_values(updates, message):
     with pytest.raises(SystemExit, match=message):
         crb.validate_numeric_args(valid_args(**updates))
+
+
+def test_raw_baseline_summary_preserves_zero_detections_per_frame(tmp_path):
+    crb.write_summary(
+        [
+            {
+                "label": "raw_zscore",
+                "source_run": "",
+                "same_tracker_recomputed": False,
+                "n_images": 4,
+                "n_detections": 0,
+                "detections_per_frame": 0.0,
+                "n_tracks": 0,
+                "n_velocity_estimates": 0,
+                "n_filtered_velocity_estimates": 0,
+                "detection_area_median_px": None,
+                "elapsed_s": 0.25,
+                "output_dir": str(tmp_path / "raw_zscore"),
+            }
+        ],
+        tmp_path,
+    )
+
+    report = (tmp_path / "raw_baseline_summary.md").read_text(encoding="utf-8")
+
+    assert "| raw_zscore | 0 | 0 | 0 | 0 | 0 |  | 0.2 |" in report
+    assert "nan" not in report.lower()
