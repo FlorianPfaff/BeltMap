@@ -189,10 +189,18 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         writer.writerows(rows)
 
 
+def parse_integral_field(row: dict[str, str], field: str) -> int:
+    value = row[field]
+    parsed = float(value)
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{field} must be an integer-valued number, got {value!r}")
+    return int(parsed)
+
+
 def parse_velocity(row: dict[str, str]) -> ParticleVelocity:
     return ParticleVelocity(
-        track_id=int(float(row["track_id"])),
-        n_detections=int(float(row["n_detections"])),
+        track_id=parse_integral_field(row, "track_id"),
+        n_detections=parse_integral_field(row, "n_detections"),
         frame_start=float(row["frame_start"]),
         frame_end=float(row["frame_end"]),
         velocity_y_px_per_frame=float(row["velocity_y_px_per_frame"]),
@@ -209,14 +217,14 @@ def parse_velocity(row: dict[str, str]) -> ParticleVelocity:
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
     return ParticleDetection(
         frame_index=float(row["frame_index"]),
-        label=int(row["label"]),
+        label=parse_integral_field(row, "label"),
         y=float(row["y"]),
         x=float(row["x"]),
-        area_px=int(row["area_px"]),
-        bbox_top=int(float(row["bbox_top"])),
-        bbox_left=int(float(row["bbox_left"])),
-        bbox_bottom=int(float(row["bbox_bottom"])),
-        bbox_right=int(float(row["bbox_right"])),
+        area_px=parse_integral_field(row, "area_px"),
+        bbox_top=parse_integral_field(row, "bbox_top"),
+        bbox_left=parse_integral_field(row, "bbox_left"),
+        bbox_bottom=parse_integral_field(row, "bbox_bottom"),
+        bbox_right=parse_integral_field(row, "bbox_right"),
         mean_signal=None if row.get("mean_signal", "") == "" else float(row["mean_signal"]),
         peak_signal=None if row.get("peak_signal", "") == "" else float(row["peak_signal"]),
         recurrent_artifact_overlap_fraction=(
@@ -252,7 +260,7 @@ def parse_track_detection_index(value: str, *, fallback: int) -> int:
 def parse_tracks(rows: list[dict[str, str]]) -> list[ParticleTrack]:
     grouped: dict[int, list[tuple[int, ParticleDetection]]] = {}
     for row in rows:
-        track_id = int(float(row["track_id"]))
+        track_id = parse_integral_field(row, "track_id")
         raw_index = row.get("track_detection_index", "")
         detection_index = parse_track_detection_index(
             raw_index,
@@ -302,7 +310,7 @@ def reconstruct_track_rows(output_dir: Path) -> list[dict[str, str]]:
     detections_by_frame: list[list[ParticleDetection]] = []
     images_by_frame: dict[int, str] = {}
     for row in detection_rows:
-        frame_index = int(float(row["frame_index"]))
+        frame_index = parse_integral_field(row, "frame_index")
         while len(detections_by_frame) <= frame_index:
             detections_by_frame.append([])
         detections_by_frame[frame_index].append(parse_detection(row))
@@ -377,7 +385,7 @@ def filter_tracks(
     filtered_tracks_result: str | None = None
     if track_rows:
         filtered_track_rows = [
-            row for row in track_rows if int(float(row["track_id"])) in accepted_ids
+            row for row in track_rows if parse_integral_field(row, "track_id") in accepted_ids
         ]
         write_csv(filtered_tracks_path, filtered_track_rows, TRACK_DETECTION_FIELDS)
         filtered_track_count = len(filtered_track_rows)
