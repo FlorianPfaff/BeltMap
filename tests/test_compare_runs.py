@@ -320,6 +320,30 @@ def test_labeled_truth_rejects_unreviewed_json_scaffold(tmp_path):
         load_labeled_detection_truth(truth_path)
 
 
+@pytest.mark.parametrize(
+    ("frames", "message"),
+    [
+        ([{"frame_index": 0.5, "boxes": []}], "frame_index"),
+        ([42, {"frame_index": 0, "boxes": []}], "frame entries must be objects"),
+    ],
+)
+def test_labeled_truth_rejects_invalid_reviewed_frame_containers(tmp_path, frames, message):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+                {
+                    "status": "reviewed_ground_truth",
+                    "requires_manual_review": False,
+                    "frames": frames,
+                }
+            ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_labeled_detection_truth(truth_path)
+
+
 def test_generate_comparison_report_scores_reviewed_frame_box_json(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"

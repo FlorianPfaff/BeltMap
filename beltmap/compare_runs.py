@@ -445,8 +445,12 @@ def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for frame in frames:
         if not isinstance(frame, dict):
-            continue
+            raise ValueError("truth frame entries must be objects")
         frame_index = row_frame_index(frame)
+        if frame_index is None:
+            raise ValueError(
+                "truth frame entries must contain a finite integer frame_index"
+            )
         for key in TRUTH_FRAME_BOX_CONTAINER_KEYS:
             boxes = frame.get(key)
             if not isinstance(boxes, list):
