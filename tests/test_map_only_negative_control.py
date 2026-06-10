@@ -143,6 +143,33 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
     assert metrics["tracks"]["false_tracks"] == 0
 
 
+@pytest.mark.parametrize(
+    ("config_kwargs", "message"),
+    [
+        ({"period_px": float("nan")}, "period_px must be positive"),
+        ({"belt_velocity_px_per_frame": float("nan")}, "belt_velocity_px_per_frame must be finite"),
+        ({"max_match_distance_px": float("nan")}, "max_match_distance_px must be positive"),
+        ({"highpass_min_scale_gray": float("nan")}, "highpass_min_scale_gray must be positive"),
+        ({"track_filter_min_velocity_ratio_y": float("nan")}, "track_filter_min_velocity_ratio_y must be finite"),
+        ({"track_filter_max_velocity_ratio_y": float("nan")}, "track_filter_max_velocity_ratio_y must be finite"),
+        (
+            {"track_filter_min_velocity_ratio_y": 1.2, "track_filter_max_velocity_ratio_y": 1.0},
+            "track_filter_min_velocity_ratio_y must be less than or equal",
+        ),
+        (
+            {"track_filter_max_abs_x_velocity_px_per_frame": float("nan")},
+            "track_filter_max_abs_x_velocity_px_per_frame must be non-negative",
+        ),
+    ],
+)
+def test_map_only_config_rejects_nonfinite_optional_floats(tmp_path, config_kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        generate_map_only_negative_control_report(
+            output_dir=tmp_path,
+            config=MapOnlyNegativeControlConfig(**config_kwargs),
+        )
+
+
 def test_map_only_cli_rejects_fractional_integer_config_options():
     with pytest.raises(ValueError, match="min_track_length must be an integer"):
         cli_map_only_negative_control._int_option(
