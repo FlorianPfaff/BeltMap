@@ -14,6 +14,7 @@ from beltmap.advanced_quality import (
     quality_flags,
     write_provenance,
 )
+from beltmap.compare_runs import finite_int
 from beltmap.phase import render_belt_view
 
 
@@ -137,8 +138,11 @@ def estimate_xy_shift_diagnostics(
             max_shift_y_px=max_shift_px,
             max_shift_x_px=max_shift_px,
         )
+        frame_index = finite_int(row.get("frame_index"))
+        if frame_index is None:
+            continue
         rows.append({
-            "frame_index": int(float(row["frame_index"])),
+            "frame_index": frame_index,
             "image": image_name,
             "shift_y_px": shift.shift_y_px,
             "shift_x_px": shift.shift_x_px,

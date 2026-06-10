@@ -9,6 +9,7 @@ from beltmap.cli import compare as cli_compare
 from beltmap.compare_runs import (
     RunSpec,
     detection_froc_curve,
+    finite_int,
     generate_comparison_report,
     parse_run_spec,
 )
@@ -113,6 +114,12 @@ def make_run(output_dir: Path, *, threshold: float, count_offset: int) -> None:
 def test_parse_run_spec_supports_label_and_default_label():
     assert parse_run_spec("T3p5=outputs/T3p5") == RunSpec("T3p5", Path("outputs/T3p5"))
     assert parse_run_spec("outputs/T4p0") == RunSpec("T4p0", Path("outputs/T4p0"))
+
+
+def test_finite_int_rejects_fractional_values():
+    assert finite_int("7") == 7
+    assert finite_int("7.0") == 7
+    assert finite_int("7.5") is None
 
 
 def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_path):
