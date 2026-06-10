@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 FloatArray = NDArray[np.floating]
+REVIEWED_GROUND_TRUTH_STATUS = "reviewed_ground_truth"
 
 
 @dataclass(frozen=True)
@@ -456,6 +457,8 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
     """
 
     data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        _validate_reviewed_truth_status(data)
     frames = data.get("frames") if isinstance(data, dict) else None
     if not isinstance(frames, list):
         raise ValueError("label JSON must contain a 'frames' list")
@@ -469,6 +472,31 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
             boxes.append({key: float(box[key]) for key in ("top", "left", "bottom", "right")})
         result[frame_index] = boxes
     return result
+
+
+def _review_flag_is_true(value: Any) -> bool:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "n"}:
+            return False
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+    return bool(value)
+
+
+def _validate_reviewed_truth_status(data: dict[str, Any]) -> None:
+    status = data.get("status")
+    requires_manual_review = data.get("requires_manual_review")
+    if status is None and requires_manual_review is None:
+        return
+    if status != REVIEWED_GROUND_TRUTH_STATUS or _review_flag_is_true(
+        requires_manual_review,
+    ):
+        raise ValueError(
+            "label JSON is not reviewed ground truth; set status="
+            f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
+            "only after all scored frames have been reviewed"
+        )
 
 
 def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5) -> RealLabelMetrics:
