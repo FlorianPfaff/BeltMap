@@ -73,6 +73,8 @@ def env_int(name: str, default: int, minimum: int | None = None) -> int:
 def env_float(name: str, default: float, minimum: float | None = None) -> float:
     value = os.getenv(name, "").strip()
     parsed = default if value == "" else float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
     if minimum is not None and parsed < minimum:
         raise ValueError(f"{name}={parsed} is below minimum {minimum}")
     return parsed
@@ -87,6 +89,8 @@ def env_optional_float(
     if value == "":
         return default
     parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
     if minimum is not None and parsed < minimum:
         raise ValueError(f"{name}={parsed} is below minimum {minimum}")
     return parsed
@@ -340,10 +344,20 @@ def resolve_velocity_frame_unit(frame_stride: int) -> str:
 
 def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[float, str, float]:
     raw_velocity = float(velocity_spec)
+    if not math.isfinite(raw_velocity):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME must be finite or the literal value 'auto'"
+        )
     frame_unit = resolve_velocity_frame_unit(frame_stride)
     if frame_unit == SOURCE_FRAME_VELOCITY_UNIT:
-        return raw_velocity * frame_stride, frame_unit, raw_velocity
-    return raw_velocity, frame_unit, raw_velocity
+        effective_velocity = raw_velocity * frame_stride
+    else:
+        effective_velocity = raw_velocity
+    if not math.isfinite(effective_velocity):
+        raise ValueError(
+            "BELT_VELOCITY_PX_PER_FRAME must produce a finite selected-frame velocity"
+        )
+    return effective_velocity, frame_unit, raw_velocity
 
 
 def optional_positive_int(name: str) -> int | None:
