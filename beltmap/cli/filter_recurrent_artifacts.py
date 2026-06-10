@@ -207,17 +207,37 @@ def parse_optional_float(row: dict[str, str], key: str) -> float | None:
     return None if value is None or str(value).strip() == "" else float(value)
 
 
+def finite_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
+def parse_required_int(value: Any, *, name: str) -> int:
+    parsed = finite_int(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be an integer-valued field")
+    return parsed
+
+
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
+    frame_index = parse_required_int(row.get("frame_index"), name="frame_index")
     return ParticleDetection(
-        frame_index=float(row["frame_index"]),
-        label=int(float(row["label"])),
+        frame_index=frame_index,
+        label=parse_required_int(row.get("label"), name="label"),
         y=float(row["y"]),
         x=float(row["x"]),
-        area_px=int(float(row["area_px"])),
-        bbox_top=int(float(row["bbox_top"])),
-        bbox_left=int(float(row["bbox_left"])),
-        bbox_bottom=int(float(row["bbox_bottom"])),
-        bbox_right=int(float(row["bbox_right"])),
+        area_px=parse_required_int(row.get("area_px"), name="area_px"),
+        bbox_top=parse_required_int(row.get("bbox_top"), name="bbox_top"),
+        bbox_left=parse_required_int(row.get("bbox_left"), name="bbox_left"),
+        bbox_bottom=parse_required_int(row.get("bbox_bottom"), name="bbox_bottom"),
+        bbox_right=parse_required_int(row.get("bbox_right"), name="bbox_right"),
         mean_signal=parse_optional_float(row, "mean_signal"),
         peak_signal=parse_optional_float(row, "peak_signal"),
         recurrent_artifact_overlap_fraction=parse_optional_float(
@@ -240,7 +260,10 @@ def detection_key(detection: ParticleDetection) -> tuple[int, int]:
 
 
 def row_detection_key(row: dict[str, Any]) -> tuple[int, int]:
-    return (int(float(row["frame_index"])), int(float(row["label"])))
+    return (
+        parse_required_int(row.get("frame_index"), name="frame_index"),
+        parse_required_int(row.get("label"), name="label"),
+    )
 
 
 def read_source_filtered_track_keys(input_dir: Path) -> set[tuple[int, int]]:
@@ -302,7 +325,7 @@ def group_detections(
     detections_by_frame: list[list[ParticleDetection]] = [[] for _ in range(frame_count)]
     image_by_frame: dict[int, str] = {}
     for row in rows:
-        frame_index = int(float(row["frame_index"]))
+        frame_index = parse_required_int(row.get("frame_index"), name="frame_index")
         if frame_index < 0 or frame_index >= frame_count:
             raise ValueError(
                 f"detection frame_index {frame_index} is outside frame_count {frame_count}"
@@ -315,8 +338,8 @@ def group_detections(
 def load_phase_px_by_frame(path: Path, *, frame_count: int) -> list[float]:
     phase_by_frame: list[float | None] = [None for _ in range(frame_count)]
     for row in read_csv_rows(path):
-        frame_index = int(float(row["frame_index"]))
-        if 0 <= frame_index < frame_count:
+        frame_index = finite_int(row.get("frame_index"))
+        if frame_index is not None and 0 <= frame_index < frame_count:
             phase_by_frame[frame_index] = float(row["phase_px"])
     missing = [index for index, value in enumerate(phase_by_frame) if value is None]
     if missing:
@@ -328,9 +351,13 @@ def load_phase_px_by_frame(path: Path, *, frame_count: int) -> list[float]:
 def infer_frame_count(metadata: dict[str, Any], detection_rows: list[dict[str, str]]) -> int:
     metadata_count = metadata.get("n_images")
     if metadata_count is not None:
-        return int(metadata_count)
+        return parse_required_int(metadata_count, name="n_images")
     max_detection_frame = max(
-        (int(float(row["frame_index"])) for row in detection_rows),
+        (
+            frame_index
+            for row in detection_rows
+            if (frame_index := finite_int(row.get("frame_index"))) is not None
+        ),
         default=-1,
     )
     return max_detection_frame + 1
