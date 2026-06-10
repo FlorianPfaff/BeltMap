@@ -213,6 +213,45 @@ def test_tracklet_truth_loader_accepts_json_tracklet_container(tmp_path):
     assert [box.tracklet_id for box in truth.boxes] == ["p01", "p01"]
 
 
+def test_tracklet_truth_loader_flattens_tracklet_frame_box_json(tmp_path):
+    label_path = tmp_path / "tracklets.json"
+    label_path.write_text(
+        json.dumps(
+            {
+                "scored_frames": [10, 11],
+                "tracklets": [
+                    {
+                        "tracklet_id": "p01",
+                        "frames": [
+                            {
+                                "frame_index": 10,
+                                "boxes": [
+                                    {"top": 1, "left": 2, "bottom": 5, "right": 8},
+                                ],
+                            },
+                            {
+                                "frame_index": 11,
+                                "boxes": [
+                                    {"top": 2, "left": 2, "bottom": 6, "right": 8},
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    truth = load_tracklet_truth(label_path)
+
+    assert sorted(truth.scored_frames) == [10, 11]
+    assert [(box.tracklet_id, box.frame_index) for box in truth.boxes] == [
+        ("p01", 10),
+        ("p01", 11),
+    ]
+
+
 def test_tracklet_truth_rejects_unreviewed_json_scaffold(tmp_path):
     label_path = tmp_path / "tracklets.json"
     label_path.write_text(
