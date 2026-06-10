@@ -877,13 +877,19 @@ def choose_velocity_row(velocity_rows: list[dict[str, str]], true_ratio: float |
     if not velocity_rows:
         return None
 
-    def key(row: dict[str, str]) -> tuple[int, float]:
+    def key(row: dict[str, str]) -> tuple[int, float] | None:
         detections = finite_int(row.get("n_detections")) or 0
+        velocity = finite_float(row.get("velocity_y_px_per_frame"))
         ratio = finite_float(row.get("velocity_ratio_y"))
+        if velocity is None and ratio is None:
+            return None
         ratio_penalty = abs(ratio - true_ratio) if ratio is not None and true_ratio is not None else float("inf")
         return detections, -ratio_penalty
 
-    return max(velocity_rows, key=key)
+    candidates = [(candidate_key, row) for row in velocity_rows if (candidate_key := key(row)) is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def choose_truth_matched_velocity_row(
