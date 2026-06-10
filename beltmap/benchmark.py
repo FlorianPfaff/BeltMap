@@ -1065,6 +1065,8 @@ def compute_benchmark_metrics(
     metadata_path = output_dir / "metadata.json"
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
     truth_rows = truth_particle_rows(truth)
+    event_prediction_rows = track_rows if tracks_path.is_file() else detection_rows
+    event_prediction_source = "tracks.csv" if tracks_path.is_file() else "detections.csv"
     truth_frame_count = (
         len(truth.get("frames"))
         if isinstance(truth.get("frames"), list)
@@ -1116,10 +1118,10 @@ def compute_benchmark_metrics(
             )
         ),
         "events": event_metrics(
-            track_rows or detection_rows,
+            event_prediction_rows,
             truth,
             iou_threshold=iou_threshold,
-            prediction_source="tracks.csv" if track_rows else "detections.csv",
+            prediction_source=event_prediction_source,
         ),
         "filtered_events": (
             event_metrics(
