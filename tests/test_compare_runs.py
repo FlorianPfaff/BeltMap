@@ -208,6 +208,29 @@ def test_generate_comparison_report_includes_fixed_and_raw_preview_sheets(tmp_pa
     assert "Fixed residual previews use a fixed normalized-residual display range" in report
 
 
+def test_generate_comparison_report_can_skip_contact_sheets(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=2)
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+        frames=[0, 2],
+        make_contact_sheets=False,
+    )
+
+    assert set(artifacts.plots) == {"detections_per_frame", "velocity_ratio_histogram"}
+    assert artifacts.images == {}
+    for path in artifacts.plots.values():
+        assert path.is_file()
+    assert not list((tmp_path / "comparison").glob("*contact_sheet.png"))
+    report = artifacts.report.read_text(encoding="utf-8")
+    assert "## Detection counts" in report
+    assert "Detection contact sheet" not in report
+
+
 def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"
@@ -541,6 +564,38 @@ def test_compare_main_prints_artifact_paths(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert Path(payload["report"]).is_file()
     assert Path(payload["summary_csv"]).is_file()
+
+
+def test_compare_main_metrics_only_skips_png_outputs(tmp_path, capsys):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+
+    exit_code = cli_compare.main(
+        [
+            "--run",
+            f"T4.0={run_a}",
+            "--run",
+            f"T3.5={run_b}",
+            "--report-dir",
+            str(tmp_path / "comparison"),
+            "--metrics-only",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert Path(payload["report"]).is_file()
+    assert Path(payload["summary_csv"]).is_file()
+    assert payload["plots"] == {}
+    assert payload["images"] == {}
+    assert payload["make_metric_plots"] is False
+    assert payload["make_contact_sheets"] is False
+    assert not list((tmp_path / "comparison").glob("*.png"))
+    report = Path(payload["report"]).read_text(encoding="utf-8")
+    assert "# BeltMap run comparison" in report
+    assert "![" not in report
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-0.1", "1.1"])
