@@ -219,7 +219,9 @@ def test_real_label_metrics_ignore_degenerate_detection_boxes(tmp_path):
     metrics = evaluate_real_detections(out, labels, iou_threshold=0.5)
 
     assert metrics.detection_boxes == 0
-    assert metrics.precision is None
+    assert metrics.precision == 1.0
+    assert metrics.recall == 1.0
+    assert metrics.f1 == 1.0
 
 
 def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(tmp_path):
