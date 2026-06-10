@@ -128,6 +128,31 @@ def test_recurrent_artifact_cross_revolution_scoring_rejects_invalid_revolution_
         )
 
 
+@pytest.mark.parametrize("map_shape", [(2.5, 2), (2, float("inf")), (0, 2)])
+def test_recurrent_artifact_map_rejects_invalid_map_shape(map_shape):
+    with pytest.raises(ValueError, match="map shape"):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=map_shape,
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+@pytest.mark.parametrize("frame_shape", [(2.5, 2), (2, float("nan")), (0, 2)])
+def test_recurrent_artifact_map_rejects_invalid_frame_shape(frame_shape):
+    with pytest.raises(ValueError, match="frame_shape"):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=(2, 2),
+            frame_shape=frame_shape,
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
 def test_recurrent_artifact_map_counts_distinct_revolutions_only():
     recurrent = detection(0, 1, 2, 3, 4)
     same_revolution_duplicate = detection(1, 1, 2, 3, 4)

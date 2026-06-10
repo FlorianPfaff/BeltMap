@@ -731,9 +731,8 @@ def _optional_positive_integer_config_value(
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
     if len(shape) != 2:
         raise ValueError("map shape must be 2-D")
-    height, width = (int(shape[0]), int(shape[1]))
-    if height <= 0 or width <= 0:
-        raise ValueError("map shape must be non-empty")
+    height = _positive_integer_dimension(shape[0], "map shape")
+    width = _positive_integer_dimension(shape[1], "map shape")
     return height, width
 
 
@@ -745,12 +744,18 @@ def _validate_frame_shape(
         return None
     if len(shape) != 2:
         raise ValueError("frame_shape must be 2-D")
-    frame_height, frame_width = (int(shape[0]), int(shape[1]))
-    if frame_height <= 0 or frame_width <= 0:
-        raise ValueError("frame_shape must be non-empty")
+    frame_height = _positive_integer_dimension(shape[0], "frame_shape")
+    frame_width = _positive_integer_dimension(shape[1], "frame_shape")
     if frame_width != map_width:
         raise ValueError(
             "frame_shape width must match recurrent artifact map width: "
             f"{frame_width} != {map_width}"
         )
     return frame_height
+
+
+def _positive_integer_dimension(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} dimensions must be positive finite integers")
+    return int(parsed)
