@@ -88,8 +88,10 @@ def build_recurrent_artifact_map(
 
     cfg = config or RecurrentArtifactConfig()
     _validate_config(cfg)
-    if len(phase_px_by_frame) != len(detections_by_frame):
-        raise ValueError("phase_px_by_frame must match detections_by_frame length")
+    phase_px_values = _validate_phase_px_by_frame(
+        phase_px_by_frame,
+        frame_count=len(detections_by_frame),
+    )
     if len(revolution_by_frame) != len(detections_by_frame):
         raise ValueError("revolution_by_frame must match detections_by_frame length")
     map_height, map_width = _validate_map_shape(map_shape)
@@ -104,7 +106,7 @@ def build_recurrent_artifact_map(
     for revolution in unique_revolutions:
         revolution_mask, revolution_candidates = _build_revolution_detection_mask(
             detections_by_frame,
-            phase_px_by_frame,
+            phase_px_values,
             revolution_by_frame,
             revolution=revolution,
             map_shape=(map_height, map_width),
@@ -114,7 +116,7 @@ def build_recurrent_artifact_map(
             frame_height=frame_height,
         )
         revolution_exposure = _build_revolution_exposure_mask(
-            phase_px_by_frame,
+            phase_px_values,
             revolution_by_frame,
             revolution=revolution,
             map_shape=(map_height, map_width),
@@ -163,8 +165,10 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
 
     cfg = config or RecurrentArtifactConfig(min_revolutions=1)
     _validate_config(cfg)
-    if len(phase_px_by_frame) != len(detections_by_frame):
-        raise ValueError("phase_px_by_frame must match detections_by_frame length")
+    phase_px_values = _validate_phase_px_by_frame(
+        phase_px_by_frame,
+        frame_count=len(detections_by_frame),
+    )
     if len(revolution_by_frame) != len(detections_by_frame):
         raise ValueError("revolution_by_frame must match detections_by_frame length")
 
@@ -183,7 +187,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
     for revolution in unique_revolutions:
         revolution_mask, _ = _build_revolution_detection_mask(
             detections_by_frame,
-            phase_px_by_frame,
+            phase_px_values,
             revolution_by_frame,
             revolution=revolution,
             map_shape=(map_height, map_width),
@@ -193,7 +197,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
             frame_height=frame_height,
         )
         revolution_exposure = _build_revolution_exposure_mask(
-            phase_px_by_frame,
+            phase_px_values,
             revolution_by_frame,
             revolution=revolution,
             map_shape=(map_height, map_width),
@@ -228,7 +232,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
         revolution = int(revolution_by_frame[frame_index])
         frame_scores = score_recurrent_artifact_detections(
             [detections],
-            [float(phase_px_by_frame[frame_index])],
+            [phase_px_values[frame_index]],
             artifact_maps_by_revolution[revolution],
             config=cfg,
             detection_threshold=detection_threshold,
@@ -286,8 +290,10 @@ def score_recurrent_artifact_detections(
         )
     if detection_threshold is not None and not np.isfinite(detection_threshold):
         raise ValueError("detection_threshold must be finite")
-    if len(phase_px_by_frame) != len(detections_by_frame):
-        raise ValueError("phase_px_by_frame must match detections_by_frame length")
+    phase_px_values = _validate_phase_px_by_frame(
+        phase_px_by_frame,
+        frame_count=len(detections_by_frame),
+    )
     artifact = _artifact_prior_array(
         artifact_map,
         probabilistic=mode == "probabilistic",
@@ -295,7 +301,7 @@ def score_recurrent_artifact_detections(
 
     scored: list[list[RecurrentArtifactDetectionScore]] = []
     for frame_index, detections in enumerate(detections_by_frame):
-        phase_px = float(phase_px_by_frame[frame_index])
+        phase_px = phase_px_values[frame_index]
         frame_scores: list[RecurrentArtifactDetectionScore] = []
         for detection in detections:
             overlap = detection_artifact_overlap_fraction(
@@ -657,6 +663,19 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         or config.reject_max_peak_signal < 0
     ):
         raise ValueError("reject_max_peak_signal must be finite and non-negative when set")
+
+
+def _validate_phase_px_by_frame(
+    phase_px_by_frame: Sequence[float],
+    *,
+    frame_count: int,
+) -> list[float]:
+    if len(phase_px_by_frame) != frame_count:
+        raise ValueError("phase_px_by_frame must match detections_by_frame length")
+    values = [float(value) for value in phase_px_by_frame]
+    if not all(np.isfinite(value) for value in values):
+        raise ValueError("phase_px_by_frame values must be finite")
+    return values
 
 
 def _integer_config_value(value: int, name: str) -> int:

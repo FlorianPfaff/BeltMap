@@ -76,6 +76,27 @@ def test_recurrent_artifact_config_rejects_invalid_integer_settings(config, mess
         )
 
 
+def test_recurrent_artifact_map_rejects_nonfinite_phase_values():
+    with pytest.raises(ValueError, match="phase_px_by_frame"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[float("nan")],
+            revolution_by_frame=[0],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
+    with pytest.raises(ValueError, match="phase_px_by_frame"):
+        score_recurrent_artifact_detections(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[float("nan")],
+            artifact_map=np.zeros((2, 2), dtype=bool),
+            config=RecurrentArtifactConfig(min_revolutions=0),
+        )
+
+
 def test_recurrent_artifact_map_counts_distinct_revolutions_only():
     recurrent = detection(0, 1, 2, 3, 4)
     same_revolution_duplicate = detection(1, 1, 2, 3, 4)
