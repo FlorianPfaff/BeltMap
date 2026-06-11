@@ -96,7 +96,7 @@ def render_expected_clean_belt(
         observed = _as_float_image(observed_frame, name="observed_frame")
         if observed.ndim != 2:
             raise ValueError("observed_frame must be a 2-D array")
-        if output_shape is not None and tuple(int(value) for value in output_shape) != observed.shape:
+        if output_shape is not None and _resolve_shape(output_shape) != observed.shape:
             raise ValueError(
                 "output_shape must match observed_frame.shape when observed_frame "
                 "is supplied"
@@ -180,11 +180,21 @@ def _resolve_belt_region(
         height, width = output_shape if output_shape is not None else fallback_shape
         return BeltRegion(top=0, left=0, height=height, width=width)
     if isinstance(belt_region, BeltRegion):
-        return belt_region
+        return BeltRegion(
+            top=_integer_config_value(belt_region.top, "belt_region top"),
+            left=_integer_config_value(belt_region.left, "belt_region left"),
+            height=_integer_config_value(belt_region.height, "belt_region height"),
+            width=_integer_config_value(belt_region.width, "belt_region width"),
+        )
     if len(belt_region) != 4:
         raise ValueError("belt_region tuple must be (top, left, height, width)")
     top, left, height, width = belt_region
-    region = BeltRegion(int(top), int(left), int(height), int(width))
+    region = BeltRegion(
+        _integer_config_value(top, "belt_region top"),
+        _integer_config_value(left, "belt_region left"),
+        _integer_config_value(height, "belt_region height"),
+        _integer_config_value(width, "belt_region width"),
+    )
     if output_shape is None and region.width != belt_width:
         raise ValueError("belt_region width must match belt_map width")
     return region
@@ -196,10 +206,26 @@ def _resolve_output_shape(
     region: BeltRegion,
 ) -> tuple[int, int]:
     if output_shape is not None:
-        return tuple(int(value) for value in output_shape)
+        return _resolve_shape(output_shape)
     if observed is not None:
         return observed.shape
     return (region.top + region.height, region.left + region.width)
+
+
+def _resolve_shape(output_shape: tuple[int, int]) -> tuple[int, int]:
+    if len(output_shape) != 2:
+        raise ValueError("output_shape must be (height, width)")
+    return (
+        _integer_config_value(output_shape[0], "output_shape height"),
+        _integer_config_value(output_shape[1], "output_shape width"),
+    )
+
+
+def _integer_config_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
 
 
 def _validate_region(region: BeltRegion, output_shape: tuple[int, int]) -> None:

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap import (
     BeltMotionModel,
@@ -113,6 +114,25 @@ def test_estimate_local_noise_excludes_negative_particle_pixels_when_requested()
     )
 
     assert float(with_exclusion[25, 25]) < float(without_exclusion[25, 25]) * 0.7
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (ResidualConfig(noise_radius_px=float("nan")), "noise_radius_px"),
+        (ResidualConfig(noise_radius_px=1.5), "noise_radius_px"),
+        (ResidualConfig(clip_sigma=float("nan")), "clip_sigma"),
+        (ResidualConfig(noise_exclusion_sigma=float("nan")), "noise_exclusion_sigma"),
+        (ResidualConfig(noise_exclusion_radius_px=float("nan")), "noise_exclusion_radius_px"),
+        (ResidualConfig(noise_exclusion_radius_px=1.5), "noise_exclusion_radius_px"),
+        (ResidualConfig(min_noise=float("nan")), "min_noise"),
+    ],
+)
+def test_estimate_local_noise_rejects_invalid_numeric_config(config, message):
+    residual = np.ones((5, 5), dtype=float)
+
+    with pytest.raises(ValueError, match=message):
+        estimate_local_noise(residual, config=config)
 
 
 def test_render_clean_belt_residual_returns_standardized_particle_signal():

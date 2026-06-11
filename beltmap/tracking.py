@@ -277,6 +277,16 @@ def track_particle_detections(
     )
     if len(effective_frame_indices) != len(detections_by_frame):
         raise ValueError("frame_indices must have the same length as detections_by_frame")
+    if not all(np.isfinite(index) for index in effective_frame_indices):
+        raise ValueError("frame_indices must be finite")
+    if any(
+        current <= previous
+        for previous, current in zip(
+            effective_frame_indices,
+            effective_frame_indices[1:],
+        )
+    ):
+        raise ValueError("frame_indices must be strictly increasing")
 
     tracks: list[list[ParticleDetection]] = []
     active_track_ids: list[int] = []
@@ -642,13 +652,18 @@ def estimate_particle_velocities_vs_belt(
         raise ValueError("belt_image_velocity_px_per_frame must be finite")
     if belt_image_velocity_px_per_frame == 0:
         raise ValueError("belt_image_velocity_px_per_frame must be non-zero")
-    if min_track_length < 2:
+    min_track_length_value = _finite_config_value(
+        min_track_length,
+        "min_track_length",
+    )
+    if min_track_length_value < 2 or not min_track_length_value.is_integer():
         raise ValueError("min_track_length must be at least 2")
+    min_track_length_int = int(min_track_length_value)
     fit_method = _validate_velocity_fit_method(fit_method)
 
     velocities: list[ParticleVelocity] = []
     for track in tracks:
-        if track.n_detections < min_track_length:
+        if track.n_detections < min_track_length_int:
             continue
         frames = np.asarray([d.frame_index for d in track.detections], dtype=np.float64)
         if np.unique(frames).size < 2:
@@ -919,30 +934,69 @@ def extract_particle_velocities_vs_belt(
 
 
 def _validate_component_config(config: ParticleComponentConfig) -> None:
-    if config.min_area_px < 1:
+    min_area_px = _finite_config_value(config.min_area_px, "min_area_px")
+    if min_area_px < 1:
         raise ValueError("min_area_px must be positive")
-    if config.max_area_px is not None and config.max_area_px < config.min_area_px:
+    max_area_px = _optional_finite_config_value(config.max_area_px, "max_area_px")
+    if max_area_px is not None and max_area_px < min_area_px:
         raise ValueError("max_area_px must be greater than or equal to min_area_px")
-    if config.min_bbox_width_px is not None and config.min_bbox_width_px < 1:
+    min_bbox_width_px = _optional_finite_config_value(
+        config.min_bbox_width_px,
+        "min_bbox_width_px",
+    )
+    if min_bbox_width_px is not None and min_bbox_width_px < 1:
         raise ValueError("min_bbox_width_px must be positive when set")
-    if config.min_bbox_height_px is not None and config.min_bbox_height_px < 1:
+    min_bbox_height_px = _optional_finite_config_value(
+        config.min_bbox_height_px,
+        "min_bbox_height_px",
+    )
+    if min_bbox_height_px is not None and min_bbox_height_px < 1:
         raise ValueError("min_bbox_height_px must be positive when set")
+    max_bbox_aspect_ratio = _optional_finite_config_value(
+        config.max_bbox_aspect_ratio,
+        "max_bbox_aspect_ratio",
+    )
     if (
-        config.max_bbox_aspect_ratio is not None
-        and config.max_bbox_aspect_ratio < 1.0
+        max_bbox_aspect_ratio is not None
+        and max_bbox_aspect_ratio < 1.0
     ):
         raise ValueError("max_bbox_aspect_ratio must be at least 1 when set")
-    if config.min_bbox_extent is not None and not (0.0 <= config.min_bbox_extent <= 1.0):
+    min_bbox_extent = _optional_finite_config_value(
+        config.min_bbox_extent,
+        "min_bbox_extent",
+    )
+    if min_bbox_extent is not None and not (0.0 <= min_bbox_extent <= 1.0):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
     if config.connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
-    if config.split_min_projection_gap_px < 1:
+    split_min_projection_gap_px = _finite_config_value(
+        config.split_min_projection_gap_px,
+        "split_min_projection_gap_px",
+    )
+    if split_min_projection_gap_px < 1:
         raise ValueError("split_min_projection_gap_px must be positive")
+    split_min_component_area_px = _optional_finite_config_value(
+        config.split_min_component_area_px,
+        "split_min_component_area_px",
+    )
     if (
-        config.split_min_component_area_px is not None
-        and config.split_min_component_area_px < 1
+        split_min_component_area_px is not None
+        and split_min_component_area_px < 1
     ):
         raise ValueError("split_min_component_area_px must be positive when set")
+
+
+def _finite_config_value(value: float, name: str) -> float:
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_config_value(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_config_value(value, name)
 
 
 def _validate_velocity_fit_method(method: str) -> str:
@@ -988,7 +1042,11 @@ def _component_shape_passes(
 
 
 def _validate_track_filter_config(config: TrackFilterConfig) -> None:
-    if config.min_track_length < 1:
+    min_track_length = _finite_config_value(
+        config.min_track_length,
+        "min_track_length",
+    )
+    if min_track_length < 1 or not min_track_length.is_integer():
         raise ValueError("min_track_length must be positive")
     if not np.isfinite(config.min_velocity_ratio_y):
         raise ValueError("min_velocity_ratio_y must be finite")
@@ -996,19 +1054,31 @@ def _validate_track_filter_config(config: TrackFilterConfig) -> None:
         raise ValueError("max_velocity_ratio_y must be finite")
     if config.max_velocity_ratio_y < config.min_velocity_ratio_y:
         raise ValueError("max_velocity_ratio_y must be greater than or equal to min_velocity_ratio_y")
+    max_abs_x_velocity_px_per_frame = _optional_finite_config_value(
+        config.max_abs_x_velocity_px_per_frame,
+        "max_abs_x_velocity_px_per_frame",
+    )
     if (
-        config.max_abs_x_velocity_px_per_frame is not None
-        and config.max_abs_x_velocity_px_per_frame <= 0
+        max_abs_x_velocity_px_per_frame is not None
+        and max_abs_x_velocity_px_per_frame <= 0
     ):
         raise ValueError("max_abs_x_velocity_px_per_frame must be positive when set")
-    if config.max_recurrent_artifact_track_score is not None and not (
-        0.0 <= config.max_recurrent_artifact_track_score <= 1.0
+    max_recurrent_artifact_track_score = _optional_finite_config_value(
+        config.max_recurrent_artifact_track_score,
+        "max_recurrent_artifact_track_score",
+    )
+    if max_recurrent_artifact_track_score is not None and not (
+        0.0 <= max_recurrent_artifact_track_score <= 1.0
     ):
         raise ValueError(
             "max_recurrent_artifact_track_score must be in [0, 1] when set"
         )
+    recurrent_artifact_detection_threshold = _finite_config_value(
+        config.recurrent_artifact_detection_threshold,
+        "recurrent_artifact_detection_threshold",
+    )
     if not (
-        0.0 <= config.recurrent_artifact_detection_threshold <= 1.0
+        0.0 <= recurrent_artifact_detection_threshold <= 1.0
     ):
         raise ValueError(
             "recurrent_artifact_detection_threshold must be in [0, 1]"
