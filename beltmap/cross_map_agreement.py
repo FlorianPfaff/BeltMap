@@ -31,8 +31,14 @@ class CrossMapAgreementConfig:
             raise ValueError("min_bbox_iou must be finite and in [0, 1]")
         if not isfinite(self.min_peak_ratio) or not 0.0 <= self.min_peak_ratio <= 1.0:
             raise ValueError("min_peak_ratio must be finite and in [0, 1]")
-        if self.min_confirming_maps < 1:
-            raise ValueError("min_confirming_maps must be at least 1")
+        min_confirming_maps = float(self.min_confirming_maps)
+        if (
+            not isfinite(min_confirming_maps)
+            or not min_confirming_maps.is_integer()
+            or min_confirming_maps < 1
+        ):
+            raise ValueError("min_confirming_maps must be a positive finite integer")
+        object.__setattr__(self, "min_confirming_maps", int(min_confirming_maps))
 
 
 @dataclass(frozen=True)

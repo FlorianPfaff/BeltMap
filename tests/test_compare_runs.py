@@ -320,6 +320,77 @@ def test_labeled_truth_rejects_unreviewed_json_scaffold(tmp_path):
         load_labeled_detection_truth(truth_path)
 
 
+@pytest.mark.parametrize(
+    ("frames", "message"),
+    [
+        ([{"frame_index": 0.5, "boxes": []}], "frame_index"),
+        ([42, {"frame_index": 0, "boxes": []}], "frame entries must be objects"),
+    ],
+)
+def test_labeled_truth_rejects_invalid_reviewed_frame_containers(tmp_path, frames, message):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+                {
+                    "status": "reviewed_ground_truth",
+                    "requires_manual_review": False,
+                    "frames": frames,
+                }
+            ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_labeled_detection_truth(truth_path)
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        {"top": 0, "left": 0, "bottom": 0, "right": 1},
+        {"top": 0, "left": 0, "bottom": float("nan"), "right": 1},
+        {"top": 0, "left": 0, "right": 1},
+    ],
+)
+def test_labeled_truth_rejects_malformed_reviewed_boxes(tmp_path, box):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [{"frame_index": 0, "boxes": [box]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="truth label boxes"):
+        load_labeled_detection_truth(truth_path)
+
+
+def test_labeled_truth_keeps_blank_csv_rows_as_empty_frames(tmp_path):
+    truth_path = tmp_path / "labels.csv"
+    write_csv(
+        truth_path,
+        [
+            {
+                "frame_index": 2,
+                "bbox_top": "",
+                "bbox_left": "",
+                "bbox_bottom": "",
+                "bbox_right": "",
+            },
+        ],
+    )
+
+    truth = load_labeled_detection_truth(truth_path)
+
+    assert truth["particles"] == []
+    assert truth["scored_frames"] == [2]
+    assert truth["skipped_label_rows"] == 1
+
+
 def test_generate_comparison_report_scores_reviewed_frame_box_json(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"

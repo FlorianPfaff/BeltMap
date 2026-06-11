@@ -445,8 +445,12 @@ def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for frame in frames:
         if not isinstance(frame, dict):
-            continue
+            raise ValueError("truth frame entries must be objects")
         frame_index = row_frame_index(frame)
+        if frame_index is None:
+            raise ValueError(
+                "truth frame entries must contain a finite integer frame_index"
+            )
         for key in TRUTH_FRAME_BOX_CONTAINER_KEYS:
             boxes = frame.get(key)
             if not isinstance(boxes, list):
@@ -530,6 +534,16 @@ def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def label_row_has_nonempty_box_field(row: dict[str, Any]) -> bool:
+    """Return true when a label row appears to contain a non-empty box."""
+
+    return any(
+        nonempty_value(row, field) is not None
+        for field_set in TRUTH_BOX_FIELD_SETS
+        for field in field_set
+    )
+
+
 def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
     """Load manually labeled detection boxes from CSV or JSON.
 
@@ -562,6 +576,11 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
             scored_frames.add(frame_index)
         particle = truth_particle_from_label_row(row)
         if particle is None:
+            if label_row_has_nonempty_box_field(row):
+                raise ValueError(
+                    "truth label boxes must contain finite positive "
+                    "top/left/bottom/right coordinates"
+                )
             skipped_rows += 1
             continue
         particles.append(particle)

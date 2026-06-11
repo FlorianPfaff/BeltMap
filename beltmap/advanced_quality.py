@@ -461,9 +461,13 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
         raise ValueError("label JSON must contain a 'frames' list")
     result: dict[int, list[dict[str, float]]] = {}
     for frame in frames:
+        if not isinstance(frame, Mapping):
+            raise ValueError("label frames must be objects")
         frame_index = finite_int(frame.get("frame_index"))
         if frame_index is None:
-            continue
+            raise ValueError("label frame_index values must be finite integers")
+        if frame_index in result:
+            raise ValueError(f"duplicate label frame_index {frame_index}")
         boxes: list[dict[str, float]] = []
         for box in frame.get("boxes", []):
             boxes.append(_parse_real_label_box(box))

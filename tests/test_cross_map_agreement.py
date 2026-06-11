@@ -1,5 +1,6 @@
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from beltmap._driver_map import build_belt_map_result
@@ -93,6 +94,19 @@ def test_cross_map_agreement_rejects_when_one_map_does_not_reproduce_component()
     assert not scores[0].accepted
     assert scores[0].confirming_maps == 1
     assert filter_detections_by_agreement(scores) == []
+
+
+@pytest.mark.parametrize("min_confirming_maps", [float("nan"), 1.5, 0])
+def test_cross_map_agreement_rejects_invalid_min_confirming_maps(min_confirming_maps):
+    with pytest.raises(ValueError, match="min_confirming_maps"):
+        CrossMapAgreementConfig(min_confirming_maps=min_confirming_maps)
+
+
+def test_cross_map_agreement_normalizes_integral_min_confirming_maps():
+    config = CrossMapAgreementConfig(min_confirming_maps=1.0)
+
+    assert config.min_confirming_maps == 1
+    assert isinstance(config.min_confirming_maps, int)
 
 
 def test_build_belt_map_result_records_overridden_sample_indices(tmp_path, monkeypatch):

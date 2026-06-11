@@ -173,6 +173,68 @@ def test_real_label_metrics_reject_unreviewed_json_scaffold(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("frame", "message"),
+    [
+        ({"frame_index": 0.5, "boxes": []}, "frame_index"),
+        (42, "frames must be objects"),
+    ],
+)
+def test_real_label_metrics_reject_invalid_reviewed_frames(tmp_path, frame, message):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [frame],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+def test_real_label_metrics_reject_duplicate_reviewed_frames(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 0, "left": 0, "bottom": 1, "right": 1}],
+                    },
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 2, "left": 2, "bottom": 3, "right": 3}],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate label frame_index"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+@pytest.mark.parametrize(
     ("box", "message"),
     [
         ({"top": 0, "left": 0, "bottom": float("nan"), "right": 10}, "finite"),

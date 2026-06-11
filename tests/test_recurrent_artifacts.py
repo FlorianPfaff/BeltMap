@@ -52,6 +52,107 @@ def test_belt_revolution_indices_rejects_invalid_period(period_px):
         )
 
 
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (RecurrentArtifactConfig(min_revolutions=float("nan")), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions=1.5), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions=1, margin_px=float("nan")), "margin_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, margin_px=1.5), "margin_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=float("nan")), "candidate_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=1.5), "candidate_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, reject_max_area_px=float("nan")), "reject_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, reject_max_area_px=1.5), "reject_max_area_px"),
+    ],
+)
+def test_recurrent_artifact_config_rejects_invalid_integer_settings(config, message):
+    with pytest.raises(ValueError, match=message):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=(2, 2),
+            config=config,
+        )
+
+
+def test_recurrent_artifact_map_rejects_nonfinite_phase_values():
+    with pytest.raises(ValueError, match="phase_px_by_frame"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[float("nan")],
+            revolution_by_frame=[0],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
+    with pytest.raises(ValueError, match="phase_px_by_frame"):
+        score_recurrent_artifact_detections(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[float("nan")],
+            artifact_map=np.zeros((2, 2), dtype=bool),
+            config=RecurrentArtifactConfig(min_revolutions=0),
+        )
+
+
+@pytest.mark.parametrize("revolution", [float("nan"), 1.5])
+def test_recurrent_artifact_map_rejects_invalid_revolution_values(revolution):
+    with pytest.raises(ValueError, match="revolution_by_frame"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
+            revolution_by_frame=[revolution],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_cross_revolution_scoring_rejects_invalid_revolution_values():
+    recurrent_map = build_recurrent_artifact_map(
+        [[detection(0, 0, 0, 1, 1)]],
+        phase_px_by_frame=[0.0],
+        revolution_by_frame=[0],
+        map_shape=(2, 2),
+        config=RecurrentArtifactConfig(min_revolutions=1),
+    )
+
+    with pytest.raises(ValueError, match="revolution_by_frame"):
+        score_recurrent_artifact_detections_excluding_current_revolution(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
+            revolution_by_frame=[1.5],
+            recurrent_map=recurrent_map,
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+@pytest.mark.parametrize("map_shape", [(2.5, 2), (2, float("inf")), (0, 2)])
+def test_recurrent_artifact_map_rejects_invalid_map_shape(map_shape):
+    with pytest.raises(ValueError, match="map shape"):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=map_shape,
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+@pytest.mark.parametrize("frame_shape", [(2.5, 2), (2, float("nan")), (0, 2)])
+def test_recurrent_artifact_map_rejects_invalid_frame_shape(frame_shape):
+    with pytest.raises(ValueError, match="frame_shape"):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=(2, 2),
+            frame_shape=frame_shape,
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
 def test_recurrent_artifact_map_counts_distinct_revolutions_only():
     recurrent = detection(0, 1, 2, 3, 4)
     same_revolution_duplicate = detection(1, 1, 2, 3, 4)
