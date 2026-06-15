@@ -86,7 +86,7 @@ packages = [
 ]
 
 [tool.poetry.group.test.dependencies]
-pytest = ">=7"
+pytest = ">=9.1.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
