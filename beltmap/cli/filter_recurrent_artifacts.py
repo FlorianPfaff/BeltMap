@@ -390,6 +390,13 @@ def finite_nonzero_float(value: Any, *, name: str) -> float:
     return parsed
 
 
+def first_present(*values: Any) -> Any | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def optional_nonnegative_float(value: float | None, *, name: str) -> float | None:
     if value is None:
         return None
@@ -552,9 +559,15 @@ def filter_recurrent_artifacts(
     frame_count = infer_frame_count(metadata, detection_rows)
     region = infer_region(metadata, config)
     map_height = parse_required_int(
-        metadata.get("belt_map_height_px") or metadata.get("belt_period_px_input") or region[2],
+        first_present(
+            metadata.get("belt_map_height_px"),
+            metadata.get("belt_period_px_input"),
+            region[2],
+        ),
         name="belt_map_height_px",
     )
+    if map_height <= 0:
+        raise ValueError("belt_map_height_px must be positive")
     detection_threshold = float(
         metadata.get("detection_threshold", option_value(config, "detection_threshold") or 0.0)
     )
@@ -564,7 +577,9 @@ def filter_recurrent_artifacts(
         metadata.get("belt_velocity_px_per_frame", option_value(config, "belt_velocity_px_per_frame")),
         name="belt_velocity_px_per_frame",
     )
-    period_px = float(metadata.get("belt_period_px_input") or map_height)
+    period_px = float(first_present(metadata.get("belt_period_px_input"), map_height))
+    if not math.isfinite(period_px) or period_px <= 0:
+        raise ValueError("belt_period_px_input must be positive")
     reference_phase = float(metadata.get("reference_phase_px", 0.0))
     phase_px_by_frame = load_phase_px_by_frame(input_dir / "phase_estimates.csv", frame_count=frame_count)
     detections_by_frame, image_by_frame = group_detections(detection_rows, frame_count=frame_count)
@@ -764,7 +779,11 @@ def main(argv: list[str] | None = None) -> int:
             or max_abs_x_velocity is not None
         ):
             track_filter_config = TrackFilterConfig(
-                min_track_length=args.track_filter_min_length or max(5, args.min_track_length or 2),
+                min_track_length=(
+                    args.track_filter_min_length
+                    if args.track_filter_min_length is not None
+                    else max(5, args.min_track_length if args.min_track_length is not None else 2)
+                ),
                 min_velocity_ratio_y=(
                     0.0
                     if args.track_filter_min_velocity_ratio_y is None

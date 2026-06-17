@@ -608,6 +608,16 @@ def finite_int(value: Any) -> int | None:
     return int(parsed)
 
 
+def positive_metadata_float(metadata: Mapping[str, Any], key: str, default: float) -> float:
+    value = metadata.get(key)
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return default
+    parsed = finite_float(value)
+    if parsed is None or parsed <= 0:
+        raise ValueError(f"{key} must be positive")
+    return parsed
+
+
 def quality_flags(output_dir: Path) -> dict[str, Any]:
     """Return machine-readable warnings for common poor-result modes."""
 
@@ -621,8 +631,8 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
 
     correction_values = [finite_float(row.get("correction_px")) for row in phase_rows]
     corrections = np.asarray([v for v in correction_values if v is not None], dtype=np.float64)
-    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
-    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    search_radius = positive_metadata_float(metadata, "registration_search_radius_px", 8.0)
+    search_step = positive_metadata_float(metadata, "registration_search_step_px", 1.0)
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
         boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))

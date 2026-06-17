@@ -1,13 +1,19 @@
+import csv
+import json
+
 import numpy as np
+import pytest
 from PIL import Image
 
 from beltmap.trust import (
     confidence_rows,
     edge_audit_rows,
     events_from_tracks,
+    parse_region,
     plan_map_epochs,
     scale_calibration_from_points,
     sequence_report,
+    write_run_trust_artifacts,
 )
 
 
@@ -102,3 +108,45 @@ def test_scale_calibration_from_points():
 
     assert calibration.px_per_mm == 2.0
     assert calibration.mm_per_px == 0.5
+
+
+def test_parse_region_rejects_fractional_sequence_dimensions():
+    with pytest.raises(ValueError, match="region height must be an integer"):
+        parse_region([0, 0, 10.5, 20])
+
+
+def test_write_run_trust_artifacts_rejects_fractional_metadata_region(tmp_path):
+    output_dir = tmp_path / "run"
+    output_dir.mkdir()
+    (output_dir / "metadata.json").write_text(
+        json.dumps({"belt_region": {"top": 0, "left": 0, "height": 10.5, "width": 20}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="belt_region.height must be an integer"):
+        write_run_trust_artifacts(output_dir=output_dir)
+
+
+def test_write_run_trust_artifacts_preserves_zero_detection_threshold(tmp_path):
+    output_dir = tmp_path / "run"
+    output_dir.mkdir()
+    (output_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "detection_threshold": 0.0,
+                "belt_region": {"top": 0, "left": 0, "height": 10, "width": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right,area_px,peak_signal\n"
+        "0,2,2,4,4,20,1\n",
+        encoding="utf-8",
+    )
+
+    artifacts = write_run_trust_artifacts(output_dir=output_dir)
+
+    with artifacts["detection_confidence"].open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert float(rows[0]["detection_confidence"]) > 0.99

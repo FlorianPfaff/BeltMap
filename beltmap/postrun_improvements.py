@@ -177,6 +177,16 @@ def finite_int(value: Any) -> int | None:
     return int(parsed)
 
 
+def positive_metadata_float(metadata: Mapping[str, Any], key: str, default: float) -> float:
+    value = metadata.get(key)
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return default
+    parsed = finite_float(value)
+    if parsed is None or parsed <= 0:
+        raise ValueError(f"{key} must be positive")
+    return parsed
+
+
 def metadata_count_or_rows(
     metadata: Mapping[str, Any],
     key: str,
@@ -503,8 +513,8 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
         value for value in (finite_float(row.get("correction_px")) for row in phase_rows(output_dir))
         if value is not None
     ], dtype=np.float64)
-    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
-    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    search_radius = positive_metadata_float(metadata, "registration_search_radius_px", 8.0)
+    search_step = positive_metadata_float(metadata, "registration_search_step_px", 1.0)
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
         boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
@@ -670,7 +680,7 @@ def adaptive_map_frame_plan(output_dir: Path, *, frame_count: int | None = None,
     frames = sorted(set(range(frame_count)) | set(counts) | set(phase_by_frame))
     if not frames:
         return []
-    map_height = finite_float(metadata.get("belt_map_height_px")) or 1.0
+    map_height = positive_metadata_float(metadata, "belt_map_height_px", 1.0)
     bucket_count = max(1, min(top_n, 64))
     buckets: dict[int, list[tuple[float, int]]] = {}
     for frame in frames:
@@ -985,8 +995,8 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
         value for value in (finite_float(row.get("correction_px")) for row in phase_rows(output_dir))
         if value is not None
     ], dtype=np.float64)
-    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
-    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    search_radius = positive_metadata_float(metadata, "registration_search_radius_px", 8.0)
+    search_step = positive_metadata_float(metadata, "registration_search_step_px", 1.0)
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     boundary_share = None if corrections.size == 0 else float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
     threshold = finite_float(contract.get("max_registration_boundary_share"))

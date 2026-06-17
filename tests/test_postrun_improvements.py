@@ -2,6 +2,7 @@ import csv
 import json
 
 import numpy as np
+import pytest
 
 from beltmap import postrun_improvements as pri
 
@@ -86,6 +87,32 @@ def test_quality_contract_uses_metadata_registration_search_radius(tmp_path):
     assert results[0].value == 1.0
 
 
+def test_quality_flags_rejects_zero_registration_search_step_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 4.0, "registration_search_step_px": 0.0}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,4.0,0.8\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="registration_search_step_px must be positive"):
+        pri.quality_flags_from_outputs(out)
+
+
+def test_quality_contract_rejects_zero_registration_search_step_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 4.0, "registration_search_step_px": 0.0}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,4.0,0.8\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="registration_search_step_px must be positive"):
+        pri.evaluate_quality_contract(out, {"max_registration_boundary_share": 0.05})
+
+
 def test_postrun_quality_flags_preserve_zero_detection_metadata(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
@@ -115,6 +142,19 @@ def test_quality_contract_preserves_zero_detection_metadata(tmp_path):
     assert len(results) == 1
     assert not results[0].passed
     assert results[0].value == 1.0
+
+
+def test_adaptive_map_frame_plan_rejects_zero_belt_map_height_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"belt_map_height_px": 0}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,phase_px,score\n0,0,0.9\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="belt_map_height_px must be positive"):
+        pri.adaptive_map_frame_plan(out)
 
 
 def test_label_plan_combines_failure_buckets(tmp_path):

@@ -1110,17 +1110,23 @@ def classify_failure_modes(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
     def add(code: str, severity: str, message: str) -> None:
         warnings.append({"code": code, "severity": severity, "message": message})
 
-    if float(summary.get("phase_boundary_fraction", 0.0) or 0.0) > 0.1:
+    def metric_value(key: str, default: float) -> float:
+        value = summary.get(key)
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            return default
+        return float(value)
+
+    if metric_value("phase_boundary_fraction", 0.0) > 0.1:
         add("registration-search-boundary", "high", "Many phase corrections hit the search boundary; increase registration radius or improve velocity calibration.")
-    if float(summary.get("registration_score_median", 1.0) or 1.0) < 0.2:
+    if metric_value("registration_score_median", 1.0) < 0.2:
         add("low-registration-score", "high", "Median phase-registration score is low; check belt texture, crop, and map quality.")
-    if float(summary.get("small_component_share_area_le_8", 0.0) or 0.0) > 0.5:
+    if metric_value("small_component_share_area_le_8", 0.0) > 0.5:
         add("many-small-components", "medium", "Most detections are tiny; raise threshold or enable shape/edge gates.")
-    if float(summary.get("velocity_ratio_share_0_to_1", 1.0) or 1.0) < 0.5:
+    if metric_value("velocity_ratio_share_0_to_1", 1.0) < 0.5:
         add("implausible-velocity-ratios", "high", "Few velocities are in the expected [0, 1] belt-relative range.")
-    if float(summary.get("map_low_coverage_fraction", 0.0) or 0.0) > 0.05:
+    if metric_value("map_low_coverage_fraction", 0.0) > 0.05:
         add("low-map-coverage", "medium", "Some belt-map pixels have low coverage; increase sample frames or use adaptive sampling.")
-    if float(summary.get("track_fragmentation", 0.0) or 0.0) > 0.5:
+    if metric_value("track_fragmentation", 0.0) > 0.5:
         add("track-fragmentation", "medium", "Tracks are fragmented; use wider PyRecEst matching or tracklet stitching.")
     return warnings
 

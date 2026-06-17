@@ -190,7 +190,10 @@ def _validate_reused_period_matches_height(period: float, height: int, *, source
 
 
 def _positive_int(value: Any, *, name: str) -> int:
-    parsed = int(value)
+    parsed_float = float(value)
+    if not isfinite(parsed_float) or not parsed_float.is_integer():
+        raise ValueError(f"{name} must be a positive integer")
+    parsed = int(parsed_float)
     if parsed <= 0:
         raise ValueError(f"{name} must be positive")
     return parsed

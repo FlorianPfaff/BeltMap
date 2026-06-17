@@ -95,6 +95,72 @@ def test_int_option_rejects_fractional_config_values():
         )
 
 
+def test_cli_preserves_explicit_zero_track_filter_min_length(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_filter_recurrent_artifacts(**kwargs):
+        captured["track_filter_config"] = kwargs["track_filter_config"]
+        return {}
+
+    monkeypatch.setattr(fra, "filter_recurrent_artifacts", fake_filter_recurrent_artifacts)
+
+    assert main(
+        [
+            "--input-dir",
+            str(tmp_path / "source"),
+            "--output-dir",
+            str(tmp_path / "filtered"),
+            "--track-filter-min-length",
+            "0",
+            "--quiet",
+        ]
+    ) == 0
+
+    assert captured["track_filter_config"].min_track_length == 0
+
+
+def write_minimal_filter_input(path: Path, metadata_updates: dict[str, object]) -> None:
+    path.mkdir()
+    metadata = {
+        "n_images": 0,
+        "belt_region": {"top": 0, "left": 0, "height": 5, "width": 5},
+        "belt_velocity_px_per_frame": 10.0,
+        "belt_period_px_input": 10,
+        "belt_map_height_px": 10,
+        "reference_phase_px": 0.0,
+        "detection_threshold": 5.0,
+    }
+    metadata.update(metadata_updates)
+    (path / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    write_csv(path / "detections.csv", [], DETECTION_FIELDS)
+
+
+@pytest.mark.parametrize(
+    ("metadata_updates", "message"),
+    [
+        ({"belt_map_height_px": 0}, "belt_map_height_px must be positive"),
+        ({"belt_period_px_input": 0}, "belt_period_px_input must be positive"),
+    ],
+)
+def test_filter_recurrent_artifacts_rejects_explicit_zero_geometry_metadata(
+    tmp_path,
+    metadata_updates,
+    message,
+):
+    input_dir = tmp_path / "source"
+    write_minimal_filter_input(input_dir, metadata_updates)
+
+    with pytest.raises(ValueError, match=message):
+        fra.filter_recurrent_artifacts(
+            input_dir=input_dir,
+            output_dir=tmp_path / "filtered",
+            recurrent_config=fra.RecurrentArtifactConfig(),
+            min_track_length=None,
+            velocity_fit_method=None,
+            track_filter_config=None,
+        )
+
+
 def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_path):
     input_dir = tmp_path / "source"
     output_dir = tmp_path / "filtered"

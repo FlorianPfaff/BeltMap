@@ -187,7 +187,16 @@ def finite_int(value: Any) -> int | None:
     return int(parsed)
 
 
-def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int] | None:
+def required_int(value: Any, *, name: str) -> int:
+    """Parse an integer, raising when parsing fails."""
+
+    parsed = finite_int(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be an integer")
+    return parsed
+
+
+def parse_region(value: str | Sequence[Any] | None) -> tuple[int, int, int, int] | None:
     """Parse ``top,left,height,width`` from text or sequence form."""
 
     if value is None:
@@ -195,7 +204,12 @@ def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int]
     parts = [part.strip() for part in value.split(",")] if isinstance(value, str) else list(value)
     if len(parts) != 4:
         raise ValueError("region must contain four values: top,left,height,width")
-    top, left, height, width = (int(part) for part in parts)
+    top, left, height, width = (
+        required_int(parts[0], name="region top"),
+        required_int(parts[1], name="region left"),
+        required_int(parts[2], name="region height"),
+        required_int(parts[3], name="region width"),
+    )
     if height <= 0 or width <= 0:
         raise ValueError("region height and width must be positive")
     return top, left, height, width
@@ -946,10 +960,10 @@ def write_run_trust_artifacts(
         belt_region = metadata.get("belt_region")
         if isinstance(belt_region, dict):
             region = (
-                int(belt_region["top"]),
-                int(belt_region["left"]),
-                int(belt_region["height"]),
-                int(belt_region["width"]),
+                required_int(belt_region["top"], name="belt_region.top"),
+                required_int(belt_region["left"], name="belt_region.left"),
+                required_int(belt_region["height"], name="belt_region.height"),
+                required_int(belt_region["width"], name="belt_region.width"),
             )
 
     if image_dir is not None:
@@ -992,7 +1006,10 @@ def write_run_trust_artifacts(
         write_csv_rows(path, edge_rows, list(edge_rows[0].keys()) if edge_rows else [])
         artifacts["detection_edge_audit"] = path
 
-        conf_rows = confidence_rows(edge_rows, threshold=finite_float(metadata.get("detection_threshold")) or 5.0)
+        detection_threshold = finite_float(metadata.get("detection_threshold"))
+        if detection_threshold is None:
+            detection_threshold = 5.0
+        conf_rows = confidence_rows(edge_rows, threshold=detection_threshold)
         path = output_dir / "detection_confidence.csv"
         write_csv_rows(path, conf_rows, list(conf_rows[0].keys()) if conf_rows else [])
         artifacts["detection_confidence"] = path
