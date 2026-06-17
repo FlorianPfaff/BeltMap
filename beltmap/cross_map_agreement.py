@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import hypot, isfinite
+from numbers import Real
 from typing import Sequence
 
 import numpy as np
@@ -25,20 +26,43 @@ class CrossMapAgreementConfig:
     filter_detections: bool = True
 
     def __post_init__(self) -> None:
-        if not isfinite(self.max_centroid_distance_px) or self.max_centroid_distance_px < 0:
+        max_centroid_distance_px = _finite_real(
+            self.max_centroid_distance_px,
+            "max_centroid_distance_px",
+        )
+        if max_centroid_distance_px < 0:
             raise ValueError("max_centroid_distance_px must be finite and non-negative")
-        if not isfinite(self.min_bbox_iou) or not 0.0 <= self.min_bbox_iou <= 1.0:
+        min_bbox_iou = _finite_real(self.min_bbox_iou, "min_bbox_iou")
+        if not 0.0 <= min_bbox_iou <= 1.0:
             raise ValueError("min_bbox_iou must be finite and in [0, 1]")
-        if not isfinite(self.min_peak_ratio) or not 0.0 <= self.min_peak_ratio <= 1.0:
+        min_peak_ratio = _finite_real(self.min_peak_ratio, "min_peak_ratio")
+        if not 0.0 <= min_peak_ratio <= 1.0:
             raise ValueError("min_peak_ratio must be finite and in [0, 1]")
-        min_confirming_maps = float(self.min_confirming_maps)
-        if (
-            not isfinite(min_confirming_maps)
-            or not min_confirming_maps.is_integer()
-            or min_confirming_maps < 1
-        ):
+        min_confirming_maps = _integer_value(
+            self.min_confirming_maps,
+            "min_confirming_maps",
+        )
+        if min_confirming_maps < 1:
             raise ValueError("min_confirming_maps must be a positive finite integer")
+        require_sign_consistency = _bool_value(
+            self.require_sign_consistency,
+            "require_sign_consistency",
+        )
+        filter_detections = _bool_value(self.filter_detections, "filter_detections")
+        object.__setattr__(
+            self,
+            "max_centroid_distance_px",
+            max_centroid_distance_px,
+        )
+        object.__setattr__(self, "min_bbox_iou", min_bbox_iou)
+        object.__setattr__(self, "min_peak_ratio", min_peak_ratio)
         object.__setattr__(self, "min_confirming_maps", int(min_confirming_maps))
+        object.__setattr__(
+            self,
+            "require_sign_consistency",
+            require_sign_consistency,
+        )
+        object.__setattr__(self, "filter_detections", filter_detections)
 
 
 @dataclass(frozen=True)
@@ -98,6 +122,7 @@ def score_cross_map_agreement(
 
     scores: list[CrossMapAgreementScore] = []
     for detection in primary_detections:
+        _validate_detection(detection, "primary detection")
         primary_sign = detection_raw_sign(detection, primary_residual)
         matches = tuple(
             _best_match_for_map(
@@ -144,6 +169,7 @@ def detection_raw_sign(
 ) -> int | None:
     """Return the sign of the un-oriented residual near a detection centroid."""
 
+    _validate_detection(detection, "detection")
     if residual is None:
         return None
     raw = np.asarray(residual.raw, dtype=np.float64)
@@ -186,6 +212,7 @@ def _best_match_for_map(
     best: CrossMapAgreementMapScore | None = None
     best_rank: tuple[float, float, float, float] | None = None
     for candidate in candidates:
+        _validate_detection(candidate, "confirming detection")
         match = _score_match(
             detection,
             candidate,
@@ -258,15 +285,17 @@ def _score_match(
 def bbox_iou(a: ParticleDetection, b: ParticleDetection) -> float:
     """Return intersection-over-union of two detection bounding boxes."""
 
-    top = max(int(a.bbox_top), int(b.bbox_top))
-    left = max(int(a.bbox_left), int(b.bbox_left))
-    bottom = min(int(a.bbox_bottom), int(b.bbox_bottom))
-    right = min(int(a.bbox_right), int(b.bbox_right))
+    a_top, a_left, a_bottom, a_right = _bbox_edges(a, "a")
+    b_top, b_left, b_bottom, b_right = _bbox_edges(b, "b")
+    top = max(a_top, b_top)
+    left = max(a_left, b_left)
+    bottom = min(a_bottom, b_bottom)
+    right = min(a_right, b_right)
     inter_h = max(0, bottom - top)
     inter_w = max(0, right - left)
     intersection = inter_h * inter_w
-    area_a = max(0, int(a.bbox_bottom) - int(a.bbox_top)) * max(0, int(a.bbox_right) - int(a.bbox_left))
-    area_b = max(0, int(b.bbox_bottom) - int(b.bbox_top)) * max(0, int(b.bbox_right) - int(b.bbox_left))
+    area_a = max(0, a_bottom - a_top) * max(0, a_right - a_left)
+    area_b = max(0, b_bottom - b_top) * max(0, b_right - b_left)
     union = area_a + area_b - intersection
     return 0.0 if union <= 0 else float(intersection / union)
 
@@ -276,11 +305,67 @@ def peak_ratio(a: float | None, b: float | None) -> float | None:
 
     if a is None or b is None:
         return None
-    first = abs(float(a))
-    second = abs(float(b))
-    if not np.isfinite(first) or not np.isfinite(second):
-        return None
+    first = abs(_finite_real(a, "peak a"))
+    second = abs(_finite_real(b, "peak b"))
     high = max(first, second)
     if high <= 0.0:
         return None
     return float(min(first, second) / high)
+
+
+def _finite_real(value: object, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
+    parsed = float(value)
+    if not isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_real(value: object | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_real(value, name)
+
+
+def _integer_value(value: object, name: str) -> int:
+    parsed = _finite_real(value, name)
+    if not parsed.is_integer():
+        raise ValueError(f"{name} must be a positive finite integer")
+    return int(parsed)
+
+
+def _bool_value(value: object, name: str) -> bool:
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be boolean")
+    return bool(value)
+
+
+def _validate_detection(detection: ParticleDetection, label: str) -> None:
+    _finite_real(detection.frame_index, f"{label}.frame_index")
+    _integer_value(detection.label, f"{label}.label")
+    _finite_real(detection.y, f"{label}.y")
+    _finite_real(detection.x, f"{label}.x")
+    area_px = _integer_value(detection.area_px, f"{label}.area_px")
+    if area_px < 1:
+        raise ValueError(f"{label}.area_px must be positive")
+    _bbox_edges(detection, label)
+    _optional_finite_real(detection.mean_signal, f"{label}.mean_signal")
+    _optional_finite_real(detection.peak_signal, f"{label}.peak_signal")
+
+
+def _bbox_edges(
+    detection: ParticleDetection,
+    label: str,
+) -> tuple[int, int, int, int]:
+    top = _integer_value(detection.bbox_top, f"{label}.bbox_top")
+    left = _integer_value(detection.bbox_left, f"{label}.bbox_left")
+    bottom = _integer_value(detection.bbox_bottom, f"{label}.bbox_bottom")
+    right = _integer_value(detection.bbox_right, f"{label}.bbox_right")
+    if top < 0 or left < 0:
+        raise ValueError(f"{label} bbox coordinates must be non-negative")
+    if bottom <= top or right <= left:
+        raise ValueError(f"{label} bbox must be half-open with positive area")
+    return top, left, bottom, right
