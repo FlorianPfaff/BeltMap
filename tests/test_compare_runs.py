@@ -13,6 +13,7 @@ from beltmap.compare_runs import (
     generate_comparison_report,
     load_labeled_detection_truth,
     parse_run_spec,
+    row_frame_index,
 )
 
 
@@ -389,6 +390,32 @@ def test_labeled_truth_keeps_blank_csv_rows_as_empty_frames(tmp_path):
     assert truth["particles"] == []
     assert truth["scored_frames"] == [2]
     assert truth["skipped_label_rows"] == 1
+
+
+def test_labeled_truth_prefers_explicit_frame_index_over_image_number(tmp_path):
+    truth_path = tmp_path / "labels.csv"
+    write_csv(
+        truth_path,
+        [
+            {
+                "frame_index": 5,
+                "image": "artifact_099.png",
+                "bbox_top": 0,
+                "bbox_left": 0,
+                "bbox_bottom": 10,
+                "bbox_right": 10,
+            }
+        ],
+    )
+
+    truth = load_labeled_detection_truth(truth_path)
+
+    assert truth["scored_frames"] == [5]
+    assert [particle["frame_index"] for particle in truth["particles"]] == [5]
+
+
+def test_run_detection_frame_index_still_uses_image_source_frame():
+    assert row_frame_index({"frame_index": 0, "image": "frame_005.png"}) == 5
 
 
 def test_generate_comparison_report_scores_reviewed_frame_box_json(tmp_path):

@@ -1,4 +1,3 @@
-
 """Agreement scoring for detections from independently learned belt maps."""
 
 from __future__ import annotations
@@ -25,7 +24,10 @@ class CrossMapAgreementConfig:
     filter_detections: bool = True
 
     def __post_init__(self) -> None:
-        if not isfinite(self.max_centroid_distance_px) or self.max_centroid_distance_px < 0:
+        if (
+            not isfinite(self.max_centroid_distance_px)
+            or self.max_centroid_distance_px < 0
+        ):
             raise ValueError("max_centroid_distance_px must be finite and non-negative")
         if not isfinite(self.min_bbox_iou) or not 0.0 <= self.min_bbox_iou <= 1.0:
             raise ValueError("min_bbox_iou must be finite and in [0, 1]")
@@ -158,10 +160,12 @@ def detection_raw_sign(
         if np.isfinite(value) and value != 0.0:
             return 1 if value > 0.0 else -1
 
-    top = max(0, int(detection.bbox_top))
-    left = max(0, int(detection.bbox_left))
-    bottom = min(raw.shape[0], int(detection.bbox_bottom))
-    right = min(raw.shape[1], int(detection.bbox_right))
+    top = max(0, _integer_coordinate(detection.bbox_top, "bbox_top"))
+    left = max(0, _integer_coordinate(detection.bbox_left, "bbox_left"))
+    bottom = min(
+        raw.shape[0], _integer_coordinate(detection.bbox_bottom, "bbox_bottom")
+    )
+    right = min(raw.shape[1], _integer_coordinate(detection.bbox_right, "bbox_right"))
     if top >= bottom or left >= right:
         return None
     values = raw[top:bottom, left:right]
@@ -194,7 +198,11 @@ def _best_match_for_map(
             map_index=map_index,
             config=config,
         )
-        distance_rank = -float("inf") if match.centroid_distance_px is None else -match.centroid_distance_px
+        distance_rank = (
+            -float("inf")
+            if match.centroid_distance_px is None
+            else -match.centroid_distance_px
+        )
         rank = (
             1.0 if match.accepted else 0.0,
             0.0 if match.bbox_iou is None else match.bbox_iou,
@@ -226,7 +234,9 @@ def _score_match(
     map_index: int,
     config: CrossMapAgreementConfig,
 ) -> CrossMapAgreementMapScore:
-    distance = hypot(float(detection.y) - float(candidate.y), float(detection.x) - float(candidate.x))
+    distance = hypot(
+        float(detection.y) - float(candidate.y), float(detection.x) - float(candidate.x)
+    )
     iou = bbox_iou(detection, candidate)
     ratio = peak_ratio(detection.peak_signal, candidate.peak_signal)
     sign_consistent = (
@@ -239,10 +249,7 @@ def _score_match(
         and iou >= config.min_bbox_iou
         and ratio is not None
         and ratio >= config.min_peak_ratio
-        and (
-            not config.require_sign_consistency
-            or sign_consistent is True
-        )
+        and (not config.require_sign_consistency or sign_consistent is True)
     )
     return CrossMapAgreementMapScore(
         map_index=map_index,
@@ -258,17 +265,40 @@ def _score_match(
 def bbox_iou(a: ParticleDetection, b: ParticleDetection) -> float:
     """Return intersection-over-union of two detection bounding boxes."""
 
-    top = max(int(a.bbox_top), int(b.bbox_top))
-    left = max(int(a.bbox_left), int(b.bbox_left))
-    bottom = min(int(a.bbox_bottom), int(b.bbox_bottom))
-    right = min(int(a.bbox_right), int(b.bbox_right))
+    a_top, a_left, a_bottom, a_right = _validated_bbox(a, prefix="first")
+    b_top, b_left, b_bottom, b_right = _validated_bbox(b, prefix="second")
+    top = max(a_top, b_top)
+    left = max(a_left, b_left)
+    bottom = min(a_bottom, b_bottom)
+    right = min(a_right, b_right)
     inter_h = max(0, bottom - top)
     inter_w = max(0, right - left)
     intersection = inter_h * inter_w
-    area_a = max(0, int(a.bbox_bottom) - int(a.bbox_top)) * max(0, int(a.bbox_right) - int(a.bbox_left))
-    area_b = max(0, int(b.bbox_bottom) - int(b.bbox_top)) * max(0, int(b.bbox_right) - int(b.bbox_left))
+    area_a = (a_bottom - a_top) * (a_right - a_left)
+    area_b = (b_bottom - b_top) * (b_right - b_left)
     union = area_a + area_b - intersection
     return 0.0 if union <= 0 else float(intersection / union)
+
+
+def _validated_bbox(
+    detection: ParticleDetection,
+    *,
+    prefix: str,
+) -> tuple[int, int, int, int]:
+    top = _integer_coordinate(detection.bbox_top, f"{prefix} bbox_top")
+    left = _integer_coordinate(detection.bbox_left, f"{prefix} bbox_left")
+    bottom = _integer_coordinate(detection.bbox_bottom, f"{prefix} bbox_bottom")
+    right = _integer_coordinate(detection.bbox_right, f"{prefix} bbox_right")
+    if bottom <= top or right <= left:
+        raise ValueError(f"{prefix} bbox must have positive half-open area")
+    return top, left, bottom, right
+
+
+def _integer_coordinate(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
 
 
 def peak_ratio(a: float | None, b: float | None) -> float | None:

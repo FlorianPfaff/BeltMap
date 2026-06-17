@@ -123,7 +123,7 @@ REQUIRED_CSV_COLUMNS = {
 }
 
 TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
-TRUTH_FRAME_KEYS = ("frame", "image_index")
+TRUTH_FRAME_KEYS = ("frame_index", "frame", "image_index")
 TRUTH_FRAME_SET_KEYS = (
     "scored_frames",
     "frames",
@@ -391,6 +391,16 @@ def row_frame_index(row: dict[str, Any]) -> int | None:
     return None
 
 
+def label_frame_index(row: dict[str, Any]) -> int | None:
+    """Infer a truth-label frame index, preferring explicit reviewed metadata."""
+
+    for key in TRUTH_FRAME_KEYS:
+        frame_index = finite_int(nonempty_value(row, key))
+        if frame_index is not None:
+            return frame_index
+    return source_frame_index(row)
+
+
 def parse_frame_set(value: Any) -> set[int]:
     """Parse a JSON scalar/list of scored frame indices."""
 
@@ -404,7 +414,7 @@ def parse_frame_set(value: Any) -> set[int]:
         values = [value]
     frames: set[int] = set()
     for item in values:
-        frame_index = row_frame_index(item) if isinstance(item, dict) else finite_int(item)
+        frame_index = label_frame_index(item) if isinstance(item, dict) else finite_int(item)
         if frame_index is not None:
             frames.add(frame_index)
     return frames
@@ -446,7 +456,7 @@ def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
     for frame in frames:
         if not isinstance(frame, dict):
             raise ValueError("truth frame entries must be objects")
-        frame_index = row_frame_index(frame)
+        frame_index = label_frame_index(frame)
         if frame_index is None:
             raise ValueError(
                 "truth frame entries must contain a finite integer frame_index"
@@ -459,7 +469,7 @@ def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
                 if not isinstance(box, dict):
                     continue
                 row = dict(box)
-                if frame_index is not None and row_frame_index(row) is None:
+                if frame_index is not None and label_frame_index(row) is None:
                     row["frame_index"] = frame_index
                 rows.append(row)
             break
@@ -505,7 +515,7 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
 def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Convert one real-data label row to the benchmark truth-box schema."""
 
-    frame_index = row_frame_index(row)
+    frame_index = label_frame_index(row)
     if frame_index is None:
         return None
 
@@ -571,7 +581,7 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
     particles: list[dict[str, Any]] = []
     skipped_rows = 0
     for row in rows:
-        frame_index = row_frame_index(row)
+        frame_index = label_frame_index(row)
         if frame_index is not None:
             scored_frames.add(frame_index)
         particle = truth_particle_from_label_row(row)

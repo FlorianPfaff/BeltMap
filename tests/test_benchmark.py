@@ -262,6 +262,40 @@ def test_detection_metrics_no_matches_report_zero_f1():
     assert metrics["f1"] == 0.0
 
 
+def test_detection_metrics_rejects_truth_boxes_with_fractional_frame_index():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0.5,
+                "top": 0,
+                "left": 0,
+                "bottom": 10,
+                "right": 10,
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="finite integer frame_index"):
+        detection_metrics([], truth, iou_threshold=0.5)
+
+
+def test_detection_metrics_rejects_degenerate_truth_boxes():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 10,
+                "left": 0,
+                "bottom": 10,
+                "right": 10,
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="positive half-open area"):
+        detection_metrics([], truth, iou_threshold=0.5)
+
+
 def test_detection_metrics_scores_clean_reviewed_empty_frames():
     metrics = detection_metrics(
         [],

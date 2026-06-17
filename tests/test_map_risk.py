@@ -81,3 +81,15 @@ def test_score_map_risk_detections_rejects_invalid_frame_shape(frame_shape):
             frame_shape=frame_shape,
             maps=maps,
         )
+
+
+def test_score_map_risk_detections_rejects_fractional_bbox_coordinates():
+    maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
+
+    with pytest.raises(ValueError, match="bbox_top must be a finite integer"):
+        score_map_risk_detections(
+            [_detection(bbox_top=0.5, bbox_left=0, bbox_bottom=1, bbox_right=1)],
+            phase_px=0.0,
+            frame_shape=(1, 2),
+            maps=maps,
+        )
