@@ -69,6 +69,39 @@ def test_quality_contract_uses_metadata_registration_search_radius(tmp_path):
     assert results[0].value == 1.0
 
 
+def test_quality_contract_preserves_zero_registration_search_radius(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 0.0, "registration_search_step_px": 0.5}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,0.0,0.8\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(out, {"max_registration_boundary_share": 0.05})
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
+
+
+def test_quality_contract_preserves_zero_detection_count_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    stale_rows = ["frame_index,area_px", *[f"{index},10" for index in range(95)]]
+    (out / "detections.csv").write_text("\n".join(stale_rows) + "\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(out, {"max_recurrent_rejection_share": 0.75})
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
+
+
 def test_label_plan_combines_failure_buckets(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()

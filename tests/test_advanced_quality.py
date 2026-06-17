@@ -5,6 +5,7 @@ import numpy as np
 from beltmap.advanced_quality import (
     bbox_iou,
     evaluate_real_detections,
+    quality_flags,
     quadratic_subpixel_minimum,
     robust_gain_offset,
     theil_sen_slope,
@@ -91,3 +92,34 @@ def test_real_label_metrics_zero_match_f1_is_zero_not_missing(tmp_path):
     assert metrics.precision == 0.0
     assert metrics.recall == 0.0
     assert metrics.f1 == 0.0
+
+
+def test_quality_flags_preserve_zero_registration_search_radius(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 0.0, "registration_search_step_px": 0.5}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text("frame_index,correction_px\n0,0.0\n", encoding="utf-8")
+
+    report = quality_flags(out)
+
+    assert report["flags"]
+    assert report["flags"][0]["code"] == "registration_boundary"
+    assert report["flags"][0]["share"] == 1.0
+
+
+def test_quality_flags_preserve_zero_detection_count_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
+        encoding="utf-8",
+    )
+    stale_rows = ["frame_index,area_px", *[f"{index},10" for index in range(95)]]
+    (out / "detections.csv").write_text("\n".join(stale_rows) + "\n", encoding="utf-8")
+
+    report = quality_flags(out)
+
+    assert any(flag["code"] == "heavy_recurrent_filtering" for flag in report["flags"])

@@ -116,3 +116,22 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
     metrics = json.loads((tmp_path / "map_only_negative_control_metrics.json").read_text(encoding="utf-8"))
     assert metrics["detections"]["false_detections"] == 0
     assert metrics["tracks"]["false_tracks"] == 0
+
+
+def test_map_only_negative_control_cli_preserves_explicit_zero_options():
+    parser = cli_map_only_negative_control.build_parser()
+    args = parser.parse_args(
+        [
+            "--output-dir",
+            "outputs",
+            "--crop-height-px",
+            "0",
+            "--long-track-length",
+            "0",
+        ]
+    )
+
+    config = cli_map_only_negative_control._build_config(args, {}, {})
+
+    assert config.crop_height_px == 0
+    assert config.long_track_length == 0

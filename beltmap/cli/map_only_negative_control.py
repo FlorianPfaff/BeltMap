@@ -202,7 +202,7 @@ def _build_config(
         split_min_component_area_px=split_min_component_area,
         highpass_radius_px=args.highpass_radius_px,
         highpass_min_scale_gray=args.highpass_min_scale_gray,
-        crop_height_px=args.crop_height_px or _crop_height_from_defaults(output_config, metadata),
+        crop_height_px=args.crop_height_px if args.crop_height_px is not None else _crop_height_from_defaults(output_config, metadata),
         frame_count=None if args.frame_count is None or args.frame_count <= 0 else args.frame_count,
         belt_velocity_px_per_frame=_belt_velocity_from_defaults(args, output_config, metadata),
         period_px=_period_from_defaults(args, output_config, metadata),
@@ -232,7 +232,7 @@ def _build_config(
             if args.track_filter_max_abs_x_velocity_px_per_frame is not None
             else _float_option(None, output_config, "track_filter_max_abs_x_velocity_px_per_frame", ("track_filter", "max_abs_x_velocity_px_per_frame"), 0.0)
         ),
-        long_track_length=args.long_track_length or 10,
+        long_track_length=args.long_track_length if args.long_track_length is not None else 10,
     )
 
 

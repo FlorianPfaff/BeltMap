@@ -533,6 +533,21 @@ def finite_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def finite_float_or(value: Any, default: float) -> float:
+    parsed = finite_float(value)
+    return default if parsed is None else parsed
+
+
+def finite_int(value: Any) -> int | None:
+    parsed = finite_float(value)
+    return None if parsed is None else int(parsed)
+
+
+def finite_int_or(value: Any, default: int) -> int:
+    parsed = finite_int(value)
+    return default if parsed is None else parsed
+
+
 def quality_flags(output_dir: Path) -> dict[str, Any]:
     """Return machine-readable warnings for common poor-result modes."""
 
@@ -546,8 +561,8 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
 
     correction_values = [finite_float(row.get("correction_px")) for row in phase_rows]
     corrections = np.asarray([v for v in correction_values if v is not None], dtype=np.float64)
-    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
-    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
+    search_radius = finite_float_or(metadata.get("registration_search_radius_px"), 8.0)
+    search_step = finite_float_or(metadata.get("registration_search_step_px"), 1.0)
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
         boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
@@ -566,9 +581,10 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     if ratios.size and float(np.mean((0.0 <= ratios) & (ratios <= 1.1))) < 0.5:
         flags.append({"severity": "warning", "code": "implausible_velocity_ratios", "message": "many velocity ratios are outside the expected belt-relative interval", "share_0_to_1p1": float(np.mean((0.0 <= ratios) & (ratios <= 1.1)))})
 
-    recurrent_rejected = int(metadata.get("n_recurrent_artifact_rejected") or 0)
-    n_detections = int(metadata.get("n_detections") or len(detections))
-    if recurrent_rejected and n_detections and recurrent_rejected / max(1, recurrent_rejected + n_detections) > 0.75:
+    recurrent_rejected = finite_int_or(metadata.get("n_recurrent_artifact_rejected"), 0)
+    n_detections = finite_int_or(metadata.get("n_detections"), len(detections))
+    denominator = recurrent_rejected + n_detections
+    if denominator > 0 and recurrent_rejected / denominator > 0.75:
         flags.append({"severity": "info", "code": "heavy_recurrent_filtering", "message": "recurrent artifact filtering rejected most first-pass detections", "rejected": recurrent_rejected})
 
     return {"output_dir": str(output_dir), "metadata_present": bool(metadata), "flags": flags}

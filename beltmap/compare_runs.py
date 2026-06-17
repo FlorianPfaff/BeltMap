@@ -125,6 +125,35 @@ REQUIRED_CSV_COLUMNS = {
 TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
 TRUTH_FRAME_KEYS = ("frame", "image_index")
 TRUTH_FRAME_SET_KEYS = ("scored_frames", "frames", "labeled_frames")
+TRUTH_EMPTY_FRAME_SET_KEYS = (
+    "empty_frames",
+    "reviewed_empty_frames",
+    "no_particle_frames",
+)
+TRUTH_FRAME_REVIEW_KEYS = ("frame_reviews", "review_frames", "reviews")
+UNREVIEWED_TRUTH_STATUSES = {
+    "draft_review_output_not_ground_truth",
+    "needs_review",
+    "template_not_ground_truth",
+    "template_not_ground_truth_do_not_use_for_metrics_until_filled",
+    "needs_manual_review",
+}
+REVIEWED_TRUTH_STATUS = "reviewed_ground_truth"
+EMPTY_REVIEW_STATUSES = {
+    "empty",
+    "no_particle",
+    "no_particles",
+    "reviewed_empty",
+    "reviewed_no_particle",
+    "reviewed_no_particles",
+}
+UNREVIEWED_FRAME_REVIEW_STATUSES = {
+    "",
+    "needs_review",
+    "not_reviewed",
+    "pending",
+    "todo",
+}
 TRUTH_BOX_FIELD_SETS = (
     ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right"),
     ("top", "left", "bottom", "right"),
@@ -149,6 +178,7 @@ FROC_SCORE_FIELDS = (
 )
 FROC_FP_PER_FRAME_LIMITS = (0.1, 0.5, 1.0)
 FROC_AUC_FP_PER_FRAME_LIMIT = 1.0
+DEFAULT_FROC_MAX_THRESHOLDS = 256
 
 
 @dataclass(frozen=True)
@@ -419,6 +449,113 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
     return [data], scored_frames
 
 
+def truth_review_rows_from_json(data: Any) -> list[dict[str, Any]]:
+    """Extract optional frame-review rows from JSON label metadata."""
+
+    if not isinstance(data, dict):
+        return []
+    for key in TRUTH_FRAME_REVIEW_KEYS:
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def truth_explicit_empty_frame_indices(data: Any) -> set[int]:
+    """Return frames explicitly reviewed as containing no particles."""
+
+    if not isinstance(data, dict):
+        return set()
+    frames: set[int] = set()
+    for key in TRUTH_EMPTY_FRAME_SET_KEYS:
+        frames.update(parse_frame_set(data.get(key)))
+    for row in truth_review_rows_from_json(data):
+        frame_index = row_frame_index(row)
+        if frame_index is None:
+            continue
+        status = str(row.get("review_status", "")).strip().lower()
+        confirmed_empty = str(row.get("confirmed_empty", "")).strip().lower()
+        if status in EMPTY_REVIEW_STATUSES or confirmed_empty in {"1", "true", "yes"}:
+            frames.add(frame_index)
+    return frames
+
+
+def reject_unreviewed_truth_template(data: Any, path: Path) -> None:
+    """Reject JSON label templates that are explicitly not reviewed truth."""
+
+    if not isinstance(data, dict):
+        return
+    status = str(data.get("status", "")).strip().lower()
+    requires_review = bool(data.get("requires_manual_review"))
+    if requires_review or status in UNREVIEWED_TRUTH_STATUSES:
+        raise ValueError(
+            f"{path} is marked as an unreviewed label template; fill all scored "
+            "particle boxes, confirm any empty frames, and set status to "
+            "'reviewed_ground_truth' before using it as --truth-path"
+        )
+
+
+def validate_reviewed_truth_completeness(
+    data: Any,
+    rows: list[dict[str, Any]],
+    path: Path,
+) -> None:
+    """Ensure reviewed JSON truth explicitly accounts for each scored frame."""
+
+    if not isinstance(data, dict):
+        return
+    status = str(data.get("status", "")).strip().lower()
+    if status != REVIEWED_TRUTH_STATUS:
+        return
+    scored_frames = set()
+    for key in TRUTH_FRAME_SET_KEYS:
+        scored_frames.update(parse_frame_set(data.get(key)))
+    if not scored_frames:
+        raise ValueError(
+            f"{path} is marked as reviewed_ground_truth but has no scored_frames"
+        )
+
+    particle_frames = {
+        particle["frame_index"]
+        for row in rows
+        if (particle := truth_particle_from_label_row(row)) is not None
+    }
+    empty_frames = truth_explicit_empty_frame_indices(data)
+    unreviewed_frames: set[int] = set()
+    for row in truth_review_rows_from_json(data):
+        frame_index = row_frame_index(row)
+        if frame_index is None or frame_index not in scored_frames:
+            continue
+        status = str(row.get("review_status", "")).strip().lower()
+        if status in UNREVIEWED_FRAME_REVIEW_STATUSES:
+            unreviewed_frames.add(frame_index)
+    if unreviewed_frames:
+        preview = ", ".join(str(frame) for frame in sorted(unreviewed_frames)[:10])
+        raise ValueError(
+            f"{path} is reviewed_ground_truth but frame review row(s) are "
+            f"still marked needs_review: {preview}"
+        )
+    unknown_empty_frames = empty_frames - scored_frames
+    if unknown_empty_frames:
+        preview = ", ".join(str(frame) for frame in sorted(unknown_empty_frames)[:10])
+        raise ValueError(
+            f"{path} marks frame(s) as empty outside scored_frames: {preview}"
+        )
+    empty_particle_overlap = empty_frames & particle_frames
+    if empty_particle_overlap:
+        preview = ", ".join(str(frame) for frame in sorted(empty_particle_overlap)[:10])
+        raise ValueError(
+            f"{path} marks frame(s) as both empty and containing particles: {preview}"
+        )
+    missing_frames = scored_frames - particle_frames - empty_frames
+    if missing_frames:
+        preview = ", ".join(str(frame) for frame in sorted(missing_frames)[:10])
+        raise ValueError(
+            f"{path} is reviewed_ground_truth but frame(s) lack particle boxes "
+            f"or explicit empty confirmation: {preview}"
+        )
+
+
 def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Convert one real-data label row to the benchmark truth-box schema."""
 
@@ -469,7 +606,9 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
         scored_frames: set[int] = set()
     elif suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
+        reject_unreviewed_truth_template(data, path)
         rows, scored_frames = label_rows_from_json(data)
+        validate_reviewed_truth_completeness(data, rows, path)
     else:
         raise ValueError("truth labels must be a CSV or JSON file")
 
@@ -673,6 +812,29 @@ def froc_auc_up_to_fp_per_frame(
     return float(area / max_fp_per_frame)
 
 
+def bounded_froc_thresholds(
+    scores: Iterable[float],
+    *,
+    max_thresholds: int | None,
+) -> tuple[list[float], int]:
+    """Return a bounded high-score-preserving threshold grid."""
+
+    unique = sorted({float(score) for score in scores if np.isfinite(score)}, reverse=True)
+    threshold_count = len(unique)
+    if max_thresholds is None or max_thresholds <= 0 or threshold_count <= max_thresholds:
+        return unique, threshold_count
+    if max_thresholds == 1:
+        return unique[:1], threshold_count
+
+    head_count = min(threshold_count, max(1, max_thresholds // 2))
+    indices = set(range(head_count))
+    remaining_slots = max_thresholds - len(indices)
+    if remaining_slots > 0 and head_count < threshold_count:
+        tail_indices = np.linspace(head_count, threshold_count - 1, remaining_slots)
+        indices.update(int(round(index)) for index in tail_indices)
+    return [unique[index] for index in sorted(indices)], threshold_count
+
+
 def detection_froc_curve(
     detection_rows: list[dict[str, str]],
     truth: dict[str, Any],
@@ -680,6 +842,7 @@ def detection_froc_curve(
     scored_frames: set[int] | None = None,
     iou_threshold: float = 0.25,
     score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
+    max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
 ) -> dict[str, Any]:
     """Compute a detection FROC curve by sweeping a per-detection score.
 
@@ -714,21 +877,31 @@ def detection_froc_curve(
     ]
 
     skipped_score_rows = 0
-    thresholds: list[float] = []
+    scores: list[float] = []
+    unscored_rows: list[dict[str, str]] = []
+    available_thresholds = 0
+    evaluated_thresholds = 0
     if score_field is not None:
         for row in detection_rows:
             score = finite_float(row.get(score_field))
             if score is None:
                 skipped_score_rows += 1
+                unscored_rows.append(row)
                 continue
-            thresholds.append(score)
-        for threshold in sorted(set(thresholds), reverse=True):
-            kept_rows = [
+            scores.append(score)
+        thresholds, available_thresholds = bounded_froc_thresholds(
+            scores,
+            max_thresholds=max_thresholds,
+        )
+        evaluated_thresholds = len(thresholds)
+        for threshold in thresholds:
+            scored_kept_rows = [
                 row
                 for row in detection_rows
                 if (score := finite_float(row.get(score_field))) is not None
                 and score >= threshold
             ]
+            kept_rows = [*unscored_rows, *scored_kept_rows]
             metrics = detection_metrics(kept_rows, truth, iou_threshold=iou_threshold)
             points.append(
                 froc_point_from_metrics(
@@ -766,6 +939,9 @@ def detection_froc_curve(
         "evaluated_frames": evaluated_frames,
         "truth_boxes": truth_boxes,
         "skipped_score_rows": skipped_score_rows,
+        "available_thresholds": available_thresholds,
+        "evaluated_thresholds": evaluated_thresholds,
+        "max_thresholds": max_thresholds,
         "points": points,
         "point_count": len(points),
         "auc_fp_per_frame_le_1": froc_auc_up_to_fp_per_frame(
@@ -865,6 +1041,7 @@ def summarize_run(
     *,
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
     bootstrap_samples: int = 0,
     bootstrap_confidence_level: float = 0.95,
     bootstrap_seed: int | None = 0,
@@ -1168,17 +1345,20 @@ def draw_labeled_froc_plot(
     *,
     labeled_truth: dict[str, Any],
     truth_iou_threshold: float,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
 ) -> None:
     """Draw labeled detection FROC curves for the comparison report."""
 
     scored_frames = truth_frame_indices(labeled_truth)
     labeled_series: list[tuple[str, list[float], list[float]]] = []
     for run in runs:
+        scored_detections = restrict_detection_rows_to_frames(run.detections, scored_frames)
         froc = detection_froc_curve(
-            run.detections,
+            scored_detections,
             labeled_truth,
             scored_frames=scored_frames,
             iou_threshold=truth_iou_threshold,
+            max_thresholds=froc_max_thresholds,
         )
         points = monotone_froc_points(list(froc.get("points") or []))
         labeled_series.append(
@@ -1334,6 +1514,8 @@ def write_plots(
     *,
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
+    include_contact_sheets: bool = True,
 ) -> tuple[dict[str, Path], dict[str, Path]]:
     """Write comparison plots and contact sheets."""
 
@@ -1343,24 +1525,26 @@ def write_plots(
     }
     if labeled_truth is not None:
         plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
-    images = {
-        "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
-        "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
-    }
-    if any(run.fixed_preview_paths for run in runs):
-        images.update(
-            {
-                "fixed_scale_detection_contact_sheet": report_dir / "fixed_scale_detection_contact_sheet.png",
-                "fixed_scale_filtered_detection_contact_sheet": report_dir / "fixed_scale_filtered_detection_contact_sheet.png",
-            }
-        )
-    if any(run.raw_preview_paths for run in runs):
-        images.update(
-            {
-                "raw_detection_contact_sheet": report_dir / "raw_detection_contact_sheet.png",
-                "raw_filtered_detection_contact_sheet": report_dir / "raw_filtered_detection_contact_sheet.png",
-            }
-        )
+    images: dict[str, Path] = {}
+    if include_contact_sheets:
+        images = {
+            "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
+            "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
+        }
+        if any(run.fixed_preview_paths for run in runs):
+            images.update(
+                {
+                    "fixed_scale_detection_contact_sheet": report_dir / "fixed_scale_detection_contact_sheet.png",
+                    "fixed_scale_filtered_detection_contact_sheet": report_dir / "fixed_scale_filtered_detection_contact_sheet.png",
+                }
+            )
+        if any(run.raw_preview_paths for run in runs):
+            images.update(
+                {
+                    "raw_detection_contact_sheet": report_dir / "raw_detection_contact_sheet.png",
+                    "raw_filtered_detection_contact_sheet": report_dir / "raw_filtered_detection_contact_sheet.png",
+                }
+            )
     series = []
     for run in runs:
         xs, ys = paired_values(
@@ -1386,6 +1570,7 @@ def write_plots(
             runs,
             labeled_truth=labeled_truth,
             truth_iou_threshold=truth_iou_threshold,
+            froc_max_thresholds=froc_max_thresholds,
         )
     return plots, images
 
@@ -1581,65 +1766,96 @@ def build_markdown_report(
                 "",
             ]
         )
-    lines.extend(["", "## Visual comparison", ""])
-    if "raw_detection_contact_sheet" in images:
+    if images:
+        lines.extend(["", "## Visual comparison", ""])
+        if "raw_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    "Raw crops use one shared display scale across the sampled frames, so frame-to-frame brightness is comparable.",
+                    "",
+                    f"![Raw detection contact sheet]({markdown_link(images['raw_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "fixed_scale_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    "Fixed residual previews use a fixed normalized-residual display range instead of per-frame percentile stretching.",
+                    "",
+                    f"![Fixed-scale detection contact sheet]({markdown_link(images['fixed_scale_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    "Autoscaled residual previews are kept for compatibility with older runs.",
+                    "",
+                    f"![Detection contact sheet]({markdown_link(images['detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        lines.extend(["## Filtered-track visual comparison", ""])
+        if "raw_filtered_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    f"![Raw filtered detection contact sheet]({markdown_link(images['raw_filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "fixed_scale_filtered_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    f"![Fixed-scale filtered detection contact sheet]({markdown_link(images['fixed_scale_filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "filtered_detection_contact_sheet" in images:
+            lines.extend(
+                [
+                    f"![Filtered detection contact sheet]({markdown_link(images['filtered_detection_contact_sheet'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+    else:
         lines.extend(
             [
-                "Raw crops use one shared display scale across the sampled frames, so frame-to-frame brightness is comparable.",
                 "",
-                f"![Raw detection contact sheet]({markdown_link(images['raw_detection_contact_sheet'], relative_to=report_dir)})",
+                "## Visual comparison",
+                "",
+                "Contact-sheet generation was skipped for this report.",
                 "",
             ]
         )
-    if "fixed_scale_detection_contact_sheet" in images:
+    if plots:
+        if "detections_per_frame" in plots:
+            lines.extend(
+                [
+                    "## Detection counts",
+                    "",
+                    f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+        if "velocity_ratio_histogram" in plots:
+            lines.extend(
+                [
+                    "## Velocity ratios",
+                    "",
+                    f"![Velocity-ratio histogram]({markdown_link(plots['velocity_ratio_histogram'], relative_to=report_dir)})",
+                    "",
+                ]
+            )
+    else:
         lines.extend(
             [
-                "Fixed residual previews use a fixed normalized-residual display range instead of per-frame percentile stretching.",
+                "## Plots",
                 "",
-                f"![Fixed-scale detection contact sheet]({markdown_link(images['fixed_scale_detection_contact_sheet'], relative_to=report_dir)})",
+                "Plot generation was skipped for this metrics-only report.",
                 "",
             ]
         )
-    lines.extend(
-        [
-            "Autoscaled residual previews are kept for compatibility with older runs.",
-            "",
-            f"![Detection contact sheet]({markdown_link(images['detection_contact_sheet'], relative_to=report_dir)})",
-            "",
-            "## Filtered-track visual comparison",
-            "",
-        ]
-    )
-    if "raw_filtered_detection_contact_sheet" in images:
-        lines.extend(
-            [
-                f"![Raw filtered detection contact sheet]({markdown_link(images['raw_filtered_detection_contact_sheet'], relative_to=report_dir)})",
-                "",
-            ]
-        )
-    if "fixed_scale_filtered_detection_contact_sheet" in images:
-        lines.extend(
-            [
-                f"![Fixed-scale filtered detection contact sheet]({markdown_link(images['fixed_scale_filtered_detection_contact_sheet'], relative_to=report_dir)})",
-                "",
-            ]
-        )
-    lines.extend(
-        [
-            f"![Filtered detection contact sheet]({markdown_link(images['filtered_detection_contact_sheet'], relative_to=report_dir)})",
-            "",
-            "## Detection counts",
-            "",
-            f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
-            "",
-            "## Velocity ratios",
-            "",
-            f"![Velocity-ratio histogram]({markdown_link(plots['velocity_ratio_histogram'], relative_to=report_dir)})",
-            "",
-            "## Decision checklist",
-            "",
-        ]
-    )
+    lines.extend(["## Decision checklist", ""])
     if truth_path is not None:
         lines.append(
             "- Prefer higher labeled recall at a fixed false-positive-per-frame budget or higher labeled FROC AUC; empty-frame FP counts are the fastest ghost-artifact warning."
@@ -1663,10 +1879,13 @@ def generate_comparison_report(
     frames: list[int] | None = None,
     truth_path: Path | None = None,
     truth_iou_threshold: float = 0.25,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
     bootstrap_samples: int = 0,
     bootstrap_confidence_level: float = 0.95,
     bootstrap_seed: int | None = 0,
     bootstrap_block_length_frames: int = 1,
+    metrics_only: bool = False,
+    skip_contact_sheets: bool = False,
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
@@ -1691,6 +1910,7 @@ def generate_comparison_report(
                 run,
                 labeled_truth=labeled_truth,
                 truth_iou_threshold=truth_iou_threshold,
+                froc_max_thresholds=froc_max_thresholds,
                 bootstrap_samples=bootstrap_samples,
                 bootstrap_confidence_level=bootstrap_confidence_level,
                 bootstrap_seed=bootstrap_seed_for_run,
@@ -1699,12 +1919,17 @@ def generate_comparison_report(
         )
     summary_csv = report_dir / "summary.csv"
     write_summary_csv(summary_csv, rows)
-    plots, images = write_plots(
-        report_dir,
-        runs,
-        labeled_truth=labeled_truth,
-        truth_iou_threshold=truth_iou_threshold,
-    )
+    plots: dict[str, Path] = {}
+    images: dict[str, Path] = {}
+    if not metrics_only:
+        plots, images = write_plots(
+            report_dir,
+            runs,
+            labeled_truth=labeled_truth,
+            truth_iou_threshold=truth_iou_threshold,
+            froc_max_thresholds=froc_max_thresholds,
+            include_contact_sheets=not skip_contact_sheets,
+        )
     contact_sheet_specs = [
         ("detection_contact_sheet", "residual", False),
         ("filtered_detection_contact_sheet", "residual", True),
@@ -1713,16 +1938,17 @@ def generate_comparison_report(
         ("raw_detection_contact_sheet", "raw", False),
         ("raw_filtered_detection_contact_sheet", "raw", True),
     ]
-    for key, preview_kind, filtered in contact_sheet_specs:
-        if key not in images:
-            continue
-        draw_detection_contact_sheet(
-            images[key],
-            runs,
-            frames=[] if frames is None else frames,
-            filtered=filtered,
-            preview_kind=preview_kind,
-        )
+    if not metrics_only and not skip_contact_sheets:
+        for key, preview_kind, filtered in contact_sheet_specs:
+            if key not in images:
+                continue
+            draw_detection_contact_sheet(
+                images[key],
+                runs,
+                frames=[] if frames is None else frames,
+                filtered=filtered,
+                preview_kind=preview_kind,
+            )
     report = report_dir / "comparison_report.md"
     report.write_text(
         build_markdown_report(
