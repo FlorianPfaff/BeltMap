@@ -40,7 +40,7 @@ def test_belt_revolution_indices_follow_motion_model_distance():
     np.testing.assert_array_equal(indices, [0, 0, 0, 0, 1, 1, 1, 2])
 
 
-@pytest.mark.parametrize("period_px", [None, 0.0, -1.0, np.nan, np.inf])
+@pytest.mark.parametrize("period_px", [None, 0.0, -1.0, np.nan, np.inf, True])
 def test_belt_revolution_indices_rejects_invalid_period(period_px):
     with pytest.raises(ValueError, match="period"):
         belt_revolution_indices(
@@ -48,6 +48,30 @@ def test_belt_revolution_indices_rejects_invalid_period(period_px):
             BeltMotionModel(
                 image_velocity_px_per_frame=3.0,
                 period_px=period_px,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"image_velocity_px_per_frame": np.nan}, "image velocity"),
+        ({"image_velocity_px_per_frame": True}, "image velocity"),
+        ({"reference_frame": np.inf}, "reference_frame"),
+        ({"reference_frame": True}, "reference_frame"),
+    ],
+)
+def test_belt_revolution_indices_rejects_invalid_motion_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        belt_revolution_indices(
+            3,
+            BeltMotionModel(
+                image_velocity_px_per_frame=kwargs.get(
+                    "image_velocity_px_per_frame",
+                    3.0,
+                ),
+                period_px=10.0,
+                reference_frame=kwargs.get("reference_frame", 0.0),
             ),
         )
 
@@ -76,11 +100,88 @@ def test_recurrent_artifact_config_rejects_invalid_integer_settings(config, mess
         )
 
 
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (RecurrentArtifactConfig(min_revolutions=True), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions="1"), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions=1, margin_px=True), "margin_px"),
+        (
+            RecurrentArtifactConfig(min_revolutions=1, max_overlap_fraction=True),
+            "max_overlap_fraction",
+        ),
+        (
+            RecurrentArtifactConfig(min_revolutions=1, max_overlap_fraction="0.3"),
+            "max_overlap_fraction",
+        ),
+        (
+            RecurrentArtifactConfig(
+                min_revolutions=1,
+                min_recurrence_probability=True,
+            ),
+            "min_recurrence_probability",
+        ),
+        (RecurrentArtifactConfig(min_revolutions=1, mode=1), "mode"),
+        (
+            RecurrentArtifactConfig(min_revolutions=1, soft_penalty_weight=True),
+            "soft_penalty_weight",
+        ),
+        (
+            RecurrentArtifactConfig(
+                min_revolutions=1,
+                candidate_max_peak_signal=True,
+            ),
+            "candidate_max_peak_signal",
+        ),
+    ],
+)
+def test_recurrent_artifact_config_rejects_coercive_values(config, message):
+    with pytest.raises(ValueError, match=message):
+        build_recurrent_artifact_map(
+            [],
+            phase_px_by_frame=[],
+            revolution_by_frame=[],
+            map_shape=(2, 2),
+            config=config,
+        )
+
+
+def test_recurrent_artifact_config_normalizes_integral_float_values():
+    result = build_recurrent_artifact_map(
+        [[detection(0, 0, 0, 1, 1, peak_signal=4.0)]],
+        phase_px_by_frame=[0.0],
+        revolution_by_frame=[0],
+        map_shape=(2, 2),
+        config=RecurrentArtifactConfig(
+            min_revolutions=1.0,
+            margin_px=1.0,
+            max_overlap_fraction=np.float64(0.5),
+            min_recurrence_probability=np.float32(0.0),
+            candidate_max_area_px=1.0,
+            candidate_max_peak_signal=np.float64(4.0),
+        ),
+        frame_shape=(1.0, 2.0),
+    )
+
+    assert result.candidate_detections == 1
+
+
 def test_recurrent_artifact_map_rejects_nonfinite_phase_values():
     with pytest.raises(ValueError, match="phase_px_by_frame"):
         build_recurrent_artifact_map(
             [[detection(0, 0, 0, 1, 1)]],
             phase_px_by_frame=[float("nan")],
+            revolution_by_frame=[0],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_map_rejects_boolean_phase_values():
+    with pytest.raises(ValueError, match="phase_px_by_frame"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[True],
             revolution_by_frame=[0],
             map_shape=(2, 2),
             config=RecurrentArtifactConfig(min_revolutions=1),
@@ -97,13 +198,36 @@ def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
         )
 
 
-@pytest.mark.parametrize("revolution", [float("nan"), 1.5])
+@pytest.mark.parametrize("revolution", [float("nan"), 1.5, True])
 def test_recurrent_artifact_map_rejects_invalid_revolution_values(revolution):
     with pytest.raises(ValueError, match="revolution_by_frame"):
         build_recurrent_artifact_map(
             [[detection(0, 0, 0, 1, 1)]],
             phase_px_by_frame=[0.0],
             revolution_by_frame=[revolution],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_map_rejects_fractional_detection_bbox():
+    invalid = ParticleDetection(
+        frame_index=0.0,
+        label=1,
+        y=1.0,
+        x=1.0,
+        area_px=1,
+        bbox_top=0.5,
+        bbox_left=0,
+        bbox_bottom=1,
+        bbox_right=1,
+    )
+
+    with pytest.raises(ValueError, match=r"detection\.bbox_top"):
+        build_recurrent_artifact_map(
+            [[invalid]],
+            phase_px_by_frame=[0.0],
+            revolution_by_frame=[0],
             map_shape=(2, 2),
             config=RecurrentArtifactConfig(min_revolutions=1),
         )
@@ -435,6 +559,23 @@ def test_soft_recurrent_filter_keeps_strong_peak_and_rejects_weak_peak():
     assert filtered[0][0].recurrent_artifact_required_peak_signal == 10.0
     assert filtered[0][1].recurrent_artifact_overlap_fraction == 0.0
     assert filtered[0][1].recurrent_artifact_required_peak_signal == 5.0
+
+
+@pytest.mark.parametrize("detection_threshold", [True, -1.0, float("nan")])
+def test_soft_recurrent_filter_rejects_invalid_detection_threshold(detection_threshold):
+    with pytest.raises(ValueError, match="detection_threshold"):
+        filter_recurrent_artifact_detections(
+            [[detection(0, 1, 2, 3, 4, peak_signal=6.0)]],
+            phase_px_by_frame=[0.0],
+            artifact_map=np.zeros((12, 12), dtype=bool),
+            config=RecurrentArtifactConfig(
+                min_revolutions=0,
+                margin_px=0,
+                max_overlap_fraction=0.3,
+                mode="soft",
+            ),
+            detection_threshold=detection_threshold,
+        )
 
 
 def test_recurrent_artifact_scores_include_rejected_candidates():
