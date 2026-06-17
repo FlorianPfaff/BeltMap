@@ -205,12 +205,17 @@ def registration_quality_inflation_factor(
     return float(factor)
 
 
-def residual_with_inflated_noise(residual: ResidualImage, factor: float) -> ResidualImage:
+def residual_with_inflated_noise(
+    residual: ResidualImage, factor: float
+) -> ResidualImage:
     """Return a residual whose normalized signal is divided by ``factor``."""
 
-    if factor <= 1.0:
+    factor_value = float(factor)
+    if not np.isfinite(factor_value) or factor_value <= 0.0:
+        raise ValueError("noise inflation factor must be finite and positive")
+    if factor_value <= 1.0:
         return residual
-    local_noise = np.asarray(residual.local_noise, dtype=np.float64) * float(factor)
+    local_noise = np.asarray(residual.local_noise, dtype=np.float64) * factor_value
     valid = (
         residual.mask
         & np.isfinite(residual.raw)

@@ -129,7 +129,9 @@ def robust_gain_offset(
     x = exp[valid].ravel()
     y = obs[valid].ravel()
     if x.size < min_pixels:
-        raise ValueError(f"not enough valid pixels for photometric fit: {x.size} < {min_pixels}")
+        raise ValueError(
+            f"not enough valid pixels for photometric fit: {x.size} < {min_pixels}"
+        )
 
     keep = np.ones(x.size, dtype=bool)
     gain = 1.0
@@ -140,7 +142,9 @@ def robust_gain_offset(
         if kept_x.size < min_pixels:
             break
         design = np.column_stack([kept_x, np.ones(kept_x.size)])
-        gain, offset = (float(v) for v in np.linalg.lstsq(design, kept_y, rcond=None)[0])
+        gain, offset = (
+            float(v) for v in np.linalg.lstsq(design, kept_y, rcond=None)[0]
+        )
         residual = kept_y - (gain * kept_x + offset)
         if trim_fraction <= 0:
             break
@@ -153,7 +157,11 @@ def robust_gain_offset(
         keep = new_keep
 
     fitted = gain * x[keep] + offset
-    rmse = float(np.sqrt(np.mean(np.square(y[keep] - fitted)))) if np.any(keep) else float("nan")
+    rmse = (
+        float(np.sqrt(np.mean(np.square(y[keep] - fitted))))
+        if np.any(keep)
+        else float("nan")
+    )
     return GainOffsetFit(
         gain=gain,
         offset=offset,
@@ -169,7 +177,9 @@ def apply_gain_offset(expected: ArrayLike, fit: GainOffsetFit) -> FloatArray:
     return fit.gain * as_float_image(expected, name="expected") + fit.offset
 
 
-def quadratic_subpixel_minimum(offsets: Sequence[float], losses: Sequence[float]) -> float:
+def quadratic_subpixel_minimum(
+    offsets: Sequence[float], losses: Sequence[float]
+) -> float:
     """Estimate the sub-grid minimum of a sampled registration loss curve.
 
     The function fits a parabola through the best sample and its two neighbors.
@@ -180,7 +190,9 @@ def quadratic_subpixel_minimum(offsets: Sequence[float], losses: Sequence[float]
     x = np.asarray(offsets, dtype=np.float64)
     y = np.asarray(losses, dtype=np.float64)
     if x.ndim != 1 or y.ndim != 1 or x.size != y.size or x.size == 0:
-        raise ValueError("offsets and losses must be one-dimensional arrays of equal nonzero length")
+        raise ValueError(
+            "offsets and losses must be one-dimensional arrays of equal nonzero length"
+        )
     finite = np.isfinite(x) & np.isfinite(y)
     if not np.any(finite):
         raise ValueError("no finite registration losses")
@@ -211,6 +223,13 @@ def _trimmed_loss(values: np.ndarray, *, trim_fraction: float) -> float:
     return float(np.mean(squared))
 
 
+def _nonnegative_integer_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not parsed.is_integer() or parsed < 0:
+        raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
+
+
 def estimate_integer_xy_shift(
     observed: ArrayLike,
     expected: ArrayLike,
@@ -226,8 +245,10 @@ def estimate_integer_xy_shift(
     is a sanity check for crop drift, horizontal misalignment, or camera motion.
     """
 
-    if max_shift_y_px < 0 or max_shift_x_px < 0:
-        raise ValueError("max shifts must be non-negative")
+    max_shift_y_px = _nonnegative_integer_value(max_shift_y_px, "max_shift_y_px")
+    max_shift_x_px = _nonnegative_integer_value(max_shift_x_px, "max_shift_x_px")
+    if not math.isfinite(trim_fraction) or not 0.0 <= trim_fraction < 1.0:
+        raise ValueError("trim_fraction must be finite and in [0, 1)")
     obs = as_float_image(observed, name="observed")
     exp = as_float_image(expected, name="expected")
     if obs.shape != exp.shape:
@@ -244,10 +265,14 @@ def estimate_integer_xy_shift(
         for dx in range(-max_shift_x_px, max_shift_x_px + 1):
             shifted = np.roll(np.roll(exp, dy, axis=0), dx, axis=1)
             shifted_valid = np.roll(np.roll(valid, dy, axis=0), dx, axis=1) & valid
-            loss = _trimmed_loss((obs - shifted)[shifted_valid], trim_fraction=trim_fraction)
+            loss = _trimmed_loss(
+                (obs - shifted)[shifted_valid], trim_fraction=trim_fraction
+            )
             losses.append((loss, dy, dx))
     best_loss, best_y, best_x = min(losses, key=lambda item: item[0])
-    median_loss = float(np.median([loss for loss, _dy, _dx in losses if np.isfinite(loss)]))
+    median_loss = float(
+        np.median([loss for loss, _dy, _dx in losses if np.isfinite(loss)])
+    )
     score = 0.0 if median_loss <= 0 else max(0.0, 1.0 - best_loss / median_loss)
     return ShiftEstimate(best_y, best_x, best_loss, score)
 
@@ -255,8 +280,8 @@ def estimate_integer_xy_shift(
 def unwrap_periodic(values: ArrayLike, period: float) -> FloatArray:
     """Unwrap periodic pixel phases into a continuous sequence."""
 
-    if period <= 0:
-        raise ValueError("period must be positive")
+    if not math.isfinite(period) or period <= 0:
+        raise ValueError("period must be finite and positive")
     arr = np.asarray(values, dtype=np.float64)
     if arr.size == 0:
         return arr.astype(np.float64)
@@ -279,8 +304,13 @@ def smooth_phase_velocity(
     integration is worthwhile.
     """
 
-    if process_noise_px <= 0 or measurement_noise_px <= 0:
-        raise ValueError("noise scales must be positive")
+    if (
+        not math.isfinite(process_noise_px)
+        or not math.isfinite(measurement_noise_px)
+        or process_noise_px <= 0
+        or measurement_noise_px <= 0
+    ):
+        raise ValueError("noise scales must be finite and positive")
     measured = unwrap_periodic(measured_phase_px, period_px)
     n = measured.size
     if n == 0:
@@ -306,7 +336,9 @@ def smooth_phase_velocity(
             covariance = transition @ covariance @ transition.T + process
         measurement_var = (measurement_noise_px / weights[index]) ** 2
         innovation = measurement - float((observation @ state)[0])
-        innovation_var = float((observation @ covariance @ observation.T)[0, 0] + measurement_var)
+        innovation_var = float(
+            (observation @ covariance @ observation.T)[0, 0] + measurement_var
+        )
         kalman_gain = covariance @ observation.T / innovation_var
         state = state + (kalman_gain[:, 0] * innovation)
         covariance = (np.eye(2) - kalman_gain @ observation) @ covariance
@@ -326,8 +358,13 @@ def map_uncertainty_from_counts(
 ) -> FloatArray:
     """Convert belt-map observation counts to a noise/uncertainty floor."""
 
-    if min_count <= 0 or scale <= 0:
-        raise ValueError("min_count and scale must be positive")
+    if (
+        not math.isfinite(min_count)
+        or not math.isfinite(scale)
+        or min_count <= 0
+        or scale <= 0
+    ):
+        raise ValueError("min_count and scale must be finite and positive")
     count_arr = np.asarray(counts, dtype=np.float64)
     safe = np.maximum(count_arr, min_count)
     uncertainty = scale / np.sqrt(safe)
@@ -335,7 +372,9 @@ def map_uncertainty_from_counts(
     return uncertainty
 
 
-def seam_discontinuity_profile(belt_map: ArrayLike, *, seam_row: int = 0, window_px: int = 8) -> dict[str, float]:
+def seam_discontinuity_profile(
+    belt_map: ArrayLike, *, seam_row: int = 0, window_px: int = 8
+) -> dict[str, float]:
     """Measure how discontinuous a cyclic belt map is around a seam row."""
 
     belt = as_float_image(belt_map, name="belt_map")
@@ -345,8 +384,12 @@ def seam_discontinuity_profile(belt_map: ArrayLike, *, seam_row: int = 0, window
         raise ValueError("window_px must be positive")
     height = belt.shape[0]
     row = int(seam_row) % height
-    before = np.asarray([belt[(row - i - 1) % height] for i in range(window_px)], dtype=np.float64)
-    after = np.asarray([belt[(row + i) % height] for i in range(window_px)], dtype=np.float64)
+    before = np.asarray(
+        [belt[(row - i - 1) % height] for i in range(window_px)], dtype=np.float64
+    )
+    after = np.asarray(
+        [belt[(row + i) % height] for i in range(window_px)], dtype=np.float64
+    )
     jump = after[0] - before[0]
     local = after - before
     return {
@@ -363,7 +406,9 @@ def theil_sen_slope(times: ArrayLike, values: ArrayLike) -> float:
     t = np.asarray(times, dtype=np.float64)
     y = np.asarray(values, dtype=np.float64)
     if t.shape != y.shape or t.ndim != 1:
-        raise ValueError("times and values must be one-dimensional arrays of equal length")
+        raise ValueError(
+            "times and values must be one-dimensional arrays of equal length"
+        )
     finite = np.isfinite(t) & np.isfinite(y)
     t = t[finite]
     y = y[finite]
@@ -393,12 +438,24 @@ def track_confidence_score(
     if min_track_length <= 0:
         raise ValueError("min_track_length must be positive")
     length_score = min(1.0, max(0.0, n_detections / min_track_length))
-    signal_score = 1.0 if mean_peak_signal is None else 1.0 - math.exp(-max(0.0, mean_peak_signal) / 5.0)
-    fit_score = 1.0 if velocity_fit_rmse_px is None else 1.0 / (1.0 + max(0.0, velocity_fit_rmse_px))
+    signal_score = (
+        1.0
+        if mean_peak_signal is None
+        else 1.0 - math.exp(-max(0.0, mean_peak_signal) / 5.0)
+    )
+    fit_score = (
+        1.0
+        if velocity_fit_rmse_px is None
+        else 1.0 / (1.0 + max(0.0, velocity_fit_rmse_px))
+    )
     if velocity_ratio_y is None:
         ratio_score = 1.0
     else:
-        ratio_score = 1.0 if 0.0 <= velocity_ratio_y <= 1.1 else max(0.0, 1.0 - abs(velocity_ratio_y - 0.55))
+        ratio_score = (
+            1.0
+            if 0.0 <= velocity_ratio_y <= 1.1
+            else max(0.0, 1.0 - abs(velocity_ratio_y - 0.55))
+        )
     return float(length_score * signal_score * fit_score * ratio_score)
 
 
@@ -410,14 +467,21 @@ def bbox_iou(a: Mapping[str, float], b: Mapping[str, float]) -> float:
     bottom = min(float(a["bottom"]), float(b["bottom"]))
     right = min(float(a["right"]), float(b["right"]))
     inter = max(0.0, bottom - top) * max(0.0, right - left)
-    area_a = max(0.0, float(a["bottom"]) - float(a["top"])) * max(0.0, float(a["right"]) - float(a["left"]))
-    area_b = max(0.0, float(b["bottom"]) - float(b["top"])) * max(0.0, float(b["right"]) - float(b["left"]))
+    area_a = max(0.0, float(a["bottom"]) - float(a["top"])) * max(
+        0.0, float(a["right"]) - float(a["left"])
+    )
+    area_b = max(0.0, float(b["bottom"]) - float(b["top"])) * max(
+        0.0, float(b["right"]) - float(b["left"])
+    )
     union = area_a + area_b - inter
     return 0.0 if union <= 0 else float(inter / union)
 
 
 def _box_centroid(box: Mapping[str, float]) -> tuple[float, float]:
-    return ((float(box["top"]) + float(box["bottom"])) / 2.0, (float(box["left"]) + float(box["right"])) / 2.0)
+    return (
+        (float(box["top"]) + float(box["bottom"])) / 2.0,
+        (float(box["left"]) + float(box["right"])) / 2.0,
+    )
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -507,7 +571,9 @@ def _parse_real_label_box(box: Mapping[str, Any]) -> dict[str, float]:
         bottom = float(box["bottom"])
         right = float(box["right"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("label boxes must contain numeric top/left/bottom/right") from exc
+        raise ValueError(
+            "label boxes must contain numeric top/left/bottom/right"
+        ) from exc
     if not all(math.isfinite(value) for value in (top, left, bottom, right)):
         raise ValueError("label box coordinates must be finite")
     if bottom <= top or right <= left:
@@ -530,7 +596,9 @@ def _parse_detection_box(row: Mapping[str, Any]) -> dict[str, float] | None:
     return {"top": top, "left": left, "bottom": bottom, "right": right}
 
 
-def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5) -> RealLabelMetrics:
+def evaluate_real_detections(
+    output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5
+) -> RealLabelMetrics:
     """Evaluate BeltMap detections against sparse real-data annotations."""
 
     if not 0.0 < iou_threshold <= 1.0:
@@ -541,7 +609,9 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
     ious: list[float] = []
     centroid_errors: list[float] = []
     labeled_frames = set(truth)
-    detection_count = sum(len(detections.get(frame_index, [])) for frame_index in labeled_frames)
+    detection_count = sum(
+        len(detections.get(frame_index, [])) for frame_index in labeled_frames
+    )
     truth_count = sum(len(v) for v in truth.values())
     for frame_index, truth_boxes in truth.items():
         frame_detections = detections.get(frame_index, [])
@@ -585,7 +655,9 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
         recall=recall,
         f1=f1,
         mean_iou=None if not ious else float(np.mean(ious)),
-        mean_centroid_error_px=None if not centroid_errors else float(np.mean(centroid_errors)),
+        mean_centroid_error_px=(
+            None if not centroid_errors else float(np.mean(centroid_errors))
+        ),
     )
 
 
@@ -612,7 +684,11 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     """Return machine-readable warnings for common poor-result modes."""
 
     metadata_path = output_dir / "metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.is_file() else {}
+    metadata = (
+        json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata_path.is_file()
+        else {}
+    )
     detections_per_frame = read_csv_rows(output_dir / "detections_per_frame.csv")
     detections = read_csv_rows(output_dir / "detections.csv")
     velocities = read_csv_rows(output_dir / "velocities.csv")
@@ -620,26 +696,78 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     flags: list[dict[str, Any]] = []
 
     correction_values = [finite_float(row.get("correction_px")) for row in phase_rows]
-    corrections = np.asarray([v for v in correction_values if v is not None], dtype=np.float64)
+    corrections = np.asarray(
+        [v for v in correction_values if v is not None], dtype=np.float64
+    )
     search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
     search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
-        boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
+        boundary_share = float(
+            np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance)
+        )
         if boundary_share > 0.05:
-            flags.append({"severity": "warning", "code": "registration_boundary", "message": "phase corrections often hit the search boundary", "share": boundary_share})
+            flags.append(
+                {
+                    "severity": "warning",
+                    "code": "registration_boundary",
+                    "message": "phase corrections often hit the search boundary",
+                    "share": boundary_share,
+                }
+            )
 
-    counts = np.asarray([finite_float(row.get("n_detections")) or 0.0 for row in detections_per_frame], dtype=np.float64)
-    if counts.size and float(np.percentile(counts, 95)) > max(25.0, 5.0 * float(np.median(counts) + 1.0)):
-        flags.append({"severity": "warning", "code": "detection_spikes", "message": "detection counts have large frame-to-frame spikes", "p95": float(np.percentile(counts, 95)), "median": float(np.median(counts))})
+    counts = np.asarray(
+        [finite_float(row.get("n_detections")) or 0.0 for row in detections_per_frame],
+        dtype=np.float64,
+    )
+    if counts.size and float(np.percentile(counts, 95)) > max(
+        25.0, 5.0 * float(np.median(counts) + 1.0)
+    ):
+        flags.append(
+            {
+                "severity": "warning",
+                "code": "detection_spikes",
+                "message": "detection counts have large frame-to-frame spikes",
+                "p95": float(np.percentile(counts, 95)),
+                "median": float(np.median(counts)),
+            }
+        )
 
-    areas = np.asarray([finite_float(row.get("area_px")) for row in detections if finite_float(row.get("area_px")) is not None], dtype=np.float64)
+    areas = np.asarray(
+        [
+            finite_float(row.get("area_px"))
+            for row in detections
+            if finite_float(row.get("area_px")) is not None
+        ],
+        dtype=np.float64,
+    )
     if areas.size and float(np.mean(areas <= 2.0)) > 0.5:
-        flags.append({"severity": "warning", "code": "many_tiny_components", "message": "most detections are tiny components", "share_area_le_2": float(np.mean(areas <= 2.0))})
+        flags.append(
+            {
+                "severity": "warning",
+                "code": "many_tiny_components",
+                "message": "most detections are tiny components",
+                "share_area_le_2": float(np.mean(areas <= 2.0)),
+            }
+        )
 
-    ratios = np.asarray([finite_float(row.get("velocity_ratio_y")) for row in velocities if finite_float(row.get("velocity_ratio_y")) is not None], dtype=np.float64)
+    ratios = np.asarray(
+        [
+            finite_float(row.get("velocity_ratio_y"))
+            for row in velocities
+            if finite_float(row.get("velocity_ratio_y")) is not None
+        ],
+        dtype=np.float64,
+    )
     if ratios.size and float(np.mean((0.0 <= ratios) & (ratios <= 1.1))) < 0.5:
-        flags.append({"severity": "warning", "code": "implausible_velocity_ratios", "message": "many velocity ratios are outside the expected belt-relative interval", "share_0_to_1p1": float(np.mean((0.0 <= ratios) & (ratios <= 1.1)))})
+        flags.append(
+            {
+                "severity": "warning",
+                "code": "implausible_velocity_ratios",
+                "message": "many velocity ratios are outside the expected belt-relative interval",
+                "share_0_to_1p1": float(np.mean((0.0 <= ratios) & (ratios <= 1.1))),
+            }
+        )
 
     recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
     metadata_detection_count = finite_int(metadata.get("n_detections"))
@@ -652,14 +780,33 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     if recurrent_denominator > 0:
         recurrent_share = recurrent_rejected / recurrent_denominator
         if recurrent_share > 0.75:
-            flags.append({"severity": "info", "code": "heavy_recurrent_filtering", "message": "recurrent artifact filtering rejected most first-pass detections", "rejected": recurrent_rejected, "share": recurrent_share})
+            flags.append(
+                {
+                    "severity": "info",
+                    "code": "heavy_recurrent_filtering",
+                    "message": "recurrent artifact filtering rejected most first-pass detections",
+                    "rejected": recurrent_rejected,
+                    "share": recurrent_share,
+                }
+            )
 
-    return {"output_dir": str(output_dir), "metadata_present": bool(metadata), "flags": flags}
+    return {
+        "output_dir": str(output_dir),
+        "metadata_present": bool(metadata),
+        "flags": flags,
+    }
 
 
 def _git(args: Sequence[str], *, cwd: Path) -> str | None:
     try:
-        result = subprocess.run(["git", *args], cwd=cwd, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
     except (OSError, subprocess.CalledProcessError):
         return None
     return result.stdout.strip()
@@ -675,13 +822,31 @@ def dataset_manifest_sha256(root: Path, *, limit: int | None = None) -> str | No
         files = files[:limit]
     for path in files:
         stat = path.stat()
-        entries.append(f"{path.relative_to(root)}\t{stat.st_size}\t{int(stat.st_mtime)}")
+        entries.append(
+            f"{path.relative_to(root)}\t{stat.st_size}\t{int(stat.st_mtime)}"
+        )
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
 
 
-def collect_provenance(*, cwd: Path | None = None, image_dir: Path | None = None, env_prefixes: Sequence[str] = ("BELTMAP_", "DETECTION_", "MAP_", "STATIC_", "RECURRENT_", "PHASE_")) -> Provenance:
+def collect_provenance(
+    *,
+    cwd: Path | None = None,
+    image_dir: Path | None = None,
+    env_prefixes: Sequence[str] = (
+        "BELTMAP_",
+        "DETECTION_",
+        "MAP_",
+        "STATIC_",
+        "RECURRENT_",
+        "PHASE_",
+    ),
+) -> Provenance:
     root = Path.cwd() if cwd is None else cwd
-    env = {key: value for key, value in sorted(os.environ.items()) if any(key.startswith(prefix) for prefix in env_prefixes)}
+    env = {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if any(key.startswith(prefix) for prefix in env_prefixes)
+    }
     dirty_text = _git(["status", "--porcelain"], cwd=root)
     return Provenance(
         python_version=sys.version,
@@ -691,7 +856,9 @@ def collect_provenance(*, cwd: Path | None = None, image_dir: Path | None = None
         git_commit=_git(["rev-parse", "HEAD"], cwd=root),
         git_dirty=None if dirty_text is None else bool(dirty_text),
         environment=env,
-        input_manifest_sha256=None if image_dir is None else dataset_manifest_sha256(image_dir),
+        input_manifest_sha256=(
+            None if image_dir is None else dataset_manifest_sha256(image_dir)
+        ),
     )
 
 
@@ -700,7 +867,9 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def write_provenance(path: Path, *, cwd: Path | None = None, image_dir: Path | None = None) -> Provenance:
+def write_provenance(
+    path: Path, *, cwd: Path | None = None, image_dir: Path | None = None
+) -> Provenance:
     provenance = collect_provenance(cwd=cwd, image_dir=image_dir)
     write_json(path, asdict(provenance))
     return provenance

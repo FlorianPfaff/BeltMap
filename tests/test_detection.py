@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap import (
     ResidualImage,
@@ -184,6 +185,20 @@ def test_detect_particles_from_residual_hysteresis_compatibility_wrapper():
             ]
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"threshold": -1.0}, "threshold"),
+        ({"threshold": 1.0, "low_threshold": -0.5}, "low_threshold"),
+    ],
+)
+def test_detect_particles_from_residual_rejects_negative_thresholds(kwargs, message):
+    residual = np.ones((2, 2), dtype=float)
+
+    with pytest.raises(ValueError, match=message):
+        detect_particles_from_residual(residual, **kwargs)
 
 
 def test_detection_signal_from_residual_matches_detection_mode_and_valid_mask():

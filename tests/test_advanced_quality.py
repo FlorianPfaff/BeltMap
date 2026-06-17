@@ -5,13 +5,17 @@ import pytest
 
 from beltmap.advanced_quality import (
     bbox_iou,
+    estimate_integer_xy_shift,
     evaluate_real_detections,
     finite_int,
+    map_uncertainty_from_counts,
     quality_flags,
     quadratic_subpixel_minimum,
     robust_gain_offset,
+    smooth_phase_velocity,
     theil_sen_slope,
     track_confidence_score,
+    unwrap_periodic,
 )
 
 
@@ -20,7 +24,9 @@ def test_robust_gain_offset_recovers_linear_photometric_change():
     observed = 1.5 * expected + 7.0
     observed[0, 0] += 1000.0
 
-    fit = robust_gain_offset(observed, expected, trim_fraction=0.05, max_iterations=3, min_pixels=20)
+    fit = robust_gain_offset(
+        observed, expected, trim_fraction=0.05, max_iterations=3, min_pixels=20
+    )
 
     np.testing.assert_allclose(fit.gain, 1.5, rtol=1e-6)
     np.testing.assert_allclose(fit.offset, 7.0, rtol=1e-6)
@@ -34,6 +40,22 @@ def test_quadratic_subpixel_minimum_fits_best_neighbor_triplet():
     assert abs(quadratic_subpixel_minimum(offsets, losses) - 0.25) < 1e-9
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_shift_y_px": float("nan")}, "max_shift_y_px"),
+        ({"max_shift_x_px": 1.5}, "max_shift_x_px"),
+        ({"trim_fraction": float("nan")}, "trim_fraction"),
+        ({"trim_fraction": -0.1}, "trim_fraction"),
+    ],
+)
+def test_estimate_integer_xy_shift_rejects_invalid_config(kwargs, message):
+    image = np.zeros((4, 4), dtype=float)
+
+    with pytest.raises(ValueError, match=message):
+        estimate_integer_xy_shift(image, image, **kwargs)
+
+
 def test_theil_sen_slope_ignores_single_bad_point_better_than_mean_slope():
     times = np.arange(6, dtype=float)
     values = 2.0 * times
@@ -42,10 +64,49 @@ def test_theil_sen_slope_ignores_single_bad_point_better_than_mean_slope():
     assert theil_sen_slope(times, values) == 2.0
 
 
+@pytest.mark.parametrize("period", [float("nan"), float("inf"), 0.0])
+def test_unwrap_periodic_rejects_invalid_period(period):
+    with pytest.raises(ValueError, match="period"):
+        unwrap_periodic([0.0, 1.0], period)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"process_noise_px": float("nan")},
+        {"measurement_noise_px": float("inf")},
+    ],
+)
+def test_smooth_phase_velocity_rejects_nonfinite_noise(kwargs):
+    with pytest.raises(ValueError, match="noise scales"):
+        smooth_phase_velocity([0.0, 1.0], period_px=10.0, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"min_count": float("nan")},
+        {"scale": float("inf")},
+    ],
+)
+def test_map_uncertainty_from_counts_rejects_nonfinite_config(kwargs):
+    with pytest.raises(ValueError, match="min_count and scale"):
+        map_uncertainty_from_counts([[1.0, 2.0]], **kwargs)
+
+
 def test_bbox_iou_and_track_confidence_are_finite():
-    iou = bbox_iou({"top": 0, "left": 0, "bottom": 10, "right": 10}, {"top": 5, "left": 5, "bottom": 15, "right": 15})
+    iou = bbox_iou(
+        {"top": 0, "left": 0, "bottom": 10, "right": 10},
+        {"top": 5, "left": 5, "bottom": 15, "right": 15},
+    )
     np.testing.assert_allclose(iou, 25 / 175)
-    score = track_confidence_score(n_detections=5, min_track_length=5, mean_peak_signal=10.0, velocity_fit_rmse_px=0.5, velocity_ratio_y=0.8)
+    score = track_confidence_score(
+        n_detections=5,
+        min_track_length=5,
+        mean_peak_signal=10.0,
+        velocity_fit_rmse_px=0.5,
+        velocity_ratio_y=0.8,
+    )
     assert 0.0 < score <= 1.0
 
 
@@ -66,7 +127,16 @@ def test_real_label_metrics_count_detections_only_on_labeled_frames(tmp_path):
     )
     labels = tmp_path / "labels.json"
     labels.write_text(
-        json.dumps({"frames": [{"frame_index": 0, "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}]}]}),
+        json.dumps(
+            {
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -84,13 +154,21 @@ def test_real_label_metrics_ignore_fractional_detection_frame_indices(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "detections.csv").write_text(
-        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
-        "0.5,0,0,10,10\n",
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n" "0.5,0,0,10,10\n",
         encoding="utf-8",
     )
     labels = tmp_path / "labels.json"
     labels.write_text(
-        json.dumps({"frames": [{"frame_index": 0, "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}]}]}),
+        json.dumps(
+            {
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -131,13 +209,21 @@ def test_real_label_metrics_zero_match_f1_is_zero_not_missing(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "detections.csv").write_text(
-        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
-        "0,20,20,30,30\n",
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n" "0,20,20,30,30\n",
         encoding="utf-8",
     )
     labels = tmp_path / "labels.json"
     labels.write_text(
-        json.dumps({"frames": [{"frame_index": 0, "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}]}]}),
+        json.dumps(
+            {
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -268,8 +354,7 @@ def test_real_label_metrics_ignore_degenerate_detection_boxes(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "detections.csv").write_text(
-        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
-        "0,10,0,10,10\n",
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n" "0,10,0,10,10\n",
         encoding="utf-8",
     )
     labels = tmp_path / "labels.json"
@@ -286,7 +371,9 @@ def test_real_label_metrics_ignore_degenerate_detection_boxes(tmp_path):
     assert metrics.f1 == 1.0
 
 
-def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(tmp_path):
+def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(
+    tmp_path,
+):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "metadata.json").write_text(
@@ -300,6 +387,8 @@ def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(
 
     payload = quality_flags(out)
 
-    flag = next(flag for flag in payload["flags"] if flag["code"] == "heavy_recurrent_filtering")
+    flag = next(
+        flag for flag in payload["flags"] if flag["code"] == "heavy_recurrent_filtering"
+    )
     assert flag["rejected"] == 5
     assert flag["share"] == 1.0

@@ -39,7 +39,10 @@ from .advanced_quality import (
     unwrap_periodic,
 )
 from .cross_map_agreement import CrossMapAgreementConfig
-from .detection import detect_particles_from_residual_hysteresis, normalize_detection_mode
+from .detection import (
+    detect_particles_from_residual_hysteresis,
+    normalize_detection_mode,
+)
 from ._driver_map import (
     PHASE_REFINEMENT_FIELDS,
     PhaseFeedbackConfig,
@@ -98,9 +101,18 @@ from .revolution_split import (
 from .residual import generate_residual_image
 
 DETECTION_FIELDS = [
-    "frame_index", "image", "label", "y", "x", "area_px",
-    "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
-    "mean_signal", "peak_signal",
+    "frame_index",
+    "image",
+    "label",
+    "y",
+    "x",
+    "area_px",
+    "bbox_top",
+    "bbox_left",
+    "bbox_bottom",
+    "bbox_right",
+    "mean_signal",
+    "peak_signal",
     "map_support_min",
     "map_support_mean",
     "map_risk_mean",
@@ -112,10 +124,22 @@ DETECTION_FIELDS = [
     "recurrent_artifact_required_peak_signal",
 ]
 PHASE_FIELDS = [
-    "frame_index", "image", "phase_px", "phase_fraction", "phase_rad",
-    "predicted_phase_px", "correction_px", "phase_drift_px", "loss", "score",
-    "second_best_loss", "loss_gap", "loss_gap_ratio", "loss_curvature",
-    "uncertainty_px", "method",
+    "frame_index",
+    "image",
+    "phase_px",
+    "phase_fraction",
+    "phase_rad",
+    "predicted_phase_px",
+    "correction_px",
+    "phase_drift_px",
+    "loss",
+    "score",
+    "second_best_loss",
+    "loss_gap",
+    "loss_gap_ratio",
+    "loss_curvature",
+    "uncertainty_px",
+    "method",
 ]
 PHASE_ESTIMATION_MODES = {
     "motion_model",
@@ -128,16 +152,32 @@ PHASE_ESTIMATION_MODES = {
 # speckles in the reported detections and tracks.
 MAP_PARTICLE_MASK_MIN_AREA_DEFAULT = 8
 VELOCITY_FIELDS = [
-    "track_id", "n_detections", "frame_start", "frame_end",
-    "velocity_y_px_per_frame", "velocity_x_px_per_frame", "speed_px_per_frame",
-    "belt_velocity_y_px_per_frame", "velocity_ratio_y",
+    "track_id",
+    "n_detections",
+    "frame_start",
+    "frame_end",
+    "velocity_y_px_per_frame",
+    "velocity_x_px_per_frame",
+    "speed_px_per_frame",
+    "belt_velocity_y_px_per_frame",
+    "velocity_ratio_y",
     "belt_minus_particle_velocity_y_px_per_frame",
 ]
 TRACK_DETECTION_FIELDS = [
-    "track_id", "track_detection_index",
-    "frame_index", "image", "label", "y", "x", "area_px",
-    "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
-    "mean_signal", "peak_signal",
+    "track_id",
+    "track_detection_index",
+    "frame_index",
+    "image",
+    "label",
+    "y",
+    "x",
+    "area_px",
+    "bbox_top",
+    "bbox_left",
+    "bbox_bottom",
+    "bbox_right",
+    "mean_signal",
+    "peak_signal",
     "map_support_min",
     "map_support_mean",
     "map_risk_mean",
@@ -162,10 +202,16 @@ CROSS_MAP_AGREEMENT_FIELDS = [
     "cross_map_agreement_confirming_maps",
 ]
 TRACK_SCORE_FIELDS = [
-    "track_id", "n_detections", "frame_start", "frame_end",
-    "velocity_y_px_per_frame", "velocity_x_px_per_frame",
-    "velocity_ratio_y", "abs_x_velocity_px_per_frame",
-    "passes_min_track_length", "passes_velocity_ratio",
+    "track_id",
+    "n_detections",
+    "frame_start",
+    "frame_end",
+    "velocity_y_px_per_frame",
+    "velocity_x_px_per_frame",
+    "velocity_ratio_y",
+    "abs_x_velocity_px_per_frame",
+    "passes_min_track_length",
+    "passes_velocity_ratio",
     "passes_lateral_velocity",
     "n_recurrent_artifact_scored_detections",
     "mean_recurrent_artifact_overlap_fraction",
@@ -175,24 +221,45 @@ TRACK_SCORE_FIELDS = [
     "recurrent_artifact_hit_fraction",
     "recurrent_artifact_track_score",
     "passes_recurrent_artifact",
-    "accepted", "plausibility_score",
+    "accepted",
+    "plausibility_score",
 ]
 PHOTOMETRIC_FIELDS = [
-    "frame_index", "image", "gain", "offset", "n_pixels", "rmse_gray", "trimmed_fraction", "status",
+    "frame_index",
+    "image",
+    "gain",
+    "offset",
+    "n_pixels",
+    "rmse_gray",
+    "trimmed_fraction",
+    "status",
 ]
 REVOLUTION_SPLIT_GHOST_DETECTION_FIELDS = [
     *DETECTION_FIELDS,
-    "revolution_index", "split",
+    "revolution_index",
+    "split",
     "train_artifact_rejected",
 ]
 LOCAL_ILLUMINATION_FIELDS = [
-    "frame_index", "image", "tile_px",
-    "mask_threshold", "mask_mode", "mask_grow_threshold",
-    "mask_dilation_px", "mask_margin_px", "mask_min_area_px",
-    "fit_pixels", "masked_pixels",
-    "field_median_gray", "field_p05_gray", "field_p95_gray", "field_max_abs_gray",
-    "residual_median_before_gray", "residual_median_after_gray",
-    "residual_rmse_before_gray", "residual_rmse_after_gray",
+    "frame_index",
+    "image",
+    "tile_px",
+    "mask_threshold",
+    "mask_mode",
+    "mask_grow_threshold",
+    "mask_dilation_px",
+    "mask_margin_px",
+    "mask_min_area_px",
+    "fit_pixels",
+    "masked_pixels",
+    "field_median_gray",
+    "field_p05_gray",
+    "field_p95_gray",
+    "field_max_abs_gray",
+    "residual_median_before_gray",
+    "residual_median_after_gray",
+    "residual_rmse_before_gray",
+    "residual_rmse_after_gray",
     "status",
 ]
 
@@ -210,6 +277,8 @@ def optional_positive_int(name: str) -> int | None:
     if not value:
         return None
     parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{name} must be positive or 0 to disable")
     return parsed if parsed > 0 else None
 
 
@@ -270,7 +339,22 @@ def static_residual_sample_frames(name: str, *, frame_count: int) -> int:
 
 def optional_csv_float(row: dict[str, str], key: str) -> float | None:
     value = row.get(key, "").strip()
-    return None if value == "" else float(value)
+    if value == "":
+        return None
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{key} must be finite when set")
+    return parsed
+
+
+def required_csv_float(row: dict[str, str], key: str) -> float:
+    try:
+        parsed = float(row[key])
+    except KeyError as exc:
+        raise ValueError(f"phase estimates must include {key}") from exc
+    if not np.isfinite(parsed):
+        raise ValueError(f"{key} must be finite")
+    return parsed
 
 
 def load_reuse_metadata(belt_map_path: Path) -> tuple[dict, Path | None]:
@@ -312,7 +396,9 @@ def load_phase_estimates(
         if require_image_names and (
             reader.fieldnames is None or "image" not in reader.fieldnames
         ):
-            raise ValueError("phase estimates used for reuse must include an image column")
+            raise ValueError(
+                "phase estimates used for reuse must include an image column"
+            )
         for row in reader:
             frame_index = int(row["frame_index"])
             if frame_index in estimates:
@@ -325,10 +411,10 @@ def load_phase_estimates(
                     )
                 image_names[frame_index] = image_name
             estimates[frame_index] = PhaseEstimate(
-                phase_px=float(row["phase_px"]),
-                frame_index=float(row["frame_index"]),
-                predicted_phase_px=float(row["predicted_phase_px"]),
-                correction_px=float(row["correction_px"]),
+                phase_px=required_csv_float(row, "phase_px"),
+                frame_index=required_csv_float(row, "frame_index"),
+                predicted_phase_px=required_csv_float(row, "predicted_phase_px"),
+                correction_px=required_csv_float(row, "correction_px"),
                 drift_px=optional_csv_float(row, "phase_drift_px") or 0.0,
                 loss=optional_csv_float(row, "loss"),
                 score=optional_csv_float(row, "score"),
@@ -337,7 +423,8 @@ def load_phase_estimates(
                 loss_gap_ratio=optional_csv_float(row, "loss_gap_ratio"),
                 loss_curvature=optional_csv_float(row, "loss_curvature"),
                 uncertainty_px=optional_csv_float(row, "uncertainty_px"),
-                method=row.get("method", "loaded_phase_estimate") or "loaded_phase_estimate",
+                method=row.get("method", "loaded_phase_estimate")
+                or "loaded_phase_estimate",
             )
     if not estimates:
         raise ValueError(f"no phase estimates found in {path}")
@@ -445,20 +532,33 @@ def phase_estimate_row(frame_index: int, path, residual, period_px: float) -> di
         "phase_drift_px": estimate.drift_px,
         "loss": "" if estimate.loss is None else estimate.loss,
         "score": "" if estimate.score is None else estimate.score,
-        "second_best_loss": "" if estimate.second_best_loss is None else estimate.second_best_loss,
+        "second_best_loss": (
+            "" if estimate.second_best_loss is None else estimate.second_best_loss
+        ),
         "loss_gap": "" if estimate.loss_gap is None else estimate.loss_gap,
-        "loss_gap_ratio": "" if estimate.loss_gap_ratio is None else estimate.loss_gap_ratio,
-        "loss_curvature": "" if estimate.loss_curvature is None else estimate.loss_curvature,
-        "uncertainty_px": "" if estimate.uncertainty_px is None else estimate.uncertainty_px,
+        "loss_gap_ratio": (
+            "" if estimate.loss_gap_ratio is None else estimate.loss_gap_ratio
+        ),
+        "loss_curvature": (
+            "" if estimate.loss_curvature is None else estimate.loss_curvature
+        ),
+        "uncertainty_px": (
+            "" if estimate.uncertainty_px is None else estimate.uncertainty_px
+        ),
         "method": estimate.method,
     }
 
 
-def write_detection_outputs(detections_by_frame: list, detection_rows: list[dict]) -> None:
+def write_detection_outputs(
+    detections_by_frame: list, detection_rows: list[dict]
+) -> None:
     rt.write_csv(rt.OUT / "detections.csv", detection_rows, DETECTION_FIELDS)
     rt.write_csv(
         rt.OUT / "detections_per_frame.csv",
-        [{"frame_index": i, "n_detections": len(dets)} for i, dets in enumerate(detections_by_frame)],
+        [
+            {"frame_index": i, "n_detections": len(dets)}
+            for i, dets in enumerate(detections_by_frame)
+        ],
         ["frame_index", "n_detections"],
     )
 
@@ -468,7 +568,11 @@ def write_phase_outputs(phase_rows: list[dict]) -> None:
 
 
 def write_registration_quality_outputs(registration_quality_rows: list[dict]) -> None:
-    rt.write_csv(rt.OUT / "registration_quality.csv", registration_quality_rows, REGISTRATION_QUALITY_FIELDS)
+    rt.write_csv(
+        rt.OUT / "registration_quality.csv",
+        registration_quality_rows,
+        REGISTRATION_QUALITY_FIELDS,
+    )
 
 
 def normalize_phase_estimation_mode(value: str) -> str:
@@ -573,9 +677,7 @@ def texture_phase_velocity_summary(
     )
     finite_smoothed = smoothed_velocity[np.isfinite(smoothed_velocity)]
     median_smoothed: float | None = (
-        float(np.median(finite_smoothed))
-        if finite_smoothed.size
-        else None
+        float(np.median(finite_smoothed)) if finite_smoothed.size else None
     )
     return {
         "texture_phase_velocity_status": "ok",
@@ -594,7 +696,9 @@ def texture_phase_velocity_summary(
 
 
 def write_phase_refinement_outputs(phase_refinement_rows: list[dict]) -> None:
-    rt.write_csv(rt.OUT / "phase_refinement.csv", phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
+    rt.write_csv(
+        rt.OUT / "phase_refinement.csv", phase_refinement_rows, PHASE_REFINEMENT_FIELDS
+    )
 
 
 def write_photometric_outputs(photometric_rows: list[dict]) -> None:
@@ -602,10 +706,16 @@ def write_photometric_outputs(photometric_rows: list[dict]) -> None:
 
 
 def write_local_illumination_outputs(local_illumination_rows: list[dict]) -> None:
-    rt.write_csv(rt.OUT / "local_illumination_fits.csv", local_illumination_rows, LOCAL_ILLUMINATION_FIELDS)
+    rt.write_csv(
+        rt.OUT / "local_illumination_fits.csv",
+        local_illumination_rows,
+        LOCAL_ILLUMINATION_FIELDS,
+    )
 
 
-def detection_rows_for_frame(detections: list, path: Path, frame_index: int) -> list[dict]:
+def detection_rows_for_frame(
+    detections: list, path: Path, frame_index: int
+) -> list[dict]:
     rows: list[dict] = []
     for detection in detections:
         row = {
@@ -619,10 +729,14 @@ def detection_rows_for_frame(detections: list, path: Path, frame_index: int) -> 
     return rows
 
 
-def detection_rows_from_frames(detections_by_frame: list, paths: list[Path]) -> list[dict]:
+def detection_rows_from_frames(
+    detections_by_frame: list, paths: list[Path]
+) -> list[dict]:
     rows: list[dict] = []
     for frame_index, detections in enumerate(detections_by_frame):
-        rows.extend(detection_rows_for_frame(detections, paths[frame_index], frame_index))
+        rows.extend(
+            detection_rows_for_frame(detections, paths[frame_index], frame_index)
+        )
     return rows
 
 
@@ -698,8 +812,12 @@ def track_detection_rows(tracks: list, paths: list[Path]) -> list[dict]:
     return rows
 
 
-def should_save_residual_preview(frame_index: int, preview_frames: int, preview_interval: int) -> bool:
-    return frame_index < preview_frames or (preview_interval > 0 and frame_index % preview_interval == 0)
+def should_save_residual_preview(
+    frame_index: int, preview_frames: int, preview_interval: int
+) -> bool:
+    return frame_index < preview_frames or (
+        preview_interval > 0 and frame_index % preview_interval == 0
+    )
 
 
 def detect_final_particle_mask(
@@ -729,7 +847,9 @@ def detect_final_particle_mask(
     raise ValueError(f"unknown detection method {method!r}")
 
 
-def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray | None) -> ResidualImage:
+def apply_static_noise_floor(
+    residual: ResidualImage, static_noise: np.ndarray | None
+) -> ResidualImage:
     """Normalize a residual with an image-fixed noise floor when available."""
 
     if static_noise is None:
@@ -740,9 +860,16 @@ def apply_static_noise_floor(residual: ResidualImage, static_noise: np.ndarray |
             "static noise map shape must match residual shape: "
             f"{noise_floor.shape} != {residual.local_noise.shape}"
         )
-    noise_floor = np.where(np.isfinite(noise_floor) & (noise_floor > 0), noise_floor, 0.0)
+    noise_floor = np.where(
+        np.isfinite(noise_floor) & (noise_floor > 0), noise_floor, 0.0
+    )
     local_noise = np.maximum(residual.local_noise, noise_floor)
-    valid = residual.mask & np.isfinite(residual.raw) & np.isfinite(local_noise) & (local_noise > 0)
+    valid = (
+        residual.mask
+        & np.isfinite(residual.raw)
+        & np.isfinite(local_noise)
+        & (local_noise > 0)
+    )
     normalized = np.full(residual.normalized.shape, np.nan, dtype=np.float64)
     normalized[valid] = residual.raw[valid] / local_noise[valid]
     return ResidualImage(
@@ -923,7 +1050,9 @@ def apply_local_illumination_correction(
         "field_max_abs_gray": "",
         "residual_median_before_gray": float(np.nanmedian(residual.raw)),
         "residual_median_after_gray": "",
-        "residual_rmse_before_gray": float(np.sqrt(np.nanmean(np.square(residual.raw)))),
+        "residual_rmse_before_gray": float(
+            np.sqrt(np.nanmean(np.square(residual.raw)))
+        ),
         "residual_rmse_after_gray": "",
         "status": "ok",
     }
@@ -955,9 +1084,15 @@ def apply_local_illumination_correction(
     corrected_rmse = float(np.sqrt(np.nanmean(np.square(corrected.raw))))
     row.update(
         field_median_gray=float(np.median(finite_field)) if finite_field.size else "",
-        field_p05_gray=float(np.percentile(finite_field, 5)) if finite_field.size else "",
-        field_p95_gray=float(np.percentile(finite_field, 95)) if finite_field.size else "",
-        field_max_abs_gray=float(np.max(np.abs(finite_field))) if finite_field.size else "",
+        field_p05_gray=(
+            float(np.percentile(finite_field, 5)) if finite_field.size else ""
+        ),
+        field_p95_gray=(
+            float(np.percentile(finite_field, 95)) if finite_field.size else ""
+        ),
+        field_max_abs_gray=(
+            float(np.max(np.abs(finite_field))) if finite_field.size else ""
+        ),
         residual_median_after_gray=float(np.nanmedian(corrected.raw)),
         residual_rmse_after_gray=corrected_rmse,
     )
@@ -1017,7 +1152,11 @@ def estimate_smoothed_phase_sequence(
             estimate = drift_filter.observe(estimate)
         estimates.append(estimate)
         processed = frame_index + 1
-        if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
+        if (
+            processed == 1
+            or processed == len(paths)
+            or processed % progress_interval == 0
+        ):
             dt = rt.time.perf_counter() - start
             rt.emit(
                 "phase_smoothing",
@@ -1036,7 +1175,11 @@ def estimate_smoothed_phase_sequence(
             min_support=min_support,
         ),
     )
-    rt.emit("phase_smoothing", "finished offline phase smoothing", phase_estimates=len(smoothed))
+    rt.emit(
+        "phase_smoothing",
+        "finished offline phase smoothing",
+        phase_estimates=len(smoothed),
+    )
     return {index: estimate for index, estimate in enumerate(smoothed)}
 
 
@@ -1106,9 +1249,7 @@ def learn_static_residual_noise_map(
         for sample_number, frame_index in enumerate(samples, start=1):
             frame = rt.crop(rt.read_gray(paths[frame_index]), region)
             phase_estimate = (
-                phase_estimates[frame_index]
-                if phase_estimates is not None
-                else None
+                phase_estimates[frame_index] if phase_estimates is not None else None
             )
             residual = render_clean_belt_residual(
                 image=frame,
@@ -1142,7 +1283,11 @@ def learn_static_residual_noise_map(
                 raw[particle_mask] = np.nan
                 masked_pixels += int(np.count_nonzero(particle_mask))
             residual_stack[sample_number - 1] = raw
-            if sample_number == 1 or sample_number == len(samples) or sample_number % progress_interval == 0:
+            if (
+                sample_number == 1
+                or sample_number == len(samples)
+                or sample_number % progress_interval == 0
+            ):
                 rt.emit(
                     "static_noise",
                     f"sampled {sample_number}/{len(samples)} residual frames",
@@ -1153,7 +1298,9 @@ def learn_static_residual_noise_map(
         static_noise = np.empty((crop_height, crop_width), dtype=np.float32)
         for row_start in range(0, crop_height, chunk_rows):
             row_stop = min(crop_height, row_start + chunk_rows)
-            block = np.asarray(residual_stack[:, row_start:row_stop, :], dtype=np.float32)
+            block = np.asarray(
+                residual_stack[:, row_start:row_stop, :], dtype=np.float32
+            )
             center = _nanmedian(block, axis=0)
             deviations = np.abs(block - center[None, :, :])
             mad = _nanmedian(deviations, axis=0)
@@ -1228,7 +1375,9 @@ def learn_static_residual_background_map(
         weighted_centroid=False,
     )
     progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
-    with tempfile.TemporaryDirectory(prefix="static_background_", dir=rt.OUT) as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="static_background_", dir=rt.OUT
+    ) as temp_dir:
         stack_path = Path(temp_dir) / "residual_stack.npy"
         residual_stack = np.lib.format.open_memmap(
             stack_path,
@@ -1240,9 +1389,7 @@ def learn_static_residual_background_map(
         for sample_number, frame_index in enumerate(samples, start=1):
             frame = rt.crop(rt.read_gray(paths[frame_index]), region)
             phase_estimate = (
-                phase_estimates[frame_index]
-                if phase_estimates is not None
-                else None
+                phase_estimates[frame_index] if phase_estimates is not None else None
             )
             residual = render_clean_belt_residual(
                 image=frame,
@@ -1291,7 +1438,9 @@ def learn_static_residual_background_map(
         static_background = np.empty((crop_height, crop_width), dtype=np.float32)
         for row_start in range(0, crop_height, chunk_rows):
             row_stop = min(crop_height, row_start + chunk_rows)
-            block = np.asarray(residual_stack[:, row_start:row_stop, :], dtype=np.float32)
+            block = np.asarray(
+                residual_stack[:, row_start:row_stop, :], dtype=np.float32
+            )
             center = _nanmedian(block, axis=0).astype(np.float32)
             center[~np.isfinite(center)] = 0.0
             static_background[row_start:row_stop] = center
@@ -1329,7 +1478,8 @@ def main() -> None:
         if sibling_support.exists():
             reuse_map_support_input_path = sibling_support
     protected_output_inputs = [
-        path for path in (
+        path
+        for path in (
             reuse_belt_map_input_path,
             reuse_map_support_input_path,
             optional_path("REUSE_STATIC_NOISE_PATH"),
@@ -1346,7 +1496,9 @@ def main() -> None:
     reuse_map_support_path = reuse_map_support_input_path
     rt.clear_generated_outputs(protected_paths=protected_output_inputs)
     rt.OUT.mkdir(parents=True, exist_ok=True)
-    rt.emit("startup", "starting BeltMap image driver", data_dir=rt.DATA, output_dir=rt.OUT)
+    rt.emit(
+        "startup", "starting BeltMap image driver", data_dir=rt.DATA, output_dir=rt.OUT
+    )
     paths, discovered_frame_count, frame_stride = rt.image_paths()
     rt.emit(
         "images",
@@ -1364,7 +1516,12 @@ def main() -> None:
         "images",
         "loaded first frame and parsed crop region",
         first_image_shape=list(first.shape),
-        belt_region={"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
+        belt_region={
+            "top": region[0],
+            "left": region[1],
+            "height": region[2],
+            "width": region[3],
+        },
     )
 
     velocity_spec = os.getenv("BELT_VELOCITY_PX_PER_FRAME", "auto").strip().lower()
@@ -1403,8 +1560,12 @@ def main() -> None:
         "DETECTION_MAX_BBOX_ASPECT_RATIO",
         0.0,
     )
-    detection_min_bbox_extent = optional_positive_float("DETECTION_MIN_BBOX_EXTENT", 0.0)
-    detection_split_merged_components = env_bool("DETECTION_SPLIT_MERGED_COMPONENTS", False)
+    detection_min_bbox_extent = optional_positive_float(
+        "DETECTION_MIN_BBOX_EXTENT", 0.0
+    )
+    detection_split_merged_components = env_bool(
+        "DETECTION_SPLIT_MERGED_COMPONENTS", False
+    )
     detection_split_min_projection_gap_px = rt.env_int(
         "DETECTION_SPLIT_MIN_PROJECTION_GAP_PX", 2, minimum=1
     )
@@ -1416,22 +1577,34 @@ def main() -> None:
     residual_min_noise = rt.env_float("RESIDUAL_MIN_NOISE", 1e-6, minimum=0.0)
     if residual_min_noise <= 0:
         raise ValueError("RESIDUAL_MIN_NOISE must be positive")
-    residual_noise_exclusion_sigma = optional_positive_float("RESIDUAL_NOISE_EXCLUSION_SIGMA", 4.0)
+    residual_noise_exclusion_sigma = optional_positive_float(
+        "RESIDUAL_NOISE_EXCLUSION_SIGMA", 4.0
+    )
     residual_noise_exclusion_radius_px = rt.env_int(
         "RESIDUAL_NOISE_EXCLUSION_RADIUS_PX", 2, minimum=0
     )
     photometric_enabled = env_bool("PHOTOMETRIC_ENABLED", False)
-    photometric_trim_fraction = rt.env_float("PHOTOMETRIC_TRIM_FRACTION", 0.05, minimum=0.0)
+    photometric_trim_fraction = rt.env_float(
+        "PHOTOMETRIC_TRIM_FRACTION", 0.05, minimum=0.0
+    )
     if photometric_trim_fraction >= 0.5:
         raise ValueError("PHOTOMETRIC_TRIM_FRACTION must be in [0, 0.5)")
     photometric_max_iterations = rt.env_int("PHOTOMETRIC_MAX_ITERATIONS", 3, minimum=1)
     photometric_min_pixels = rt.env_int("PHOTOMETRIC_MIN_PIXELS", 128, minimum=1)
-    detection_local_illumination_correction = env_bool("DETECTION_LOCAL_ILLUMINATION_CORRECTION", False)
-    detection_local_illumination_tile_px = rt.env_int("DETECTION_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1)
-    detection_local_illumination_min_pixels = rt.env_int("DETECTION_LOCAL_ILLUMINATION_MIN_PIXELS", 128, minimum=1)
+    detection_local_illumination_correction = env_bool(
+        "DETECTION_LOCAL_ILLUMINATION_CORRECTION", False
+    )
+    detection_local_illumination_tile_px = rt.env_int(
+        "DETECTION_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1
+    )
+    detection_local_illumination_min_pixels = rt.env_int(
+        "DETECTION_LOCAL_ILLUMINATION_MIN_PIXELS", 128, minimum=1
+    )
     min_track_length = rt.env_int("MIN_TRACK_LENGTH", 2, minimum=2)
     tracking_max_frame_gap = rt.env_float("TRACKING_MAX_FRAME_GAP", 1.0, minimum=1e-9)
-    tracking_velocity_fit_method = os.getenv("TRACKING_VELOCITY_FIT_METHOD", "linear").strip().lower()
+    tracking_velocity_fit_method = (
+        os.getenv("TRACKING_VELOCITY_FIT_METHOD", "linear").strip().lower()
+    )
     track_filter_max_recurrent_artifact_track_score = optional_positive_float(
         "TRACK_FILTER_MAX_RECURRENT_ARTIFACT_SCORE",
         0.0,
@@ -1449,24 +1622,42 @@ def main() -> None:
         minimum=0.0,
     )
     if track_filter_recurrent_artifact_detection_threshold > 1:
-        raise ValueError("TRACK_FILTER_RECURRENT_ARTIFACT_DETECTION_THRESHOLD must be in [0, 1]")
+        raise ValueError(
+            "TRACK_FILTER_RECURRENT_ARTIFACT_DETECTION_THRESHOLD must be in [0, 1]"
+        )
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_sampling_strategy = map_sampling_strategy_from_env()
-    map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
-    map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
+    map_particle_mask_threshold = rt.env_float(
+        "MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0
+    )
+    map_particle_mask_mode_value = (
+        os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
+    )
     if map_particle_mask_mode_value:
         map_particle_mask_mode = map_particle_mask_mode_value
     elif detection_mode in {"negative", "absolute"}:
         map_particle_mask_mode = detection_mode
     else:
         map_particle_mask_mode = "positive"
-    map_particle_mask_grow_threshold = rt.env_float("MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0)
-    map_particle_mask_dilation_px = rt.env_int("MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0)
+    map_particle_mask_grow_threshold = rt.env_float(
+        "MAP_PARTICLE_MASK_GROW_THRESHOLD", 2.0, minimum=0.0
+    )
+    map_particle_mask_dilation_px = rt.env_int(
+        "MAP_PARTICLE_MASK_DILATION_PX", 0, minimum=0
+    )
     map_fractional_splat = env_bool("MAP_FRACTIONAL_SPLAT", True)
-    map_frame_median_offset_correction = env_bool("MAP_FRAME_MEDIAN_OFFSET_CORRECTION", False)
-    map_local_illumination_correction = env_bool("MAP_LOCAL_ILLUMINATION_CORRECTION", False)
-    map_local_illumination_tile_px = rt.env_int("MAP_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1)
-    map_particle_mask_margin_px = rt.env_int("MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0)
+    map_frame_median_offset_correction = env_bool(
+        "MAP_FRAME_MEDIAN_OFFSET_CORRECTION", False
+    )
+    map_local_illumination_correction = env_bool(
+        "MAP_LOCAL_ILLUMINATION_CORRECTION", False
+    )
+    map_local_illumination_tile_px = rt.env_int(
+        "MAP_LOCAL_ILLUMINATION_TILE_PX", 64, minimum=1
+    )
+    map_particle_mask_margin_px = rt.env_int(
+        "MAP_PARTICLE_MASK_MARGIN_PX", 8, minimum=0
+    )
     map_particle_mask_min_area_px = rt.env_int(
         "MAP_PARTICLE_MASK_MIN_AREA_PX",
         MAP_PARTICLE_MASK_MIN_AREA_DEFAULT,
@@ -1477,9 +1668,9 @@ def main() -> None:
         map_particle_mask_threshold,
         minimum=0.0,
     )
-    detection_local_illumination_mask_mode_value = os.getenv(
-        "DETECTION_LOCAL_ILLUMINATION_MASK_MODE", ""
-    ).strip().lower()
+    detection_local_illumination_mask_mode_value = (
+        os.getenv("DETECTION_LOCAL_ILLUMINATION_MASK_MODE", "").strip().lower()
+    )
     detection_local_illumination_mask_mode = (
         detection_local_illumination_mask_mode_value or map_particle_mask_mode
     )
@@ -1488,43 +1679,77 @@ def main() -> None:
         map_particle_mask_grow_threshold,
         minimum=0.0,
     )
-    detection_local_illumination_mask_dilation_px = rt.env_int("DETECTION_LOCAL_ILLUMINATION_MASK_DILATION_PX", map_particle_mask_dilation_px, minimum=0)
-    detection_local_illumination_mask_margin_px = rt.env_int("DETECTION_LOCAL_ILLUMINATION_MASK_MARGIN_PX", map_particle_mask_margin_px, minimum=0)
-    detection_local_illumination_mask_min_area_px = rt.env_int("DETECTION_LOCAL_ILLUMINATION_MASK_MIN_AREA_PX", map_particle_mask_min_area_px, minimum=1)
+    detection_local_illumination_mask_dilation_px = rt.env_int(
+        "DETECTION_LOCAL_ILLUMINATION_MASK_DILATION_PX",
+        map_particle_mask_dilation_px,
+        minimum=0,
+    )
+    detection_local_illumination_mask_margin_px = rt.env_int(
+        "DETECTION_LOCAL_ILLUMINATION_MASK_MARGIN_PX",
+        map_particle_mask_margin_px,
+        minimum=0,
+    )
+    detection_local_illumination_mask_min_area_px = rt.env_int(
+        "DETECTION_LOCAL_ILLUMINATION_MASK_MIN_AREA_PX",
+        map_particle_mask_min_area_px,
+        minimum=1,
+    )
     map_aggregation = os.getenv("MAP_AGGREGATION", "mean").strip().lower()
     map_robust_iterations = rt.env_int("MAP_ROBUST_ITERATIONS", 1, minimum=0)
-    map_robust_huber_delta = rt.env_float(
-        "MAP_ROBUST_HUBER_DELTA", 3.0, minimum=1e-9
-    )
-    map_robust_min_scale = rt.env_float(
-        "MAP_ROBUST_MIN_SCALE", 1.0, minimum=1e-9
-    )
+    map_robust_huber_delta = rt.env_float("MAP_ROBUST_HUBER_DELTA", 3.0, minimum=1e-9)
+    map_robust_min_scale = rt.env_float("MAP_ROBUST_MIN_SCALE", 1.0, minimum=1e-9)
     revolution_split_enabled = env_bool("REVOLUTION_SPLIT_ENABLED", False)
-    revolution_split_eval_every = rt.env_int("REVOLUTION_SPLIT_EVAL_EVERY", 3, minimum=1)
-    revolution_split_eval_offset = rt.env_int("REVOLUTION_SPLIT_EVAL_OFFSET", 0, minimum=0)
-    revolution_split_eval_revolutions_spec = os.getenv("REVOLUTION_SPLIT_EVAL_REVOLUTIONS", "")
-    revolution_split_min_train_revolutions = rt.env_int("REVOLUTION_SPLIT_MIN_TRAIN_REVOLUTIONS", 1, minimum=1)
-    revolution_split_min_eval_revolutions = rt.env_int("REVOLUTION_SPLIT_MIN_EVAL_REVOLUTIONS", 1, minimum=1)
-    revolution_split_ghost_min_revolutions = rt.env_int("REVOLUTION_SPLIT_GHOST_MIN_REVOLUTIONS", 2, minimum=1)
+    revolution_split_eval_every = rt.env_int(
+        "REVOLUTION_SPLIT_EVAL_EVERY", 3, minimum=1
+    )
+    revolution_split_eval_offset = rt.env_int(
+        "REVOLUTION_SPLIT_EVAL_OFFSET", 0, minimum=0
+    )
+    revolution_split_eval_revolutions_spec = os.getenv(
+        "REVOLUTION_SPLIT_EVAL_REVOLUTIONS", ""
+    )
+    revolution_split_min_train_revolutions = rt.env_int(
+        "REVOLUTION_SPLIT_MIN_TRAIN_REVOLUTIONS", 1, minimum=1
+    )
+    revolution_split_min_eval_revolutions = rt.env_int(
+        "REVOLUTION_SPLIT_MIN_EVAL_REVOLUTIONS", 1, minimum=1
+    )
+    revolution_split_ghost_min_revolutions = rt.env_int(
+        "REVOLUTION_SPLIT_GHOST_MIN_REVOLUTIONS", 2, minimum=1
+    )
     reuse_belt_map_path = optional_path("REUSE_BELT_MAP_PATH")
     reuse_phase_estimates_path = optional_path("REUSE_PHASE_ESTIMATES_PATH")
     reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")
     reuse_static_background_path = optional_path("REUSE_STATIC_BACKGROUND_PATH")
-    reuse_recurrent_artifact_map_path = optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH")
+    reuse_recurrent_artifact_map_path = optional_path(
+        "REUSE_RECURRENT_ARTIFACT_MAP_PATH"
+    )
     if reuse_phase_estimates_path is not None and reuse_belt_map_path is None:
         raise ValueError("REUSE_PHASE_ESTIMATES_PATH requires REUSE_BELT_MAP_PATH")
-    static_noise_sample_frames = static_residual_sample_frames("STATIC_NOISE_SAMPLE_FRAMES", frame_count=len(paths))
+    static_noise_sample_frames = static_residual_sample_frames(
+        "STATIC_NOISE_SAMPLE_FRAMES", frame_count=len(paths)
+    )
     static_noise_min_scale = rt.env_float("STATIC_NOISE_MIN_SCALE", 0.0, minimum=0.0)
-    static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", detection_threshold)
-    static_noise_mask_margin_px = rt.env_int("STATIC_NOISE_MASK_MARGIN_PX", 8, minimum=0)
+    static_noise_mask_threshold = optional_positive_float(
+        "STATIC_NOISE_MASK_THRESHOLD", detection_threshold
+    )
+    static_noise_mask_margin_px = rt.env_int(
+        "STATIC_NOISE_MASK_MARGIN_PX", 8, minimum=0
+    )
     static_noise_mask_min_area_px = rt.env_int(
         "STATIC_NOISE_MASK_MIN_AREA_PX",
         map_particle_mask_min_area_px,
         minimum=1,
     )
-    static_background_sample_frames = static_residual_sample_frames("STATIC_BACKGROUND_SAMPLE_FRAMES", frame_count=len(paths))
-    static_background_mask_threshold = optional_positive_float("STATIC_BACKGROUND_MASK_THRESHOLD", detection_threshold)
-    static_background_mask_margin_px = rt.env_int("STATIC_BACKGROUND_MASK_MARGIN_PX", 8, minimum=0)
+    static_background_sample_frames = static_residual_sample_frames(
+        "STATIC_BACKGROUND_SAMPLE_FRAMES", frame_count=len(paths)
+    )
+    static_background_mask_threshold = optional_positive_float(
+        "STATIC_BACKGROUND_MASK_THRESHOLD", detection_threshold
+    )
+    static_background_mask_margin_px = rt.env_int(
+        "STATIC_BACKGROUND_MASK_MARGIN_PX", 8, minimum=0
+    )
     static_background_mask_min_area_px = rt.env_int(
         "STATIC_BACKGROUND_MASK_MIN_AREA_PX",
         map_particle_mask_min_area_px,
@@ -1549,12 +1774,16 @@ def main() -> None:
             1.0,
             minimum=0.0,
         ),
-        candidate_max_area_px=optional_positive_int("RECURRENT_ARTIFACT_CANDIDATE_MAX_AREA_PX"),
+        candidate_max_area_px=optional_positive_int(
+            "RECURRENT_ARTIFACT_CANDIDATE_MAX_AREA_PX"
+        ),
         candidate_max_peak_signal=optional_positive_float(
             "RECURRENT_ARTIFACT_CANDIDATE_MAX_PEAK_SIGNAL",
             0.0,
         ),
-        reject_max_area_px=optional_positive_int("RECURRENT_ARTIFACT_REJECT_MAX_AREA_PX"),
+        reject_max_area_px=optional_positive_int(
+            "RECURRENT_ARTIFACT_REJECT_MAX_AREA_PX"
+        ),
         reject_max_peak_signal=optional_positive_float(
             "RECURRENT_ARTIFACT_REJECT_MAX_PEAK_SIGNAL",
             0.0,
@@ -1583,7 +1812,9 @@ def main() -> None:
             minimum=0.0,
         ),
         min_bbox_iou=rt.env_float("CROSS_MAP_AGREEMENT_MIN_BBOX_IOU", 0.0, minimum=0.0),
-        min_peak_ratio=rt.env_float("CROSS_MAP_AGREEMENT_MIN_PEAK_RATIO", 0.25, minimum=0.0),
+        min_peak_ratio=rt.env_float(
+            "CROSS_MAP_AGREEMENT_MIN_PEAK_RATIO", 0.25, minimum=0.0
+        ),
         require_sign_consistency=env_bool(
             "CROSS_MAP_AGREEMENT_REQUIRE_SIGN_CONSISTENCY",
             True,
@@ -1611,7 +1842,9 @@ def main() -> None:
         1.0,
     )
     registration_config = PhaseRegistrationConfig(
-        search_radius_px=rt.env_float("REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0),
+        search_radius_px=rt.env_float(
+            "REGISTRATION_SEARCH_RADIUS_PX", 8.0, minimum=0.0
+        ),
         search_step_px=rt.env_float("REGISTRATION_SEARCH_STEP_PX", 0.5, minimum=1e-9),
         subpixel_refinement=env_bool("REGISTRATION_SUBPIXEL_REFINEMENT", True),
         robust_normalization=env_bool("REGISTRATION_ROBUST_NORMALIZATION", True),
@@ -1622,11 +1855,21 @@ def main() -> None:
             os.getenv("REGISTRATION_QUALITY_ACTION", "report")
         ),
         min_score=optional_positive_float("REGISTRATION_QUALITY_MIN_SCORE", 0.0),
-        min_loss_gap_ratio=optional_positive_float("REGISTRATION_QUALITY_MIN_LOSS_GAP_RATIO", 0.0),
-        max_uncertainty_px=optional_positive_float("REGISTRATION_QUALITY_MAX_UNCERTAINTY_PX", 0.0),
-        max_abs_correction_px=optional_positive_float("REGISTRATION_QUALITY_MAX_ABS_CORRECTION_PX", 0.0),
-        noise_inflation_factor=rt.env_float("REGISTRATION_QUALITY_NOISE_INFLATION_FACTOR", 2.0, minimum=1.0),
-        uncertainty_inflation_scale=rt.env_float("REGISTRATION_QUALITY_UNCERTAINTY_INFLATION_SCALE", 0.0, minimum=0.0),
+        min_loss_gap_ratio=optional_positive_float(
+            "REGISTRATION_QUALITY_MIN_LOSS_GAP_RATIO", 0.0
+        ),
+        max_uncertainty_px=optional_positive_float(
+            "REGISTRATION_QUALITY_MAX_UNCERTAINTY_PX", 0.0
+        ),
+        max_abs_correction_px=optional_positive_float(
+            "REGISTRATION_QUALITY_MAX_ABS_CORRECTION_PX", 0.0
+        ),
+        noise_inflation_factor=rt.env_float(
+            "REGISTRATION_QUALITY_NOISE_INFLATION_FACTOR", 2.0, minimum=1.0
+        ),
+        uncertainty_inflation_scale=rt.env_float(
+            "REGISTRATION_QUALITY_UNCERTAINTY_INFLATION_SCALE", 0.0, minimum=0.0
+        ),
     )
     registration_quality_config.validate()
     phase_estimation_mode = normalize_phase_estimation_mode(
@@ -1642,7 +1885,9 @@ def main() -> None:
         ),
         max_abs_drift_px=optional_positive_float("PHASE_DRIFT_MAX_ABS_PX", 0.0),
     )
-    phase_smoothing_window_frames = rt.env_int("PHASE_SMOOTHING_WINDOW_FRAMES", 0, minimum=0)
+    phase_smoothing_window_frames = rt.env_int(
+        "PHASE_SMOOTHING_WINDOW_FRAMES", 0, minimum=0
+    )
     phase_smoothing_min_score = optional_positive_float(
         "PHASE_SMOOTHING_MIN_SCORE",
         0.0,
@@ -1651,9 +1896,15 @@ def main() -> None:
         "PHASE_SMOOTHING_MAX_ABS_CORRECTION_PX",
         0.0,
     )
-    phase_smoothing_min_support = rt.env_int("PHASE_SMOOTHING_MIN_SUPPORT", 3, minimum=1)
-    phase_refinement_iterations = rt.env_int("PHASE_REFINEMENT_ITERATIONS", 0, minimum=0)
-    phase_refinement_min_score = rt.env_float("PHASE_REFINEMENT_MIN_SCORE", 0.0, minimum=0.0)
+    phase_smoothing_min_support = rt.env_int(
+        "PHASE_SMOOTHING_MIN_SUPPORT", 3, minimum=1
+    )
+    phase_refinement_iterations = rt.env_int(
+        "PHASE_REFINEMENT_ITERATIONS", 0, minimum=0
+    )
+    phase_refinement_min_score = rt.env_float(
+        "PHASE_REFINEMENT_MIN_SCORE", 0.0, minimum=0.0
+    )
     phase_refinement_max_abs_correction_px = optional_positive_float(
         "PHASE_REFINEMENT_MAX_ABS_CORRECTION_PX",
         0.0,
@@ -1792,8 +2043,12 @@ def main() -> None:
         revolution_split_eval_revolutions_observed=(
             [] if revolution_split is None else revolution_split.eval_revolutions
         ),
-        revolution_split_train_frames=(0 if revolution_split is None else len(revolution_split.train_frame_indices)),
-        revolution_split_eval_frames=(0 if revolution_split is None else len(revolution_split.eval_frame_indices)),
+        revolution_split_train_frames=(
+            0 if revolution_split is None else len(revolution_split.train_frame_indices)
+        ),
+        revolution_split_eval_frames=(
+            0 if revolution_split is None else len(revolution_split.eval_frame_indices)
+        ),
         cross_map_agreement_enabled=cross_map_agreement_enabled,
         cross_map_agreement_filter=cross_map_agreement_config.filter_detections,
         cross_map_agreement_min_confirming_maps=cross_map_agreement_config.min_confirming_maps,
@@ -1946,17 +2201,34 @@ def main() -> None:
             map_support,
             min_support=map_risk_min_support,
         )
-        map_risk_low_support_pixels = int(np.count_nonzero(map_risk_maps.low_support_mask))
-        map_risk_interpolated_pixels = int(np.count_nonzero(map_risk_maps.interpolated_mask))
+        map_risk_low_support_pixels = int(
+            np.count_nonzero(map_risk_maps.low_support_mask)
+        )
+        map_risk_interpolated_pixels = int(
+            np.count_nonzero(map_risk_maps.interpolated_mask)
+        )
         np.save(rt.OUT / "belt_map_support.npy", map_risk_maps.support)
         np.save(rt.OUT / "belt_map_observed_mask.npy", map_risk_maps.observed_mask)
-        np.save(rt.OUT / "belt_map_interpolated_mask.npy", map_risk_maps.interpolated_mask)
-        np.save(rt.OUT / "belt_map_low_support_mask.npy", map_risk_maps.low_support_mask)
+        np.save(
+            rt.OUT / "belt_map_interpolated_mask.npy", map_risk_maps.interpolated_mask
+        )
+        np.save(
+            rt.OUT / "belt_map_low_support_mask.npy", map_risk_maps.low_support_mask
+        )
         np.save(rt.OUT / "belt_map_risk.npy", map_risk_maps.risk)
         rt.save_png(np.log1p(map_risk_maps.support), rt.OUT / "belt_map_support.png")
-        rt.save_png(map_risk_maps.observed_mask.astype(np.float32), rt.OUT / "belt_map_observed_mask.png")
-        rt.save_png(map_risk_maps.interpolated_mask.astype(np.float32), rt.OUT / "belt_map_interpolated_mask.png")
-        rt.save_png(map_risk_maps.low_support_mask.astype(np.float32), rt.OUT / "belt_map_low_support_mask.png")
+        rt.save_png(
+            map_risk_maps.observed_mask.astype(np.float32),
+            rt.OUT / "belt_map_observed_mask.png",
+        )
+        rt.save_png(
+            map_risk_maps.interpolated_mask.astype(np.float32),
+            rt.OUT / "belt_map_interpolated_mask.png",
+        )
+        rt.save_png(
+            map_risk_maps.low_support_mask.astype(np.float32),
+            rt.OUT / "belt_map_low_support_mask.png",
+        )
         rt.save_png(map_risk_maps.risk, rt.OUT / "belt_map_risk.png")
         rt.emit(
             "map_risk",
@@ -2042,7 +2314,9 @@ def main() -> None:
     if reuse_static_background_path is not None:
         static_background_map = np.load(reuse_static_background_path)
         if static_background_map.ndim != 2:
-            raise ValueError("REUSE_STATIC_BACKGROUND_PATH must point to a 2-D static_background.npy")
+            raise ValueError(
+                "REUSE_STATIC_BACKGROUND_PATH must point to a 2-D static_background.npy"
+            )
         if static_background_map.shape != (region[2], region[3]):
             raise ValueError(
                 "reused static background map shape does not match BELT_REGION: "
@@ -2091,7 +2365,9 @@ def main() -> None:
     if reuse_static_noise_path is not None:
         static_noise_map = np.load(reuse_static_noise_path)
         if static_noise_map.ndim != 2:
-            raise ValueError("REUSE_STATIC_NOISE_PATH must point to a 2-D static_noise.npy")
+            raise ValueError(
+                "REUSE_STATIC_NOISE_PATH must point to a 2-D static_noise.npy"
+            )
         if static_noise_map.shape != (region[2], region[3]):
             raise ValueError(
                 "reused static noise map shape does not match BELT_REGION: "
@@ -2152,9 +2428,13 @@ def main() -> None:
         )
 
     progress_interval = rt.env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
-    partial_output_interval = rt.env_int("PARTIAL_OUTPUT_INTERVAL_FRAMES", 250, minimum=0)
+    partial_output_interval = rt.env_int(
+        "PARTIAL_OUTPUT_INTERVAL_FRAMES", 250, minimum=0
+    )
     residual_preview_frames = rt.env_int("DEBUG_RESIDUAL_PREVIEW_FRAMES", 3, minimum=0)
-    residual_preview_interval = rt.env_int("DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", 0, minimum=0)
+    residual_preview_interval = rt.env_int(
+        "DEBUG_RESIDUAL_PREVIEW_INTERVAL_FRAMES", 0, minimum=0
+    )
     recurrent_artifact_enabled = (
         recurrent_artifact_config.min_revolutions > 0
         or reuse_recurrent_artifact_map_path is not None
@@ -2255,21 +2535,23 @@ def main() -> None:
         )
         if photometric_row is not None:
             photometric_rows.append(photometric_row)
-        residual, local_illumination_row, local_illumination_field = apply_local_illumination_correction(
-            frame=frame,
-            residual=residual,
-            residual_config=residual_config,
-            frame_index=frame_index,
-            path=path,
-            enabled=detection_local_illumination_correction,
-            tile_px=detection_local_illumination_tile_px,
-            min_pixels=detection_local_illumination_min_pixels,
-            mask_threshold=detection_local_illumination_mask_threshold,
-            mask_mode=detection_local_illumination_mask_mode,
-            mask_grow_threshold=detection_local_illumination_mask_grow_threshold,
-            mask_dilation_px=detection_local_illumination_mask_dilation_px,
-            mask_margin_px=detection_local_illumination_mask_margin_px,
-            mask_min_area_px=detection_local_illumination_mask_min_area_px,
+        residual, local_illumination_row, local_illumination_field = (
+            apply_local_illumination_correction(
+                frame=frame,
+                residual=residual,
+                residual_config=residual_config,
+                frame_index=frame_index,
+                path=path,
+                enabled=detection_local_illumination_correction,
+                tile_px=detection_local_illumination_tile_px,
+                min_pixels=detection_local_illumination_min_pixels,
+                mask_threshold=detection_local_illumination_mask_threshold,
+                mask_mode=detection_local_illumination_mask_mode,
+                mask_grow_threshold=detection_local_illumination_mask_grow_threshold,
+                mask_dilation_px=detection_local_illumination_mask_dilation_px,
+                mask_margin_px=detection_local_illumination_mask_margin_px,
+                mask_min_area_px=detection_local_illumination_mask_min_area_px,
+            )
         )
         if local_illumination_row is not None:
             local_illumination_rows.append(local_illumination_row)
@@ -2282,16 +2564,22 @@ def main() -> None:
         phase_row = phase_estimate_row(frame_index, path, residual, float(map_height))
         phase_rows.append(phase_row)
         phase_px_by_frame.append(float(phase_row["phase_px"]))
-        residual, registration_quality_row, skip_detections = evaluate_registration_quality(
-            residual,
-            frame_index=frame_index,
-            image=_relative_image_name(path, data_dir=rt.DATA),
-            config=registration_quality_config,
+        residual, registration_quality_row, skip_detections = (
+            evaluate_registration_quality(
+                residual,
+                frame_index=frame_index,
+                image=_relative_image_name(path, data_dir=rt.DATA),
+                config=registration_quality_config,
+            )
         )
         if registration_quality_row is not None:
             registration_quality_rows.append(registration_quality_row)
-        if should_save_residual_preview(frame_index, residual_preview_frames, residual_preview_interval):
-            rt.save_scaled_png(frame, rt.OUT / f"raw_frame_{frame_index:06d}.png", scale=(0.0, 255.0))
+        if should_save_residual_preview(
+            frame_index, residual_preview_frames, residual_preview_interval
+        ):
+            rt.save_scaled_png(
+                frame, rt.OUT / f"raw_frame_{frame_index:06d}.png", scale=(0.0, 255.0)
+            )
             rt.save_png(residual, rt.OUT / f"residual_frame_{frame_index:06d}.png")
             rt.save_scaled_png(
                 residual,
@@ -2302,7 +2590,10 @@ def main() -> None:
                 detection_local_illumination_correction
                 and local_illumination_field is not None
             ):
-                rt.save_png(local_illumination_field, rt.OUT / f"local_illumination_field_frame_{frame_index:06d}.png")
+                rt.save_png(
+                    local_illumination_field,
+                    rt.OUT / f"local_illumination_field_frame_{frame_index:06d}.png",
+                )
         if skip_detections:
             detections = []
         else:
@@ -2333,9 +2624,13 @@ def main() -> None:
                 map_risk_rows_from_scores(map_risk_scores, path, frame_index)
             )
             if map_risk_filter_enabled:
-                rejected_this_frame = sum(1 for score in map_risk_scores if score.rejected)
+                rejected_this_frame = sum(
+                    1 for score in map_risk_scores if score.rejected
+                )
                 map_risk_rejected += rejected_this_frame
-                detections = [score.detection for score in map_risk_scores if not score.rejected]
+                detections = [
+                    score.detection for score in map_risk_scores if not score.rejected
+                ]
             else:
                 detections = [score.detection for score in map_risk_scores]
         detections_by_frame.append(detections)
@@ -2358,13 +2653,33 @@ def main() -> None:
                 write_photometric_outputs(photometric_rows)
             if registration_quality_config.enabled:
                 write_registration_quality_outputs(registration_quality_rows)
-            rt.emit("detect", "wrote partial detection and phase outputs", processed_frames=processed, total_detections=len(detection_rows), phase_estimates=len(phase_rows))
-        if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
+            rt.emit(
+                "detect",
+                "wrote partial detection and phase outputs",
+                processed_frames=processed,
+                total_detections=len(detection_rows),
+                phase_estimates=len(phase_rows),
+            )
+        if (
+            processed == 1
+            or processed == len(paths)
+            or processed % progress_interval == 0
+        ):
             dt = rt.time.perf_counter() - detection_start
             fps = processed / dt if dt > 0 else float("inf")
             remaining = len(paths) - processed
             eta = remaining / fps if fps > 0 else float("inf")
-            rt.emit("detect", f"processed {processed}/{len(paths)} frames", processed_frames=processed, remaining_frames=remaining, detections_this_frame=len(detections), total_detections=len(detection_rows), frames_per_second=round(fps, 4), eta_s=round(eta, 1) if np.isfinite(eta) else None, current_image=path)
+            rt.emit(
+                "detect",
+                f"processed {processed}/{len(paths)} frames",
+                processed_frames=processed,
+                remaining_frames=remaining,
+                detections_this_frame=len(detections),
+                total_detections=len(detection_rows),
+                frames_per_second=round(fps, 4),
+                eta_s=round(eta, 1) if np.isfinite(eta) else None,
+                current_image=path,
+            )
 
     if map_risk_maps is not None:
         rt.write_csv(
@@ -2384,7 +2699,9 @@ def main() -> None:
             reject_max_low_support_fraction=map_risk_reject_max_low_support_fraction,
         )
 
-    pre_recurrent_detections_by_frame = [list(detections) for detections in detections_by_frame]
+    pre_recurrent_detections_by_frame = [
+        list(detections) for detections in detections_by_frame
+    ]
     revolution_split_detection_summary: list[dict] = []
     revolution_split_score_summary: list[dict] = []
     revolution_split_train_artifact_revolutions = 0
@@ -2407,16 +2724,29 @@ def main() -> None:
         train_recurrent_result = build_recurrent_artifact_map(
             [pre_recurrent_detections_by_frame[index] for index in train_frame_indices],
             [phase_px_by_frame[index] for index in train_frame_indices],
-            [revolution_split.revolution_by_frame[index] for index in train_frame_indices],
+            [
+                revolution_split.revolution_by_frame[index]
+                for index in train_frame_indices
+            ],
             map_shape=(map_height, region[3]),
             config=train_artifact_config,
             frame_shape=(region[2], region[3]),
         )
-        revolution_split_train_artifact_revolutions = train_recurrent_result.revolution_count
-        revolution_split_train_artifact_candidate_detections = train_recurrent_result.candidate_detections
+        revolution_split_train_artifact_revolutions = (
+            train_recurrent_result.revolution_count
+        )
+        revolution_split_train_artifact_candidate_detections = (
+            train_recurrent_result.candidate_detections
+        )
         revolution_split_train_artifact_pixels = train_recurrent_result.artifact_pixels
-        np.save(rt.OUT / "revolution_split_train_artifact_map.npy", train_recurrent_result.mask)
-        np.save(rt.OUT / "revolution_split_train_artifact_counts.npy", train_recurrent_result.counts)
+        np.save(
+            rt.OUT / "revolution_split_train_artifact_map.npy",
+            train_recurrent_result.mask,
+        )
+        np.save(
+            rt.OUT / "revolution_split_train_artifact_counts.npy",
+            train_recurrent_result.counts,
+        )
         np.save(
             rt.OUT / "revolution_split_train_artifact_exposure_counts.npy",
             train_recurrent_result.exposure_counts,
@@ -2429,7 +2759,10 @@ def main() -> None:
             train_recurrent_result.mask.astype(np.float32),
             rt.OUT / "revolution_split_train_artifact_map.png",
         )
-        rt.save_png(train_recurrent_result.counts, rt.OUT / "revolution_split_train_artifact_counts.png")
+        rt.save_png(
+            train_recurrent_result.counts,
+            rt.OUT / "revolution_split_train_artifact_counts.png",
+        )
         rt.save_png(
             train_recurrent_result.probability,
             rt.OUT / "revolution_split_train_artifact_probability.png",
@@ -2456,7 +2789,9 @@ def main() -> None:
         )
         rt.write_csv(
             rt.OUT / "revolution_split_ghost_detections.csv",
-            revolution_split_ghost_rows_from_scores(train_artifact_scores, paths, revolution_split),
+            revolution_split_ghost_rows_from_scores(
+                train_artifact_scores, paths, revolution_split
+            ),
             REVOLUTION_SPLIT_GHOST_DETECTION_FIELDS,
         )
         rt.emit(
@@ -2530,7 +2865,9 @@ def main() -> None:
             recurrent_artifact_mask = recurrent_result.mask
             recurrent_artifact_pixels = recurrent_result.artifact_pixels
             recurrent_artifact_revolutions = recurrent_result.revolution_count
-            recurrent_artifact_candidate_detections = recurrent_result.candidate_detections
+            recurrent_artifact_candidate_detections = (
+                recurrent_result.candidate_detections
+            )
             np.save(rt.OUT / "recurrent_artifact_map.npy", recurrent_result.mask)
             np.save(rt.OUT / "recurrent_artifact_counts.npy", recurrent_result.counts)
             np.save(
@@ -2545,7 +2882,9 @@ def main() -> None:
                 recurrent_result.mask.astype(np.float32),
                 rt.OUT / "recurrent_artifact_map.png",
             )
-            rt.save_png(recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png")
+            rt.save_png(
+                recurrent_result.counts, rt.OUT / "recurrent_artifact_counts.png"
+            )
             rt.save_png(
                 recurrent_result.probability,
                 rt.OUT / "recurrent_artifact_probability.png",
@@ -2590,7 +2929,8 @@ def main() -> None:
             artifact_pixels=recurrent_artifact_pixels,
             rejected_detections=recurrent_artifact_rejected,
             remaining_detections=len(detection_rows),
-            recurrent_artifact_detections_csv=rt.OUT / "recurrent_artifact_detections.csv",
+            recurrent_artifact_detections_csv=rt.OUT
+            / "recurrent_artifact_detections.csv",
             recurrent_artifact_map_npy=rt.OUT / "recurrent_artifact_map.npy",
             recurrent_artifact_counts_npy=(
                 rt.OUT / "recurrent_artifact_counts.npy"
@@ -2676,7 +3016,11 @@ def main() -> None:
             json.dumps(rt.jsonable(revolution_split_summary), indent=2),
             encoding="utf-8",
         )
-        rt.emit("revolution_split", "wrote train/eval revolution-split diagnostics", summary_json=rt.OUT / "revolution_split_summary.json")
+        rt.emit(
+            "revolution_split",
+            "wrote train/eval revolution-split diagnostics",
+            summary_json=rt.OUT / "revolution_split_summary.json",
+        )
     write_detection_outputs(detections_by_frame, detection_rows)
     write_phase_outputs(phase_rows)
     if photometric_enabled:
@@ -2685,11 +3029,21 @@ def main() -> None:
         write_local_illumination_outputs(local_illumination_rows)
     if registration_quality_config.enabled:
         write_registration_quality_outputs(registration_quality_rows)
-    rt.emit("detect", "finished residual rendering, phase estimation, and detection", processed_frames=len(paths), total_detections=len(detection_rows), phase_estimates=len(phase_rows), local_illumination_rows=len(local_illumination_rows), registration_quality_rows=len(registration_quality_rows))
+    rt.emit(
+        "detect",
+        "finished residual rendering, phase estimation, and detection",
+        processed_frames=len(paths),
+        total_detections=len(detection_rows),
+        phase_estimates=len(phase_rows),
+        local_illumination_rows=len(local_illumination_rows),
+        registration_quality_rows=len(registration_quality_rows),
+    )
 
     max_match = os.getenv("MAX_MATCH_DISTANCE_PX", "").strip()
     tracking_config = ParticleTrackingConfig(
-        max_match_distance_px=float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity)),
+        max_match_distance_px=(
+            float(max_match) if max_match else max(5.0, 1.5 * abs(belt_velocity))
+        ),
         max_frame_gap=tracking_max_frame_gap,
         velocity_prior_y_px_per_frame=0.8 * belt_velocity,
     )
@@ -2703,16 +3057,28 @@ def main() -> None:
         velocity_prior_x_px_per_frame=tracking_config.velocity_prior_x_px_per_frame,
         tracking_backend="pyrecest_gnn",
     )
-    tracks = track_particle_detections(detections_by_frame, config=tracking_config, frame_indices=[float(i) for i in range(len(paths))])
+    tracks = track_particle_detections(
+        detections_by_frame,
+        config=tracking_config,
+        frame_indices=[float(i) for i in range(len(paths))],
+    )
     rt.emit("track", "finished particle tracking", tracks=len(tracks))
     track_rows = track_detection_rows(tracks, paths)
     rt.write_csv(rt.OUT / "tracks.csv", track_rows, TRACK_DETECTION_FIELDS)
-    rt.emit("track", "wrote track detection assignments", track_detection_rows=len(track_rows))
+    rt.emit(
+        "track",
+        "wrote track detection assignments",
+        track_detection_rows=len(track_rows),
+    )
 
     velocity_rows = []
     velocity_objects = []
     if abs(belt_velocity) > 1e-9:
-        rt.emit("velocity", "estimating particle velocities relative to belt", min_track_length=min_track_length)
+        rt.emit(
+            "velocity",
+            "estimating particle velocities relative to belt",
+            min_track_length=min_track_length,
+        )
         for velocity in estimate_particle_velocities_vs_belt(
             tracks,
             belt_image_velocity_px_per_frame=belt_velocity,
@@ -2722,11 +3088,18 @@ def main() -> None:
             velocity_objects.append(velocity)
             velocity_rows.append(asdict(velocity))
     else:
-        rt.emit("velocity", "skipped particle velocity estimation because belt velocity is near zero")
+        rt.emit(
+            "velocity",
+            "skipped particle velocity estimation because belt velocity is near zero",
+        )
     rt.write_csv(rt.OUT / "velocities.csv", velocity_rows, VELOCITY_FIELDS)
-    rt.emit("velocity", "wrote velocity estimates", velocity_estimates=len(velocity_rows))
+    rt.emit(
+        "velocity", "wrote velocity estimates", velocity_estimates=len(velocity_rows)
+    )
     track_filter_config = TrackFilterConfig(
-        min_track_length=rt.env_int("TRACK_FILTER_MIN_LENGTH", max(5, min_track_length), minimum=1),
+        min_track_length=rt.env_int(
+            "TRACK_FILTER_MIN_LENGTH", max(5, min_track_length), minimum=1
+        ),
         min_velocity_ratio_y=rt.env_float("TRACK_FILTER_MIN_VELOCITY_RATIO_Y", 0.0),
         max_velocity_ratio_y=rt.env_float("TRACK_FILTER_MAX_VELOCITY_RATIO_Y", 1.1),
         max_abs_x_velocity_px_per_frame=optional_positive_float(
@@ -2752,11 +3125,15 @@ def main() -> None:
         [asdict(score) for score in track_scores],
         TRACK_SCORE_FIELDS,
     )
-    rt.write_csv(rt.OUT / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
+    rt.write_csv(
+        rt.OUT / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS
+    )
     filtered_track_rows = [
         row for row in track_rows if row["track_id"] in accepted_track_ids
     ]
-    rt.write_csv(rt.OUT / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
+    rt.write_csv(
+        rt.OUT / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS
+    )
     rt.emit(
         "velocity",
         "wrote track-filter outputs",
@@ -2772,9 +3149,7 @@ def main() -> None:
     )
 
     phase_estimate_source = (
-        "loaded"
-        if reused_phase_estimates is not None
-        else phase_estimation_mode
+        "loaded" if reused_phase_estimates is not None else phase_estimation_mode
     )
     registration_quality_rejected_frames = sum(
         1 for row in registration_quality_rows if not row.get("accepted", True)
@@ -2795,7 +3170,12 @@ def main() -> None:
         "discovered_frame_count": discovered_frame_count,
         "frame_stride": frame_stride,
         "first_image_shape": list(first.shape),
-        "belt_region": {"top": region[0], "left": region[1], "height": region[2], "width": region[3]},
+        "belt_region": {
+            "top": region[0],
+            "left": region[1],
+            "height": region[2],
+            "width": region[3],
+        },
         "belt_velocity_source": belt_velocity_source,
         "belt_velocity_frame_unit": belt_velocity_frame_unit,
         "supplied_belt_velocity_px_per_frame": supplied_belt_velocity_px_per_frame,
@@ -2841,7 +3221,9 @@ def main() -> None:
         "map_robust_huber_delta": map_robust_huber_delta,
         "map_robust_min_scale": map_robust_min_scale,
         "map_support_map_used": map_risk_maps is not None,
-        "reuse_map_support_path": "" if reuse_map_support_path is None else str(reuse_map_support_path),
+        "reuse_map_support_path": (
+            "" if reuse_map_support_path is None else str(reuse_map_support_path)
+        ),
         "map_risk_min_support": map_risk_min_support,
         "map_risk_filter_enabled": map_risk_filter_enabled,
         "map_risk_reject_max_mean": map_risk_reject_max_mean,
@@ -2877,11 +3259,27 @@ def main() -> None:
         "phase_smoothing_min_support": phase_smoothing_min_support,
         "phase_smoothing_used": smoothed_phase_estimates is not None,
         "reused_belt_map": reuse_belt_map_path is not None,
-        "reuse_belt_map_path": "" if reuse_belt_map_path is None else str(reuse_belt_map_path),
-        "reuse_phase_estimates_path": "" if reuse_phase_estimates_path is None else str(reuse_phase_estimates_path),
-        "reuse_static_noise_path": "" if reuse_static_noise_path is None else str(reuse_static_noise_path),
-        "reuse_static_background_path": "" if reuse_static_background_path is None else str(reuse_static_background_path),
-        "reuse_recurrent_artifact_map_path": "" if reuse_recurrent_artifact_map_path is None else str(reuse_recurrent_artifact_map_path),
+        "reuse_belt_map_path": (
+            "" if reuse_belt_map_path is None else str(reuse_belt_map_path)
+        ),
+        "reuse_phase_estimates_path": (
+            ""
+            if reuse_phase_estimates_path is None
+            else str(reuse_phase_estimates_path)
+        ),
+        "reuse_static_noise_path": (
+            "" if reuse_static_noise_path is None else str(reuse_static_noise_path)
+        ),
+        "reuse_static_background_path": (
+            ""
+            if reuse_static_background_path is None
+            else str(reuse_static_background_path)
+        ),
+        "reuse_recurrent_artifact_map_path": (
+            ""
+            if reuse_recurrent_artifact_map_path is None
+            else str(reuse_recurrent_artifact_map_path)
+        ),
         "static_noise_sample_frames": static_noise_sample_frames,
         "static_noise_min_scale": static_noise_min_scale,
         "static_noise_mask_threshold": static_noise_mask_threshold,
@@ -2946,11 +3344,15 @@ def main() -> None:
         "n_cross_map_agreement_scored": len(cross_map_agreement_rows),
         "n_cross_map_agreement_failed": cross_map_agreement_failed,
         "n_cross_map_agreement_removed": cross_map_agreement_removed,
-        "reuse_metadata_path": "" if reuse_metadata_path is None else str(reuse_metadata_path),
+        "reuse_metadata_path": (
+            "" if reuse_metadata_path is None else str(reuse_metadata_path)
+        ),
         "phase_estimation_mode": phase_estimation_mode,
         "phase_estimate_source": phase_estimate_source,
         "n_phase_refinement_rows": len(phase_refinement_rows),
-        "n_phase_refinement_used": sum(1 for row in phase_refinement_rows if row.get("used_for_refinement")),
+        "n_phase_refinement_used": sum(
+            1 for row in phase_refinement_rows if row.get("used_for_refinement")
+        ),
         "n_phase_estimates": len(phase_rows),
         "n_photometric_fits": len(photometric_rows),
         "n_detections": len(detection_rows),

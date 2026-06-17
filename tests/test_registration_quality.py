@@ -146,3 +146,12 @@ def test_residual_with_inflated_noise_is_noop_for_factor_one():
     residual = make_residual(estimate)
 
     assert residual_with_inflated_noise(residual, 1.0) is residual
+
+
+@pytest.mark.parametrize("factor", [float("nan"), float("inf"), 0.0])
+def test_residual_with_inflated_noise_rejects_invalid_factor(factor):
+    estimate = PhaseEstimate(phase_px=0.0, frame_index=0.0, predicted_phase_px=0.0)
+    residual = make_residual(estimate)
+
+    with pytest.raises(ValueError, match="inflation factor"):
+        residual_with_inflated_noise(residual, factor)

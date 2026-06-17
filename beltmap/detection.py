@@ -7,7 +7,6 @@ from numpy.typing import ArrayLike, NDArray
 
 from .residual import ResidualImage
 
-
 DETECTION_MODES = {"positive", "negative", "absolute"}
 DETECTION_MODE_ALIASES = {
     "threshold": "positive",
@@ -158,8 +157,8 @@ def _oriented_detection_signal(values: FloatArray, *, mode: str) -> FloatArray:
 
 
 def _validate_threshold(name: str, value: float) -> None:
-    if not np.isfinite(value):
-        raise ValueError(f"{name} must be finite")
+    if not np.isfinite(value) or value < 0.0:
+        raise ValueError(f"{name} must be finite and non-negative")
 
 
 def _hysteresis_mask(

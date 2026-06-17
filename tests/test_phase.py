@@ -91,6 +91,21 @@ def test_render_belt_view_defaults_to_periodic_wrapping():
     np.testing.assert_allclose(rendered[:, 0], [4.0, 0.0, 1.0])
 
 
+@pytest.mark.parametrize("height", [0, 3.5, float("nan")])
+def test_render_belt_view_rejects_nonpositive_or_fractional_height(height):
+    belt = np.arange(5, dtype=float)[:, None]
+
+    with pytest.raises(ValueError, match="height"):
+        render_belt_view(belt, phase_px=0.0, height=height)
+
+
+def test_motion_model_coordinate_rows_rejects_fractional_height():
+    model = BeltMotionModel(image_velocity_px_per_frame=1.0, period_px=10.0)
+
+    with pytest.raises(ValueError, match="height"):
+        model.coordinate_rows(frame_index=0.0, height=2.5)
+
+
 def test_render_belt_view_can_mark_nonperiodic_out_of_support_rows():
     belt = np.arange(5, dtype=float)[:, None] * np.ones((1, 2))
 
@@ -166,7 +181,10 @@ def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
         (PhaseRegistrationConfig(search_radius_px=float("nan")), "search_radius_px"),
         (PhaseRegistrationConfig(search_step_px=float("nan")), "search_step_px"),
         (PhaseRegistrationConfig(trim_fraction=float("nan")), "trim_fraction"),
-        (PhaseRegistrationConfig(highpass_radius_px=float("nan")), "highpass_radius_px"),
+        (
+            PhaseRegistrationConfig(highpass_radius_px=float("nan")),
+            "highpass_radius_px",
+        ),
         (PhaseRegistrationConfig(highpass_radius_px=1.5), "highpass_radius_px"),
     ],
 )
@@ -319,13 +337,22 @@ def test_smooth_phase_estimates_rejects_registration_outlier():
 @pytest.mark.parametrize(
     ("config", "message"),
     [
-        (PhaseTrajectorySmoothingConfig(window_radius_frames=float("nan")), "window_radius_frames"),
-        (PhaseTrajectorySmoothingConfig(window_radius_frames=1.5), "window_radius_frames"),
+        (
+            PhaseTrajectorySmoothingConfig(window_radius_frames=float("nan")),
+            "window_radius_frames",
+        ),
+        (
+            PhaseTrajectorySmoothingConfig(window_radius_frames=1.5),
+            "window_radius_frames",
+        ),
         (PhaseTrajectorySmoothingConfig(min_support=float("nan")), "min_support"),
         (PhaseTrajectorySmoothingConfig(min_support=1.5), "min_support"),
         (PhaseTrajectorySmoothingConfig(robust_sigma=float("nan")), "robust_sigma"),
         (PhaseTrajectorySmoothingConfig(min_score=float("nan")), "min_score"),
-        (PhaseTrajectorySmoothingConfig(max_abs_correction_px=float("nan")), "max_abs_correction_px"),
+        (
+            PhaseTrajectorySmoothingConfig(max_abs_correction_px=float("nan")),
+            "max_abs_correction_px",
+        ),
     ],
 )
 def test_phase_smoothing_config_rejects_invalid_numeric_settings(config, message):

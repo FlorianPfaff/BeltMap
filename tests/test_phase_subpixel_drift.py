@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from beltmap.phase import (
     PhaseDriftConfig,
@@ -107,6 +108,56 @@ def test_phase_drift_filter_smooths_accepted_registration_residuals():
     assert drift_filter.accepted_updates == 1
     assert drift_filter.rejected_updates == 0
     assert drift_filter.predict(10.0) == 11.5
+
+
+@pytest.mark.parametrize(
+    ("config", "kwargs", "message"),
+    [
+        (
+            PhaseDriftConfig(smoothing_alpha=float("nan")),
+            {},
+            "smoothing_alpha",
+        ),
+        (
+            PhaseDriftConfig(min_score=float("nan")),
+            {},
+            "min_score",
+        ),
+        (
+            PhaseDriftConfig(min_score=-0.1),
+            {},
+            "min_score",
+        ),
+        (
+            PhaseDriftConfig(max_abs_residual_correction_px=float("nan")),
+            {},
+            "max_abs_residual_correction_px",
+        ),
+        (
+            PhaseDriftConfig(max_abs_drift_px=float("nan")),
+            {},
+            "max_abs_drift_px",
+        ),
+        (
+            PhaseDriftConfig(),
+            {"initial_drift_px": float("nan")},
+            "initial_drift_px",
+        ),
+        (
+            PhaseDriftConfig(),
+            {"period_px": float("nan")},
+            "period_px",
+        ),
+        (
+            PhaseDriftConfig(),
+            {"period_px": 0.0},
+            "period_px",
+        ),
+    ],
+)
+def test_phase_drift_filter_rejects_invalid_numeric_config(config, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        PhaseDriftFilter(config, **kwargs)
 
 
 def test_smoothed_phase_estimates_preserve_applied_drift_metadata():

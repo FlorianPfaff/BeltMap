@@ -28,6 +28,7 @@ from beltmap.driver import (
     load_recurrent_artifact_map,
     motion_model_phase_estimate,
     normalize_phase_estimation_mode,
+    optional_positive_int,
     phase_estimate_row,
     subtract_static_background,
     texture_phase_velocity_summary,
@@ -48,6 +49,21 @@ def test_env_float_rejects_non_finite_defaults(monkeypatch):
 
     with pytest.raises(ValueError, match="TEST_FLOAT must be finite"):
         rt.env_float("TEST_FLOAT", float("nan"))
+
+
+def test_optional_positive_int_rejects_negative_values(monkeypatch):
+    monkeypatch.delenv("TEST_OPTIONAL_INT", raising=False)
+    assert optional_positive_int("TEST_OPTIONAL_INT") is None
+
+    monkeypatch.setenv("TEST_OPTIONAL_INT", "0")
+    assert optional_positive_int("TEST_OPTIONAL_INT") is None
+
+    monkeypatch.setenv("TEST_OPTIONAL_INT", "7")
+    assert optional_positive_int("TEST_OPTIONAL_INT") == 7
+
+    monkeypatch.setenv("TEST_OPTIONAL_INT", "-1")
+    with pytest.raises(ValueError, match="TEST_OPTIONAL_INT"):
+        optional_positive_int("TEST_OPTIONAL_INT")
 
 
 def test_auto_velocity_rejects_full_frame_region_by_default(monkeypatch):
@@ -214,6 +230,84 @@ def test_load_phase_estimates_for_reuse_mode(tmp_path):
     assert estimates[1].correction_px == -0.5
     assert estimates[1].loss is None
     assert estimates[1].score is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("phase_px", "nan"),
+        ("predicted_phase_px", "inf"),
+        ("correction_px", "-inf"),
+    ],
+)
+def test_load_phase_estimates_rejects_nonfinite_required_values(
+    tmp_path,
+    field,
+    value,
+):
+    row = {
+        "frame_index": "0",
+        "image": "frame0.bmp",
+        "phase_px": "1.5",
+        "phase_fraction": "0.15",
+        "phase_rad": "0.94",
+        "predicted_phase_px": "1.0",
+        "correction_px": "0.5",
+        "loss": "",
+        "score": "",
+        "method": "registration",
+    }
+    row[field] = value
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        ",".join(row) + "\n" + ",".join(row.values()) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=field):
+        load_phase_estimates(path)
+
+
+@pytest.mark.parametrize("field", ["phase_drift_px", "loss", "score"])
+def test_load_phase_estimates_rejects_nonfinite_optional_values(tmp_path, field):
+    headers = [
+        "frame_index",
+        "image",
+        "phase_px",
+        "phase_fraction",
+        "phase_rad",
+        "predicted_phase_px",
+        "correction_px",
+        "phase_drift_px",
+        "loss",
+        "score",
+        "method",
+    ]
+    values = {
+        "frame_index": "0",
+        "image": "frame0.bmp",
+        "phase_px": "1.5",
+        "phase_fraction": "0.15",
+        "phase_rad": "0.94",
+        "predicted_phase_px": "1.0",
+        "correction_px": "0.5",
+        "phase_drift_px": "",
+        "loss": "",
+        "score": "",
+        "method": "registration",
+    }
+    values[field] = "nan"
+    path = tmp_path / "phase_estimates.csv"
+    path.write_text(
+        ",".join(headers)
+        + "\n"
+        + ",".join(values[column] for column in headers)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=field):
+        load_phase_estimates(path)
 
 
 def test_load_phase_estimates_validates_reused_image_sequence(tmp_path):
@@ -443,7 +537,9 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
     velocity = 4.0
     y = np.arange(period, dtype=float)[:, None]
     x = np.arange(width, dtype=float)[None, :]
-    true_belt = np.round(70 + 0.35 * y + 8 * np.sin(2 * np.pi * y / 11) + 3 * np.cos(2 * np.pi * x / 5))
+    true_belt = np.round(
+        70 + 0.35 * y + 8 * np.sin(2 * np.pi * y / 11) + 3 * np.cos(2 * np.pi * x / 5)
+    )
     particle_rows = np.arange(12, 17)
     particle_cols = np.arange(5, 10)
     particle_frames = set(range(10))
