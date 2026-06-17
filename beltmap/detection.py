@@ -88,10 +88,14 @@ def detect_particles_from_residual(
     returned as ``False``.
     """
 
-    _validate_threshold("threshold", threshold)
+    threshold_value = _validate_threshold("threshold", threshold, positive=True)
     if low_threshold is not None:
-        _validate_threshold("low_threshold", low_threshold)
-        if low_threshold > threshold:
+        low_threshold_value = _validate_threshold(
+            "low_threshold",
+            low_threshold,
+            nonnegative=True,
+        )
+        if low_threshold_value > threshold_value:
             raise ValueError("low_threshold must be less than or equal to threshold")
 
     values, valid = _residual_values_and_valid_mask(residual)
@@ -102,11 +106,11 @@ def detect_particles_from_residual(
         valid &= user_mask
 
     signal = _oriented_detection_signal(values, mode=mode)
-    seeds = valid & (signal > threshold)
+    seeds = valid & (signal > threshold_value)
     if low_threshold is None:
         return seeds
 
-    candidates = valid & (signal > low_threshold)
+    candidates = valid & (signal > low_threshold_value)
     return _hysteresis_mask(seeds, candidates)
 
 
@@ -134,7 +138,11 @@ def _residual_values_and_valid_mask(
 ) -> tuple[FloatArray, NDArray[np.bool_]]:
     if isinstance(residual, ResidualImage):
         values = np.asarray(residual.normalized, dtype=np.float64)
+        if values.size == 0:
+            raise ValueError("residual must not be empty")
         valid = np.asarray(residual.mask, dtype=bool).copy()
+        if valid.shape != values.shape:
+            raise ValueError("ResidualImage mask must have the same shape as normalized")
     else:
         values = np.asarray(residual, dtype=np.float64)
         if values.size == 0:
@@ -157,9 +165,26 @@ def _oriented_detection_signal(values: FloatArray, *, mode: str) -> FloatArray:
     raise ValueError(f"mode must be one of {choices}")
 
 
-def _validate_threshold(name: str, value: float) -> None:
-    if not np.isfinite(value):
+def _validate_threshold(
+    name: str,
+    value: float,
+    *,
+    positive: bool = False,
+    nonnegative: bool = False,
+) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
+    if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
+    if positive and parsed <= 0:
+        raise ValueError(f"{name} must be positive")
+    if nonnegative and parsed < 0:
+        raise ValueError(f"{name} must be nonnegative")
+    return parsed
 
 
 def _hysteresis_mask(

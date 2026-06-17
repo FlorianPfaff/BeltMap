@@ -8,6 +8,7 @@ from beltmap import (
     ParticleTrackingConfig,
     ParticleTrack,
     ParticleVelocity,
+    ResidualImage,
     TrackFilterConfig,
     estimate_particle_velocities_vs_belt,
     extract_particle_detections,
@@ -105,6 +106,73 @@ def test_extract_particle_detections_rejects_nonfinite_component_config(config, 
 
     with pytest.raises(ValueError, match=message):
         extract_particle_detections(mask, config=config)
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (ParticleComponentConfig(min_area_px=True), "min_area_px"),
+        (ParticleComponentConfig(max_area_px=True), "max_area_px"),
+        (ParticleComponentConfig(min_bbox_width_px=True), "min_bbox_width_px"),
+        (ParticleComponentConfig(min_bbox_height_px=True), "min_bbox_height_px"),
+        (ParticleComponentConfig(split_min_projection_gap_px=True), "split_min_projection_gap_px"),
+        (ParticleComponentConfig(split_min_component_area_px=True), "split_min_component_area_px"),
+        (ParticleComponentConfig(min_area_px=1.5), "min_area_px"),
+        (ParticleComponentConfig(max_area_px=4.5), "max_area_px"),
+        (ParticleComponentConfig(min_bbox_width_px=1.5), "min_bbox_width_px"),
+        (ParticleComponentConfig(min_bbox_height_px=1.5), "min_bbox_height_px"),
+        (ParticleComponentConfig(split_min_projection_gap_px=1.5), "split_min_projection_gap_px"),
+        (ParticleComponentConfig(split_min_component_area_px=1.5), "split_min_component_area_px"),
+        (ParticleComponentConfig(weighted_centroid="false"), "weighted_centroid"),
+        (ParticleComponentConfig(split_merged_components="false"), "split_merged_components"),
+    ],
+)
+def test_extract_particle_detections_rejects_bad_component_config_types(config, message):
+    mask = np.ones((2, 2), dtype=bool)
+
+    with pytest.raises(ValueError, match=message):
+        extract_particle_detections(mask, config=config)
+
+
+@pytest.mark.parametrize("frame_index", [True, float("nan"), "bad"])
+def test_extract_particle_detections_rejects_invalid_frame_index(frame_index):
+    mask = np.ones((2, 2), dtype=bool)
+
+    with pytest.raises(ValueError, match="frame_index"):
+        extract_particle_detections(mask, frame_index=frame_index)
+
+
+def test_extract_particle_detections_ignores_invalid_residual_image_signal_values():
+    mask = np.array([[True, True]], dtype=bool)
+    normalized = np.array([[100.0, 1.0]], dtype=float)
+    residual = ResidualImage(
+        raw=normalized,
+        local_noise=np.ones_like(normalized),
+        normalized=normalized,
+        mask=np.array([[False, True]], dtype=bool),
+        expected_background=np.zeros_like(normalized),
+    )
+
+    detections = extract_particle_detections(mask, residual=residual)
+
+    assert len(detections) == 1
+    np.testing.assert_allclose([detections[0].y, detections[0].x], [0.0, 1.0])
+    assert detections[0].mean_signal == 1.0
+    assert detections[0].peak_signal == 1.0
+
+
+def test_extract_particle_detections_rejects_residual_image_mask_shape_mismatch():
+    mask = np.ones((2, 2), dtype=bool)
+    residual = ResidualImage(
+        raw=np.ones_like(mask, dtype=float),
+        local_noise=np.ones_like(mask, dtype=float),
+        normalized=np.ones_like(mask, dtype=float),
+        mask=np.ones((2, 3), dtype=bool),
+        expected_background=np.zeros_like(mask, dtype=float),
+    )
+
+    with pytest.raises(ValueError, match="mask must have the same shape"):
+        extract_particle_detections(mask, residual=residual)
 
 
 def test_connected_components_prefers_accelerated_scipy_labeler(monkeypatch):
@@ -258,6 +326,87 @@ def test_track_particle_detections_rejects_nonincreasing_frame_indices(frame_ind
         )
 
 
+def test_track_particle_detections_rejects_boolean_frame_indices():
+    with pytest.raises(ValueError, match="frame_indices"):
+        track_particle_detections(
+            [[]],
+            frame_indices=[True],
+        )
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (ParticleTrackingConfig(max_match_distance_px=True), "max_match_distance_px"),
+        (ParticleTrackingConfig(max_frame_gap=True), "max_frame_gap"),
+        (ParticleTrackingConfig(velocity_prior_y_px_per_frame=True), "velocity_prior_y_px_per_frame"),
+        (ParticleTrackingConfig(velocity_prior_x_px_per_frame=True), "velocity_prior_x_px_per_frame"),
+    ],
+)
+def test_track_particle_detections_rejects_boolean_tracking_config(config, message):
+    with pytest.raises(ValueError, match=message):
+        track_particle_detections([], config=config)
+
+
+def test_track_particle_detections_rejects_nonfinite_detection_coordinates():
+    detections_by_frame = [
+        [
+            ParticleDetection(
+                0,
+                1,
+                y=float("nan"),
+                x=5.0,
+                area_px=4,
+                bbox_top=0,
+                bbox_left=4,
+                bbox_bottom=2,
+                bbox_right=6,
+            )
+        ]
+    ]
+
+    with pytest.raises(ValueError, match="detection y"):
+        track_particle_detections(detections_by_frame)
+
+
+@pytest.mark.parametrize(
+    ("detection", "message"),
+    [
+        (
+            ParticleDetection(
+                0,
+                1,
+                y=1.0,
+                x=1.0,
+                area_px=0,
+                bbox_top=0,
+                bbox_left=0,
+                bbox_bottom=1,
+                bbox_right=1,
+            ),
+            "area_px",
+        ),
+        (
+            ParticleDetection(
+                0,
+                1,
+                y=1.0,
+                x=1.0,
+                area_px=1,
+                bbox_top=2,
+                bbox_left=0,
+                bbox_bottom=2,
+                bbox_right=1,
+            ),
+            "bbox",
+        ),
+    ],
+)
+def test_track_particle_detections_rejects_invalid_detection_geometry(detection, message):
+    with pytest.raises(ValueError, match=message):
+        track_particle_detections([[detection]])
+
+
 @pytest.mark.parametrize("min_track_length", [float("nan"), 2.5])
 def test_estimate_particle_velocities_rejects_invalid_min_track_length(min_track_length):
     with pytest.raises(ValueError, match="min_track_length"):
@@ -265,6 +414,14 @@ def test_estimate_particle_velocities_rejects_invalid_min_track_length(min_track
             [],
             belt_image_velocity_px_per_frame=1.0,
             min_track_length=min_track_length,
+        )
+
+
+def test_estimate_particle_velocities_rejects_boolean_belt_velocity():
+    with pytest.raises(ValueError, match="belt_image_velocity_px_per_frame"):
+        estimate_particle_velocities_vs_belt(
+            [],
+            belt_image_velocity_px_per_frame=True,
         )
 
 
@@ -1157,6 +1314,39 @@ def test_score_particle_velocities_requires_tracks_for_enabled_recurrent_gate():
         )
 
 
+def _valid_particle_velocity(**overrides):
+    values = {
+        "track_id": 0,
+        "n_detections": 4,
+        "frame_start": 0.0,
+        "frame_end": 3.0,
+        "velocity_y_px_per_frame": 4.0,
+        "velocity_x_px_per_frame": 0.0,
+        "speed_px_per_frame": 4.0,
+        "belt_velocity_y_px_per_frame": 5.0,
+        "velocity_ratio_y": 0.8,
+        "belt_minus_particle_velocity_y_px_per_frame": 1.0,
+    }
+    values.update(overrides)
+    return ParticleVelocity(**values)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"track_id": True}, "track_id"),
+        ({"n_detections": 0}, "n_detections"),
+        ({"frame_start": 4.0, "frame_end": 3.0}, "frame_end"),
+        ({"velocity_ratio_y": float("nan")}, "velocity_ratio_y"),
+        ({"speed_px_per_frame": -1.0}, "speed_px_per_frame"),
+        ({"belt_velocity_y_px_per_frame": 0.0}, "belt_velocity_y_px_per_frame"),
+    ],
+)
+def test_score_particle_velocities_rejects_invalid_velocity_rows(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        score_particle_velocities([_valid_particle_velocity(**overrides)])
+
+
 @pytest.mark.parametrize(
     ("config", "message"),
     [
@@ -1169,6 +1359,39 @@ def test_score_particle_velocities_requires_tracks_for_enabled_recurrent_gate():
 def test_score_particle_velocities_rejects_nonfinite_filter_config(config, message):
     with pytest.raises(ValueError, match=message):
         score_particle_velocities([], config=config, tracks=[])
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (TrackFilterConfig(min_track_length=True), "min_track_length"),
+        (TrackFilterConfig(min_velocity_ratio_y=True), "min_velocity_ratio_y"),
+        (TrackFilterConfig(max_velocity_ratio_y=True), "max_velocity_ratio_y"),
+        (TrackFilterConfig(max_abs_x_velocity_px_per_frame=True), "max_abs_x_velocity_px_per_frame"),
+        (TrackFilterConfig(max_recurrent_artifact_track_score=True), "max_recurrent_artifact_track_score"),
+        (TrackFilterConfig(recurrent_artifact_detection_threshold=True), "recurrent_artifact_detection_threshold"),
+    ],
+)
+def test_score_particle_velocities_rejects_boolean_filter_config(config, message):
+    with pytest.raises(ValueError, match=message):
+        score_particle_velocities([], config=config, tracks=[])
+
+
+def test_extract_particle_velocities_rejects_boolean_belt_velocity():
+    with pytest.raises(ValueError, match="belt_image_velocity_px_per_frame"):
+        extract_particle_velocities_vs_belt(
+            [np.zeros((2, 2), dtype=bool)],
+            belt_image_velocity_px_per_frame=True,
+        )
+
+
+def test_extract_particle_velocities_rejects_boolean_frame_indices():
+    with pytest.raises(ValueError, match="frame_indices"):
+        extract_particle_velocities_vs_belt(
+            [np.zeros((2, 2), dtype=bool)],
+            belt_image_velocity_px_per_frame=1.0,
+            frame_indices=[True],
+        )
 
 
 def test_track_particle_detections_drops_tracks_across_explicit_empty_frame_gap():
