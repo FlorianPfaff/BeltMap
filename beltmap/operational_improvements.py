@@ -276,12 +276,20 @@ class MultiCameraEvent:
 def natural_key(path: Path) -> list[int | str]:
     import re
 
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(path))]
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r"(\d+)", str(path))
+    ]
 
 
 def list_image_paths(image_dir: Path, *, max_frames: int | None = None) -> list[Path]:
     paths = sorted(
-        [path for path in image_dir.rglob("*") if path.suffix.lower() in IMAGE_EXTENSIONS and not path.name.startswith("._")],
+        [
+            path
+            for path in image_dir.rglob("*")
+            if path.suffix.lower() in IMAGE_EXTENSIONS
+            and not path.name.startswith("._")
+        ],
         key=natural_key,
     )
     if max_frames is not None and max_frames > 0:
@@ -380,7 +388,11 @@ def estimate_homography(
     src = np.asarray(source_points, dtype=np.float64)
     dst = np.asarray(target_points, dtype=np.float64)
     if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 2 or src.shape[0] < 4:
-        raise ValueError("source_points and target_points must be Nx2 arrays with N >= 4")
+        raise ValueError(
+            "source_points and target_points must be Nx2 arrays with N >= 4"
+        )
+    if not np.all(np.isfinite(src)) or not np.all(np.isfinite(dst)):
+        raise ValueError("source_points and target_points must be finite")
 
     src_norm, src_transform = _normalize_points(src)
     dst_norm, dst_transform = _normalize_points(dst)
@@ -399,13 +411,19 @@ def estimate_homography(
     )
 
 
-def _normalize_points(points: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def _normalize_points(
+    points: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     center = np.mean(points, axis=0)
     shifted = points - center
     mean_distance = float(np.mean(np.sqrt(np.sum(shifted * shifted, axis=1))))
     scale = math.sqrt(2.0) / max(mean_distance, 1e-12)
     transform = np.array(
-        [[scale, 0.0, -scale * center[0]], [0.0, scale, -scale * center[1]], [0.0, 0.0, 1.0]],
+        [
+            [scale, 0.0, -scale * center[0]],
+            [0.0, scale, -scale * center[1]],
+            [0.0, 0.0, 1.0],
+        ],
         dtype=np.float64,
     )
     homogeneous = np.c_[points, np.ones(points.shape[0])]
@@ -426,12 +444,21 @@ def warp_perspective(
     arr = np.asarray(image, dtype=np.float64)
     if arr.ndim != 2:
         raise ValueError("warp_perspective currently expects a 2-D grayscale image")
-    matrix = homography.matrix if isinstance(homography, HomographyModel) else np.asarray(homography, dtype=np.float64)
+    matrix = (
+        homography.matrix
+        if isinstance(homography, HomographyModel)
+        else np.asarray(homography, dtype=np.float64)
+    )
     if matrix.shape != (3, 3):
         raise ValueError("homography matrix must be 3x3")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("homography matrix must be finite")
     if interpolation not in {"nearest", "bilinear"}:
         raise ValueError("interpolation must be 'nearest' or 'bilinear'")
-    out_h, out_w = output_shape
+    if len(output_shape) != 2:
+        raise ValueError("output_shape must contain height and width")
+    out_h = _positive_integer_value(output_shape[0], "output_shape height")
+    out_w = _positive_integer_value(output_shape[1], "output_shape width")
     yy, xx = np.indices((out_h, out_w), dtype=np.float64)
     target = np.stack([xx.ravel(), yy.ravel(), np.ones(xx.size)], axis=0)
     source = np.linalg.inv(matrix) @ target
@@ -448,7 +475,13 @@ def warp_perspective(
     return _sample_bilinear(arr, sy, sx, fill_value=fill_value)
 
 
-def _sample_nearest(image: NDArray[np.float64], y: NDArray[np.float64], x: NDArray[np.float64], *, fill_value: float) -> NDArray[np.float64]:
+def _sample_nearest(
+    image: NDArray[np.float64],
+    y: NDArray[np.float64],
+    x: NDArray[np.float64],
+    *,
+    fill_value: float,
+) -> NDArray[np.float64]:
     yi = np.rint(y).astype(np.int64)
     xi = np.rint(x).astype(np.int64)
     valid = (0 <= yi) & (yi < image.shape[0]) & (0 <= xi) & (xi < image.shape[1])
@@ -457,7 +490,13 @@ def _sample_nearest(image: NDArray[np.float64], y: NDArray[np.float64], x: NDArr
     return out
 
 
-def _sample_bilinear(image: NDArray[np.float64], y: NDArray[np.float64], x: NDArray[np.float64], *, fill_value: float) -> NDArray[np.float64]:
+def _sample_bilinear(
+    image: NDArray[np.float64],
+    y: NDArray[np.float64],
+    x: NDArray[np.float64],
+    *,
+    fill_value: float,
+) -> NDArray[np.float64]:
     y0 = np.floor(y).astype(np.int64)
     x0 = np.floor(x).astype(np.int64)
     y1 = y0 + 1
@@ -489,11 +528,19 @@ def estimate_period_from_profile(
 ) -> PeriodEstimate:
     """Estimate a periodicity from a 1-D belt texture profile."""
 
+    min_period_px = _positive_integer_value(min_period_px, "min_period_px")
+    if max_period_px is not None:
+        max_period_px = _positive_integer_value(max_period_px, "max_period_px")
+    top_k = _positive_integer_value(top_k, "top_k")
     values = np.asarray(profile, dtype=np.float64).ravel()
     values = values[np.isfinite(values)]
     if values.size < 2 * min_period_px:
         raise ValueError("profile is too short for the requested minimum period")
-    max_period = values.size // 2 if max_period_px is None else min(int(max_period_px), values.size - 1)
+    max_period = (
+        values.size // 2
+        if max_period_px is None
+        else min(max_period_px, values.size - 1)
+    )
     if min_period_px <= 0 or max_period < min_period_px:
         raise ValueError("invalid period search range")
     centered = values - float(np.mean(values))
@@ -502,7 +549,7 @@ def estimate_period_from_profile(
         raise ValueError("profile has no variation")
     centered /= std
     candidates: list[tuple[int, float]] = []
-    for period in range(int(min_period_px), int(max_period) + 1):
+    for period in range(min_period_px, max_period + 1):
         a = centered[:-period]
         b = centered[period:]
         denom = float(np.sqrt(np.sum(a * a) * np.sum(b * b)))
@@ -531,7 +578,9 @@ def estimate_period_from_belt_map(
     gradient = np.zeros_like(arr)
     gradient[1:] = np.abs(np.diff(arr, axis=0))
     profile = np.nanmean(gradient, axis=1)
-    return estimate_period_from_profile(profile, min_period_px=min_period_px, max_period_px=max_period_px)
+    return estimate_period_from_profile(
+        profile, min_period_px=min_period_px, max_period_px=max_period_px
+    )
 
 
 def select_adaptive_map_frames(
@@ -548,16 +597,30 @@ def select_adaptive_map_frames(
     phases = np.asarray(phases_px, dtype=np.float64)
     if phases.size == 0:
         return []
-    if map_height_px <= 0 or sample_count <= 0 or crop_height_px <= 0:
-        raise ValueError("map_height_px, sample_count, and crop_height_px must be positive")
-    scores = np.ones(phases.size, dtype=np.float64) if quality_scores is None else np.asarray(quality_scores, dtype=np.float64)
+    if phases.ndim != 1:
+        raise ValueError("phases_px must be a one-dimensional sequence")
+    if not np.all(np.isfinite(phases)):
+        raise ValueError("phases_px values must be finite")
+    map_height_px = _positive_integer_value(map_height_px, "map_height_px")
+    sample_count = _positive_integer_value(sample_count, "sample_count")
+    crop_height_px = _positive_integer_value(crop_height_px, "crop_height_px")
+    scores = (
+        np.ones(phases.size, dtype=np.float64)
+        if quality_scores is None
+        else np.asarray(quality_scores, dtype=np.float64)
+    )
     if scores.shape != phases.shape:
         raise ValueError("quality_scores must have one value per phase")
-    bins = int(bin_count or min(map_height_px, max(sample_count * 2, 8)))
+    if bin_count is None:
+        bins = min(map_height_px, max(sample_count * 2, 8))
+    else:
+        bins = _positive_integer_value(bin_count, "bin_count")
     occupied = np.zeros(bins, dtype=np.int64)
     selected: list[AdaptiveSample] = []
     remaining = set(range(phases.size))
-    phase_bins = np.floor((np.mod(phases, map_height_px) / map_height_px) * bins).astype(int)
+    phase_bins = np.floor(
+        (np.mod(phases, map_height_px) / map_height_px) * bins
+    ).astype(int)
     phase_bins = np.clip(phase_bins, 0, bins - 1)
     span_bins = max(1, int(math.ceil(crop_height_px / map_height_px * bins)))
 
@@ -582,7 +645,11 @@ def select_adaptive_map_frames(
                 frame_index=int(best_index),
                 phase_px=float(phases[best_index]),
                 bin_index=int(phase_bins[best_index]),
-                score=float(scores[best_index]) if np.isfinite(scores[best_index]) else 0.0,
+                score=(
+                    float(scores[best_index])
+                    if np.isfinite(scores[best_index])
+                    else 0.0
+                ),
                 coverage_gain=int(best[1]),
                 reason="new-phase-coverage" if best[1] > 0 else "quality-fill",
             )
@@ -595,17 +662,23 @@ def select_adaptive_map_frames(
 # ---------------------------------------------------------------------------
 
 
-def load_ignore_mask(path: Path, *, expected_shape: tuple[int, int] | None = None) -> BoolArray:
+def load_ignore_mask(
+    path: Path, *, expected_shape: tuple[int, int] | None = None
+) -> BoolArray:
     """Load an ignore mask from an image. Nonzero pixels are ignored."""
 
     with Image.open(path) as image:
         mask = np.asarray(image.convert("L"), dtype=np.uint8) > 0
     if expected_shape is not None and mask.shape != expected_shape:
-        raise ValueError(f"ignore mask shape {mask.shape} does not match expected shape {expected_shape}")
+        raise ValueError(
+            f"ignore mask shape {mask.shape} does not match expected shape {expected_shape}"
+        )
     return mask
 
 
-def apply_ignore_mask(valid_mask: ArrayLike, ignore_mask: ArrayLike | None) -> BoolArray:
+def apply_ignore_mask(
+    valid_mask: ArrayLike, ignore_mask: ArrayLike | None
+) -> BoolArray:
     valid = np.asarray(valid_mask, dtype=bool)
     if ignore_mask is None:
         return valid.copy()
@@ -657,7 +730,9 @@ def particle_density_score(
     if not np.any(valid):
         return 1.0
     signal = _polarity_signal(values, polarity)
-    return float(np.count_nonzero(valid & (signal > threshold)) / np.count_nonzero(valid))
+    return float(
+        np.count_nonzero(valid & (signal > threshold)) / np.count_nonzero(valid)
+    )
 
 
 def rank_frames_by_particle_density(
@@ -666,7 +741,13 @@ def rank_frames_by_particle_density(
     threshold: float,
     polarity: str = "bright",
 ) -> list[tuple[int, float]]:
-    scores = [(index, particle_density_score(residual, threshold=threshold, polarity=polarity)) for index, residual in enumerate(residuals)]
+    scores = [
+        (
+            index,
+            particle_density_score(residual, threshold=threshold, polarity=polarity),
+        )
+        for index, residual in enumerate(residuals)
+    ]
     return sorted(scores, key=lambda item: item[1])
 
 
@@ -703,7 +784,11 @@ def empirical_p_values(
     """Assign empirical upper-tail p-values to residual-like scores."""
 
     arr = np.asarray(values, dtype=np.float64)
-    bg = arr if background_values is None else np.asarray(background_values, dtype=np.float64)
+    bg = (
+        arr
+        if background_values is None
+        else np.asarray(background_values, dtype=np.float64)
+    )
     bg_signal = _polarity_signal(bg, polarity).ravel()
     bg_signal = np.sort(bg_signal[np.isfinite(bg_signal)])
     if bg_signal.size == 0:
@@ -715,7 +800,9 @@ def empirical_p_values(
     return p.astype(np.float64)
 
 
-def fdr_threshold_from_p_values(p_values: ArrayLike, scores: ArrayLike, *, alpha: float = 0.01) -> float | None:
+def fdr_threshold_from_p_values(
+    p_values: ArrayLike, scores: ArrayLike, *, alpha: float = 0.01
+) -> float | None:
     """Return the minimum score accepted by Benjamini-Hochberg FDR control."""
 
     p = np.asarray(p_values, dtype=np.float64).ravel()
@@ -770,7 +857,9 @@ def split_merged_components(
     return result
 
 
-def _split_component_by_projection(component: BoolArray, *, min_gap_px: int) -> list[BoolArray]:
+def _split_component_by_projection(
+    component: BoolArray, *, min_gap_px: int
+) -> list[BoolArray]:
     rows, cols = np.nonzero(component)
     if rows.size == 0:
         return []
@@ -798,7 +887,9 @@ def _split_component_by_projection(component: BoolArray, *, min_gap_px: int) -> 
     return pieces or [component]
 
 
-def _projection_split_indices(projection: NDArray[np.integer], *, min_gap_px: int) -> list[tuple[int, int]]:
+def _projection_split_indices(
+    projection: NDArray[np.integer], *, min_gap_px: int
+) -> list[tuple[int, int]]:
     occupied = projection > 0
     if not np.any(occupied):
         return []
@@ -812,7 +903,11 @@ def _projection_split_indices(projection: NDArray[np.integer], *, min_gap_px: in
             gap_start = None
         elif start is not None and gap_start is None:
             gap_start = index
-        if start is not None and gap_start is not None and index - gap_start + 1 >= min_gap_px:
+        if (
+            start is not None
+            and gap_start is not None
+            and index - gap_start + 1 >= min_gap_px
+        ):
             segments.append((start, gap_start))
             start = None
             gap_start = None
@@ -821,12 +916,16 @@ def _projection_split_indices(projection: NDArray[np.integer], *, min_gap_px: in
     return segments
 
 
-def particle_descriptor_from_mask(mask: ArrayLike, *, signal: ArrayLike | None = None) -> ParticleDescriptor:
+def particle_descriptor_from_mask(
+    mask: ArrayLike, *, signal: ArrayLike | None = None
+) -> ParticleDescriptor:
     binary = np.asarray(mask, dtype=bool)
     if binary.ndim != 2 or not np.any(binary):
         raise ValueError("mask must be a non-empty 2-D component mask")
     rows, cols = np.nonzero(binary)
-    values = None if signal is None else np.asarray(signal, dtype=np.float64)[rows, cols]
+    values = (
+        None if signal is None else np.asarray(signal, dtype=np.float64)[rows, cols]
+    )
     weights = np.ones(rows.size, dtype=np.float64)
     if values is not None:
         weights = np.clip(values, 0.0, None)
@@ -876,7 +975,11 @@ def estimate_centroid_uncertainty(
     if not np.any(mask):
         return DetectionUncertainty(None, None, 0.0, 0.0, 0)
     rows, cols = np.nonzero(mask)
-    sig = np.ones(rows.size, dtype=np.float64) if signal is None else np.clip(np.asarray(signal, dtype=np.float64)[rows, cols], 0, None)
+    sig = (
+        np.ones(rows.size, dtype=np.float64)
+        if signal is None
+        else np.clip(np.asarray(signal, dtype=np.float64)[rows, cols], 0, None)
+    )
     effective_signal = float(np.sum(sig))
     if np.isscalar(local_noise) and local_noise is not None:
         noise = np.full(rows.size, float(local_noise), dtype=np.float64)
@@ -884,17 +987,27 @@ def estimate_centroid_uncertainty(
         noise = np.ones(rows.size, dtype=np.float64)
     else:
         noise = np.asarray(local_noise, dtype=np.float64)[rows, cols]
-    effective_noise = float(np.sqrt(np.mean(np.square(noise[np.isfinite(noise)])))) if np.any(np.isfinite(noise)) else 0.0
+    effective_noise = (
+        float(np.sqrt(np.mean(np.square(noise[np.isfinite(noise)]))))
+        if np.any(np.isfinite(noise))
+        else 0.0
+    )
     if effective_signal <= 0 or effective_noise <= 0:
-        return DetectionUncertainty(None, None, effective_signal, effective_noise, int(rows.size))
+        return DetectionUncertainty(
+            None, None, effective_signal, effective_noise, int(rows.size)
+        )
     descriptor = particle_descriptor_from_mask(mask, signal=signal)
     snr = effective_signal / max(effective_noise * math.sqrt(rows.size), 1e-12)
     cy_std = descriptor.minor_axis_px / max(2.0 * snr, 1e-12)
     cx_std = descriptor.major_axis_px / max(2.0 * snr, 1e-12)
-    return DetectionUncertainty(float(cy_std), float(cx_std), effective_signal, effective_noise, int(rows.size))
+    return DetectionUncertainty(
+        float(cy_std), float(cx_std), effective_signal, effective_noise, int(rows.size)
+    )
 
 
-def robust_velocity_fit(times: Sequence[float], positions: Sequence[float]) -> VelocityUncertainty:
+def robust_velocity_fit(
+    times: Sequence[float], positions: Sequence[float]
+) -> VelocityUncertainty:
     """Estimate slope with median pairwise velocity and a robust residual scale."""
 
     t = np.asarray(times, dtype=np.float64)
@@ -917,7 +1030,9 @@ def robust_velocity_fit(times: Sequence[float], positions: Sequence[float]) -> V
     mad = float(np.median(np.abs(residuals - np.median(residuals))))
     residual_std = 1.4826 * mad
     denominator = float(np.sum((t - np.mean(t)) ** 2))
-    slope_std = None if denominator <= 0 else float(residual_std / math.sqrt(denominator))
+    slope_std = (
+        None if denominator <= 0 else float(residual_std / math.sqrt(denominator))
+    )
     return VelocityUncertainty(slope, intercept, slope_std, residual_std, int(t.size))
 
 
@@ -949,7 +1064,9 @@ def read_image_metadata(path: Path) -> dict[str, Any]:
         }
 
 
-def load_timestamps_csv(path: Path, *, frame_column: str = "frame_index", time_column: str = "time_s") -> TimestampTable:
+def load_timestamps_csv(
+    path: Path, *, frame_column: str = "frame_index", time_column: str = "time_s"
+) -> TimestampTable:
     mapping: dict[int, float] = {}
     with path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
@@ -959,7 +1076,9 @@ def load_timestamps_csv(path: Path, *, frame_column: str = "frame_index", time_c
     return TimestampTable(mapping)
 
 
-def discover_new_stream_frames(image_dir: Path, state: StreamingFrameState, *, max_new: int | None = None) -> list[Path]:
+def discover_new_stream_frames(
+    image_dir: Path, state: StreamingFrameState, *, max_new: int | None = None
+) -> list[Path]:
     paths = list_image_paths(image_dir)
     new_paths = [path for path in paths if str(path) not in state.seen_paths]
     if max_new is not None:
@@ -983,7 +1102,9 @@ def incremental_update_map(
     obs = np.asarray(observation, dtype=np.float64)
     valid = np.asarray(valid_mask, dtype=bool)
     if old.shape != obs.shape or old.shape != valid.shape:
-        raise ValueError("current_map, observation, and valid_mask must have the same shape")
+        raise ValueError(
+            "current_map, observation, and valid_mask must have the same shape"
+        )
     if not 0 <= learning_rate <= 1:
         raise ValueError("learning_rate must be in [0, 1]")
     updated = old.copy()
@@ -996,7 +1117,9 @@ def incremental_update_map(
 # ---------------------------------------------------------------------------
 
 
-def dataset_manifest(image_dir: Path, *, hash_chunk_size: int = 1024 * 1024) -> DatasetManifest:
+def dataset_manifest(
+    image_dir: Path, *, hash_chunk_size: int = 1024 * 1024
+) -> DatasetManifest:
     records: list[DatasetFileRecord] = []
     for path in list_image_paths(image_dir):
         stat = path.stat()
@@ -1025,7 +1148,9 @@ def dataset_manifest(image_dir: Path, *, hash_chunk_size: int = 1024 * 1024) -> 
                 mtime_ns=int(stat.st_mtime_ns),
             )
         )
-    payload = json.dumps([asdict(record) for record in records], sort_keys=True).encode("utf-8")
+    payload = json.dumps([asdict(record) for record in records], sort_keys=True).encode(
+        "utf-8"
+    )
     return DatasetManifest(
         root=str(image_dir),
         files=tuple(records),
@@ -1043,7 +1168,11 @@ def runtime_provenance(*, extra: Mapping[str, Any] | None = None) -> dict[str, A
         "argv": sys.argv,
         "numpy_version": np.__version__,
         "pillow_version": Image.__version__,
-        "env": {key: os.environ.get(key) for key in sorted(os.environ) if key.startswith("BELTMAP") or key in {"GITHUB_SHA", "GITHUB_REF"}},
+        "env": {
+            key: os.environ.get(key)
+            for key in sorted(os.environ)
+            if key.startswith("BELTMAP") or key in {"GITHUB_SHA", "GITHUB_REF"}
+        },
     }
     if extra:
         data.update(dict(extra))
@@ -1111,17 +1240,41 @@ def classify_failure_modes(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
         warnings.append({"code": code, "severity": severity, "message": message})
 
     if float(summary.get("phase_boundary_fraction", 0.0) or 0.0) > 0.1:
-        add("registration-search-boundary", "high", "Many phase corrections hit the search boundary; increase registration radius or improve velocity calibration.")
+        add(
+            "registration-search-boundary",
+            "high",
+            "Many phase corrections hit the search boundary; increase registration radius or improve velocity calibration.",
+        )
     if float(summary.get("registration_score_median", 1.0) or 1.0) < 0.2:
-        add("low-registration-score", "high", "Median phase-registration score is low; check belt texture, crop, and map quality.")
+        add(
+            "low-registration-score",
+            "high",
+            "Median phase-registration score is low; check belt texture, crop, and map quality.",
+        )
     if float(summary.get("small_component_share_area_le_8", 0.0) or 0.0) > 0.5:
-        add("many-small-components", "medium", "Most detections are tiny; raise threshold or enable shape/edge gates.")
+        add(
+            "many-small-components",
+            "medium",
+            "Most detections are tiny; raise threshold or enable shape/edge gates.",
+        )
     if float(summary.get("velocity_ratio_share_0_to_1", 1.0) or 1.0) < 0.5:
-        add("implausible-velocity-ratios", "high", "Few velocities are in the expected [0, 1] belt-relative range.")
+        add(
+            "implausible-velocity-ratios",
+            "high",
+            "Few velocities are in the expected [0, 1] belt-relative range.",
+        )
     if float(summary.get("map_low_coverage_fraction", 0.0) or 0.0) > 0.05:
-        add("low-map-coverage", "medium", "Some belt-map pixels have low coverage; increase sample frames or use adaptive sampling.")
+        add(
+            "low-map-coverage",
+            "medium",
+            "Some belt-map pixels have low coverage; increase sample frames or use adaptive sampling.",
+        )
     if float(summary.get("track_fragmentation", 0.0) or 0.0) > 0.5:
-        add("track-fragmentation", "medium", "Tracks are fragmented; use wider PyRecEst matching or tracklet stitching.")
+        add(
+            "track-fragmentation",
+            "medium",
+            "Tracks are fragmented; use wider PyRecEst matching or tracklet stitching.",
+        )
     return warnings
 
 
@@ -1155,7 +1308,9 @@ def classify_event(
             label = "map-uncertainty-artifact"
         score -= 0.1
         reasons.append("high rendered map uncertainty")
-    return EventClassification(label=label, confidence=float(np.clip(score, 0.0, 1.0)), reasons=tuple(reasons))
+    return EventClassification(
+        label=label, confidence=float(np.clip(score, 0.0, 1.0)), reasons=tuple(reasons)
+    )
 
 
 def summarize_flux(
@@ -1169,12 +1324,21 @@ def summarize_flux(
 ) -> FluxSummary:
     rows = list(velocity_rows)
     if accepted_only:
-        rows = [row for row in rows if str(row.get("accepted", "true")).lower() in {"1", "true", "yes", "on"}]
+        rows = [
+            row
+            for row in rows
+            if str(row.get("accepted", "true")).lower() in {"1", "true", "yes", "on"}
+        ]
     ratios = [_finite_float(row.get("velocity_ratio_y")) for row in rows]
     ratios = [value for value in ratios if value is not None]
     velocities = [_finite_float(row.get("velocity_y_px_per_frame")) for row in rows]
     velocities = [value for value in velocities if value is not None]
-    if duration_s is None and frame_count is not None and frame_rate_hz is not None and frame_rate_hz > 0:
+    if (
+        duration_s is None
+        and frame_count is not None
+        and frame_rate_hz is not None
+        and frame_rate_hz > 0
+    ):
         duration_s = frame_count / frame_rate_hz
     flux = None if duration_s is None or duration_s <= 0 else len(rows) / duration_s
     mean_v = None
@@ -1204,28 +1368,44 @@ def write_science_exports(
     frame_rate_hz: float | None = None,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    summary = summarize_flux(velocity_rows, frame_count=frame_count, frame_rate_hz=frame_rate_hz)
+    summary = summarize_flux(
+        velocity_rows, frame_count=frame_count, frame_rate_hz=frame_rate_hz
+    )
     summary_path = output_dir / "particle_flux_summary.json"
     summary_path.write_text(json.dumps(summary.to_dict(), indent=2), encoding="utf-8")
     distribution_path = output_dir / "velocity_distribution.csv"
     with distribution_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["track_id", "velocity_ratio_y", "velocity_y_px_per_frame"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["track_id", "velocity_ratio_y", "velocity_y_px_per_frame"],
+        )
         writer.writeheader()
         for row in velocity_rows:
             writer.writerow({key: row.get(key, "") for key in writer.fieldnames or []})
     return {"flux_summary": summary_path, "velocity_distribution": distribution_path}
 
 
-def build_review_items(overlay_paths: Sequence[Path], *, detection_counts: Mapping[int, int] | None = None) -> list[ReviewItem]:
+def build_review_items(
+    overlay_paths: Sequence[Path], *, detection_counts: Mapping[int, int] | None = None
+) -> list[ReviewItem]:
     items: list[ReviewItem] = []
     counts = detection_counts or {}
     for index, path in enumerate(sorted(overlay_paths, key=natural_key)):
         frame_index = _last_int_in_stem(path, fallback=index)
-        items.append(ReviewItem(frame_index=frame_index, image=str(path), title=path.name, n_detections=int(counts.get(frame_index, 0))))
+        items.append(
+            ReviewItem(
+                frame_index=frame_index,
+                image=str(path),
+                title=path.name,
+                n_detections=int(counts.get(frame_index, 0)),
+            )
+        )
     return items
 
 
-def write_html_review(path: Path, items: Sequence[ReviewItem], *, title: str = "BeltMap review") -> Path:
+def write_html_review(
+    path: Path, items: Sequence[ReviewItem], *, title: str = "BeltMap review"
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     for item in items:
@@ -1245,20 +1425,30 @@ def write_html_review(path: Path, items: Sequence[ReviewItem], *, title: str = "
     return path
 
 
-def write_html_qc_report(path: Path, summary: Mapping[str, Any], items: Sequence[ReviewItem] = ()) -> Path:
+def write_html_qc_report(
+    path: Path, summary: Mapping[str, Any], items: Sequence[ReviewItem] = ()
+) -> Path:
     warnings = classify_failure_modes(summary)
-    body = ["<!doctype html><meta charset='utf-8'><title>BeltMap QC</title><h1>BeltMap QC report</h1>"]
+    body = [
+        "<!doctype html><meta charset='utf-8'><title>BeltMap QC</title><h1>BeltMap QC report</h1>"
+    ]
     body.append("<h2>Summary</h2><table>")
     for key, value in sorted(summary.items()):
-        body.append(f"<tr><th>{html.escape(str(key))}</th><td>{html.escape(str(value))}</td></tr>")
+        body.append(
+            f"<tr><th>{html.escape(str(key))}</th><td>{html.escape(str(value))}</td></tr>"
+        )
     body.append("</table><h2>Warnings</h2><ul>")
     for warning in warnings:
-        body.append(f"<li><b>{html.escape(warning['severity'])}</b> {html.escape(warning['code'])}: {html.escape(warning['message'])}</li>")
+        body.append(
+            f"<li><b>{html.escape(warning['severity'])}</b> {html.escape(warning['code'])}: {html.escape(warning['message'])}</li>"
+        )
     body.append("</ul>")
     if items:
         body.append("<h2>Review images</h2>")
         for item in items:
-            body.append(f"<h3>{html.escape(item.title)}</h3><img src='{html.escape(item.image)}' style='max-width:100%'>")
+            body.append(
+                f"<h3>{html.escape(item.title)}</h3><img src='{html.escape(item.image)}' style='max-width:100%'>"
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(body), encoding="utf-8")
     return path
@@ -1269,12 +1459,16 @@ def write_html_qc_report(path: Path, summary: Mapping[str, Any], items: Sequence
 # ---------------------------------------------------------------------------
 
 
-def run_pipeline_stage(name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> PipelineStageResult:
+def run_pipeline_stage(
+    name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any
+) -> PipelineStageResult:
     start = time.perf_counter()
     output = function(*args, **kwargs)
     elapsed = time.perf_counter() - start
     outputs = output if isinstance(output, Mapping) else {"result": output}
-    return PipelineStageResult(name=name, elapsed_s=elapsed, outputs=outputs, metadata=runtime_provenance())
+    return PipelineStageResult(
+        name=name, elapsed_s=elapsed, outputs=outputs, metadata=runtime_provenance()
+    )
 
 
 def load_detector_plugin(spec: str) -> Callable[..., Any]:
@@ -1294,7 +1488,12 @@ def run_detector_plugin(spec: str, residual: ArrayLike, **kwargs: Any) -> Any:
     return load_detector_plugin(spec)(residual, **kwargs)
 
 
-def randomize_synthetic_frame(frame: ArrayLike, config: SyntheticRandomizationConfig, *, rng: np.random.Generator | None = None) -> NDArray[np.float64]:
+def randomize_synthetic_frame(
+    frame: ArrayLike,
+    config: SyntheticRandomizationConfig,
+    *,
+    rng: np.random.Generator | None = None,
+) -> NDArray[np.float64]:
     generator = rng or np.random.default_rng()
     image = np.asarray(frame, dtype=np.float64).copy()
     gain = generator.uniform(*config.gain_range)
@@ -1308,7 +1507,10 @@ def randomize_synthetic_frame(frame: ArrayLike, config: SyntheticRandomizationCo
             image[row : min(image.shape[0], row + 2), :] += config.scratch_intensity
     if config.blur_radius_px > 0:
         pil = Image.fromarray(np.clip(image, 0, 255).astype(np.uint8))
-        image = np.asarray(pil.filter(ImageFilter.GaussianBlur(config.blur_radius_px)), dtype=np.float64)
+        image = np.asarray(
+            pil.filter(ImageFilter.GaussianBlur(config.blur_radius_px)),
+            dtype=np.float64,
+        )
     return image
 
 
@@ -1340,13 +1542,24 @@ def stitch_multicamera_events(
                 continue
             time_j = _finite_float(other.get("time_s"))
             phase_j = _finite_float(other.get("belt_phase_px", other.get("phase_px")))
-            time_ok = time_i is None or time_j is None or abs(time_i - time_j) <= time_tolerance_s
-            phase_ok = phase_i is None or phase_j is None or abs(phase_i - phase_j) <= phase_tolerance_px
+            time_ok = (
+                time_i is None
+                or time_j is None
+                or abs(time_i - time_j) <= time_tolerance_s
+            )
+            phase_ok = (
+                phase_i is None
+                or phase_j is None
+                or abs(phase_i - phase_j) <= phase_tolerance_px
+            )
             if time_ok and phase_ok:
                 group.append(dict(other))
                 used.add(j)
         times = [_finite_float(item.get("time_s")) for item in group]
-        phases = [_finite_float(item.get("belt_phase_px", item.get("phase_px"))) for item in group]
+        phases = [
+            _finite_float(item.get("belt_phase_px", item.get("phase_px")))
+            for item in group
+        ]
         events.append(
             MultiCameraEvent(
                 event_id=len(events),
@@ -1383,7 +1596,12 @@ def _connected_component_masks(mask: BoolArray) -> list[BoolArray]:
                     if dy == 0 and dx == 0:
                         continue
                     ny, nx = y + dy, x + dx
-                    if 0 <= ny < height and 0 <= nx < width and mask[ny, nx] and not visited[ny, nx]:
+                    if (
+                        0 <= ny < height
+                        and 0 <= nx < width
+                        and mask[ny, nx]
+                        and not visited[ny, nx]
+                    ):
                         visited[ny, nx] = True
                         stack.append((ny, nx))
         components.append(component)
@@ -1398,6 +1616,13 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _positive_integer_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a finite positive integer")
+    return int(parsed)
 
 
 def _last_int_in_stem(path: Path, *, fallback: int) -> int:

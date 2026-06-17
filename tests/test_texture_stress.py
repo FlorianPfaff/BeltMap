@@ -2,11 +2,12 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from beltmap.cli import texture_stress as cli_texture_stress
 from beltmap.compare_runs import RunSpec
-from beltmap.texture_stress import generate_texture_stress_report
+from beltmap.texture_stress import generate_texture_stress_report, score_stress_frames
 
 
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
@@ -116,7 +117,13 @@ def make_run(output_dir: Path, *, threshold: float, extra_detections: int) -> No
     write_csv(
         output_dir / "velocities.csv",
         [
-            {"track_id": 0, "n_detections": 5, "frame_start": 1, "frame_end": 3, "velocity_ratio_y": 0.5},
+            {
+                "track_id": 0,
+                "n_detections": 5,
+                "frame_start": 1,
+                "frame_end": 3,
+                "velocity_ratio_y": 0.5,
+            },
         ],
     )
     write_csv(
@@ -135,8 +142,26 @@ def make_run(output_dir: Path, *, threshold: float, extra_detections: int) -> No
         ],
     )
     for frame_index, amplitude in enumerate([0, 10, 30, 60]):
-        textured_image(output_dir / f"raw_frame_{frame_index:06d}.png", value=64, amplitude=amplitude)
-        textured_image(output_dir / f"residual_fixed_frame_{frame_index:06d}.png", value=96, amplitude=amplitude)
+        textured_image(
+            output_dir / f"raw_frame_{frame_index:06d}.png",
+            value=64,
+            amplitude=amplitude,
+        )
+        textured_image(
+            output_dir / f"residual_fixed_frame_{frame_index:06d}.png",
+            value=96,
+            amplitude=amplitude,
+        )
+
+
+def test_score_stress_frames_rejects_fractional_quartiles():
+    features = {
+        0: {"raw_std": 1.0},
+        1: {"raw_std": 2.0},
+    }
+
+    with pytest.raises(ValueError, match="quartiles"):
+        score_stress_frames(features, quartiles=2.5)
 
 
 def test_generate_texture_stress_report_writes_subset_tables_and_plot(tmp_path):
@@ -159,10 +184,14 @@ def test_generate_texture_stress_report_writes_subset_tables_and_plot(tmp_path):
     report = artifacts.report.read_text(encoding="utf-8")
     assert "# Texture-stress subset analysis" in report
     assert "Reference run: `raw`" in report
-    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    rows = list(
+        csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8"))
+    )
     assert {row["run"] for row in rows} == {"raw", "beltmap"}
     assert {row["subset"] for row in rows} == {"Q1", "Q2", "Q3", "Q4"}
-    frame_rows = list(csv.DictReader(artifacts.frames_csv.open(newline="", encoding="utf-8")))
+    frame_rows = list(
+        csv.DictReader(artifacts.frames_csv.open(newline="", encoding="utf-8"))
+    )
     assert frame_rows[0]["subset"] == "Q1"
     assert frame_rows[-1]["subset"] == "Q4"
 
@@ -183,7 +212,13 @@ def test_texture_stress_report_can_score_sparse_labels_by_subset(tmp_path):
                 "bbox_bottom": 4,
                 "bbox_right": 5,
             },
-            {"frame_index": 0, "bbox_top": "", "bbox_left": "", "bbox_bottom": "", "bbox_right": ""},
+            {
+                "frame_index": 0,
+                "bbox_top": "",
+                "bbox_left": "",
+                "bbox_bottom": "",
+                "bbox_right": "",
+            },
         ],
     )
 
@@ -197,7 +232,9 @@ def test_texture_stress_report_can_score_sparse_labels_by_subset(tmp_path):
 
     report = artifacts.report.read_text(encoding="utf-8")
     assert "## Labeled metrics by stress subset" in report
-    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    rows = list(
+        csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8"))
+    )
     q1_raw = next(row for row in rows if row["run"] == "raw" and row["subset"] == "Q1")
     q4_raw = next(row for row in rows if row["run"] == "raw" and row["subset"] == "Q4")
     assert q1_raw["labeled_detection_available"] == "True"

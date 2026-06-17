@@ -91,8 +91,7 @@ def parse_revolution_indices(value: str) -> tuple[int, ...]:
             stop = int(stop_text.strip())
             if stop < start:
                 raise ValueError(
-                    "revolution ranges must be increasing; "
-                    f"got {token!r}"
+                    "revolution ranges must be increasing; " f"got {token!r}"
                 )
             result.extend(range(start, stop + 1))
         else:
@@ -121,12 +120,25 @@ def build_revolution_split(
 
     revolutions = _normalize_revolution_by_frame(revolution_by_frame)
     unique_revolutions = tuple(sorted(set(revolutions)))
-    if min_train_revolutions < 1:
-        raise ValueError("min_train_revolutions must be at least 1")
-    if min_eval_revolutions < 1:
-        raise ValueError("min_eval_revolutions must be at least 1")
+    eval_every = _positive_integer_value(eval_every, "eval_every")
+    eval_offset = _nonnegative_integer_value(eval_offset, "eval_offset")
+    min_train_revolutions = _positive_integer_value(
+        min_train_revolutions,
+        "min_train_revolutions",
+    )
+    min_eval_revolutions = _positive_integer_value(
+        min_eval_revolutions,
+        "min_eval_revolutions",
+    )
 
-    explicit_eval = tuple(sorted(set(int(index) for index in eval_revolutions)))
+    explicit_eval = tuple(
+        sorted(
+            {
+                _nonnegative_integer_value(index, "eval_revolutions")
+                for index in eval_revolutions
+            }
+        )
+    )
     observed = set(unique_revolutions)
     if explicit_eval:
         missing = sorted(set(explicit_eval) - observed)
@@ -138,13 +150,11 @@ def build_revolution_split(
             )
         eval_set = set(explicit_eval)
     else:
-        if eval_every < 1:
-            raise ValueError("eval_every must be at least 1")
-        modulo = int(eval_offset) % int(eval_every)
+        modulo = eval_offset % eval_every
         eval_set = {
             revolution
             for revolution in unique_revolutions
-            if revolution % int(eval_every) == modulo
+            if revolution % eval_every == modulo
         }
     train_set = set(unique_revolutions) - eval_set
     if len(train_set) < min_train_revolutions:
@@ -159,8 +169,7 @@ def build_revolution_split(
         )
 
     frame_split = tuple(
-        "eval" if revolution in eval_set else "train"
-        for revolution in revolutions
+        "eval" if revolution in eval_set else "train" for revolution in revolutions
     )
     train_frame_indices = tuple(
         index for index, split in enumerate(frame_split) if split == "train"
@@ -188,7 +197,10 @@ def revolution_split_frame_rows(
 
     if len(image_names) != split.frame_count:
         raise ValueError("image_names must match the split frame count")
-    selected = {int(index) for index in selected_train_frame_indices}
+    selected = {
+        _nonnegative_integer_value(index, "selected_train_frame_indices")
+        for index in selected_train_frame_indices
+    }
     return [
         {
             "frame_index": index,
@@ -208,7 +220,10 @@ def revolution_split_revolution_rows(
 ) -> list[dict]:
     """Return per-revolution split composition rows for CSV output."""
 
-    selected = {int(index) for index in selected_train_frame_indices}
+    selected = {
+        _nonnegative_integer_value(index, "selected_train_frame_indices")
+        for index in selected_train_frame_indices
+    }
     rows: list[dict] = []
     for revolution in split.revolutions:
         frame_indices = _frame_indices_for_revolution(split, revolution)
@@ -305,19 +320,23 @@ def revolution_split_score_summary_rows(
     return rows
 
 
-def _normalize_revolution_by_frame(revolution_by_frame: Sequence[int]) -> tuple[int, ...]:
+def _normalize_revolution_by_frame(
+    revolution_by_frame: Sequence[int],
+) -> tuple[int, ...]:
     arr = np.asarray(revolution_by_frame)
     if arr.ndim != 1:
         raise ValueError("revolution_by_frame must be one-dimensional")
     if arr.size == 0:
         raise ValueError("revolution_by_frame must contain at least one frame")
-    result = tuple(int(value) for value in arr.tolist())
-    if any(value < 0 for value in result):
-        raise ValueError("revolution indices must be non-negative")
-    return result
+    return tuple(
+        _nonnegative_integer_value(value, "revolution indices")
+        for value in arr.tolist()
+    )
 
 
-def _frame_indices_for_revolution(split: RevolutionSplit, revolution: int) -> tuple[int, ...]:
+def _frame_indices_for_revolution(
+    split: RevolutionSplit, revolution: int
+) -> tuple[int, ...]:
     return tuple(
         index
         for index, frame_revolution in enumerate(split.revolution_by_frame)
@@ -325,7 +344,9 @@ def _frame_indices_for_revolution(split: RevolutionSplit, revolution: int) -> tu
     )
 
 
-def _frame_indices_for_split(split: RevolutionSplit, split_label: str) -> tuple[int, ...]:
+def _frame_indices_for_split(
+    split: RevolutionSplit, split_label: str
+) -> tuple[int, ...]:
     return tuple(
         index for index, value in enumerate(split.frame_split) if value == split_label
     )
@@ -336,7 +357,9 @@ def _split_groups(split: RevolutionSplit):
     yield "eval", _frame_indices_for_split(split, "eval"), split.eval_revolutions
 
 
-def _items_for_frames(items_by_frame: Sequence[Sequence[object]], frame_indices: Sequence[int]) -> list[object]:
+def _items_for_frames(
+    items_by_frame: Sequence[Sequence[object]], frame_indices: Sequence[int]
+) -> list[object]:
     return [item for index in frame_indices for item in items_by_frame[index]]
 
 
@@ -418,3 +441,17 @@ def _finite_mean_attr(items: Sequence[object], attr: str) -> float | str:
     if not values:
         return ""
     return float(np.mean(np.asarray(values, dtype=np.float64)))
+
+
+def _nonnegative_integer_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 0:
+        raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
+
+
+def _positive_integer_value(value: int, name: str) -> int:
+    parsed = _nonnegative_integer_value(value, name)
+    if parsed < 1:
+        raise ValueError(f"{name} must be a finite positive integer")
+    return parsed
