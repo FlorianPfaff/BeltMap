@@ -7,6 +7,7 @@ from beltmap.operational_improvements import (
     apply_ignore_mask,
     belt_edge_ignore_mask,
     classify_event,
+    classify_failure_modes,
     dataset_manifest,
     discover_new_stream_frames,
     empirical_p_values,
@@ -140,6 +141,32 @@ def test_robust_velocity_and_flux_summary():
     assert fit.slope_px_per_time == 2.0
     assert summary.particle_flux_per_s == 1.0
     assert summary.median_velocity_ratio_y == 0.6
+
+
+def test_classify_failure_modes_preserves_zero_summary_metrics():
+    warnings = classify_failure_modes(
+        {
+            "registration_score_median": 0.0,
+            "velocity_ratio_share_0_to_1": 0.0,
+        }
+    )
+
+    codes = {warning["code"] for warning in warnings}
+    assert "low-registration-score" in codes
+    assert "implausible-velocity-ratios" in codes
+
+
+def test_classify_failure_modes_ignores_invalid_summary_values():
+    warnings = classify_failure_modes(
+        {
+            "phase_boundary_fraction": "bad",
+            "small_component_share_area_le_8": True,
+            "map_low_coverage_fraction": False,
+            "track_fragmentation": "nan",
+        }
+    )
+
+    assert warnings == []
 
 
 def test_stream_manifest_map_update_and_multicamera(tmp_path: Path):
