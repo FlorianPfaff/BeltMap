@@ -25,6 +25,13 @@ def test_finite_int_rejects_fractional_values():
     assert pri.finite_int("7.5") is None
 
 
+def test_finite_numeric_parsers_reject_boolean_values():
+    assert pri.finite_float(True) is None
+    assert pri.finite_int(False) is None
+    assert pri.finite_float(np.bool_(True)) is None
+    assert pri.finite_int(np.bool_(False)) is None
+
+
 def test_detection_count_by_frame_ignores_fractional_frame_indices(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
@@ -115,6 +122,42 @@ def test_quality_contract_preserves_zero_detection_metadata(tmp_path):
     assert len(results) == 1
     assert not results[0].passed
     assert results[0].value == 1.0
+
+
+def test_quality_contract_rejects_boolean_detection_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 1, "n_detections": True}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text("frame_index,area_px\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(out, {"max_recurrent_rejection_share": 0.75})
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
+
+
+def test_quality_contract_fails_invalid_boolean_velocity_range(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text("{}", encoding="utf-8")
+    (out / "velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(
+        out,
+        {
+            "velocity_ratio_y_range": [True, True],
+            "min_velocity_ratio_in_range_share": 0.5,
+        },
+    )
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value is None
+    assert "invalid velocity ratio range" in results[0].description
 
 
 def test_label_plan_combines_failure_buckets(tmp_path):

@@ -161,6 +161,8 @@ def write_json(path: Path, data: Any) -> None:
 def finite_float(value: Any) -> float | None:
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -175,6 +177,18 @@ def finite_int(value: Any) -> int | None:
     if parsed is None or not parsed.is_integer():
         return None
     return int(parsed)
+
+
+def finite_float_pair(values: Any) -> tuple[float, float] | None:
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return None
+    if len(values) != 2:
+        return None
+    lower = finite_float(values[0])
+    upper = finite_float(values[1])
+    if lower is None or upper is None or lower > upper:
+        return None
+    return lower, upper
 
 
 def metadata_count_or_rows(
@@ -1002,12 +1016,17 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
 
     velocities = read_csv_rows(output_dir / "velocities.csv")
     ratios = np.asarray([value for value in (finite_float(row.get("velocity_ratio_y")) for row in velocities) if value is not None], dtype=np.float64)
-    ratio_range = contract.get("velocity_ratio_y_range", [0.0, 1.1])
-    lower, upper = float(ratio_range[0]), float(ratio_range[1])
-    in_range_share = None if ratios.size == 0 else float(np.mean((lower <= ratios) & (ratios <= upper)))
     threshold = finite_float(contract.get("min_velocity_ratio_in_range_share"))
     if threshold is not None:
-        results.append(ContractResult("velocity_ratio_in_range_share", in_range_share is None or in_range_share >= threshold, in_range_share, threshold, ">=", f"share of velocity ratios in [{lower}, {upper}]"))
+        ratio_range = finite_float_pair(
+            contract.get("velocity_ratio_y_range", DEFAULT_QUALITY_CONTRACT["velocity_ratio_y_range"])
+        )
+        if ratio_range is None:
+            results.append(ContractResult("velocity_ratio_in_range_share", False, None, threshold, ">=", "invalid velocity ratio range"))
+        else:
+            lower, upper = ratio_range
+            in_range_share = None if ratios.size == 0 else float(np.mean((lower <= ratios) & (ratios <= upper)))
+            results.append(ContractResult("velocity_ratio_in_range_share", in_range_share is None or in_range_share >= threshold, in_range_share, threshold, ">=", f"share of velocity ratios in [{lower}, {upper}]"))
 
     recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
     n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
