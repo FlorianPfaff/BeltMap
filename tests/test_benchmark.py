@@ -215,6 +215,7 @@ def test_bbox_iou_for_overlapping_half_open_boxes():
 def test_finite_int_accepts_float_like_integer_strings():
     assert finite_int("7.0") == 7
     assert finite_int("7.5") is None
+    assert finite_int(True) is None
 
 
 def test_source_frame_index_ignores_crop_coordinate_suffixes():
@@ -318,6 +319,41 @@ def test_detection_metrics_restricts_counts_to_scored_frames():
     assert metrics["false_positives"] == 0
     assert metrics["false_negatives"] == 0
     assert metrics["recall"] == pytest.approx(1.0)
+
+
+def test_detection_metrics_ignores_boolean_frame_indices():
+    truth = {
+        "particles": [
+            {"frame_index": 1, "top": 0, "left": 0, "bottom": 10, "right": 10},
+        ]
+    }
+    detections = [
+        {
+            "frame_index": True,
+            "bbox_top": "0",
+            "bbox_left": "0",
+            "bbox_bottom": "10",
+            "bbox_right": "10",
+            "y": "5",
+            "x": "5",
+        },
+    ]
+
+    metrics = detection_metrics(
+        detections,
+        truth,
+        scored_frames={1},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["truth_boxes"] == 1
+    assert metrics["predicted_boxes"] == 0
+    assert metrics["false_negatives"] == 1
+
+
+def test_detection_metrics_rejects_boolean_iou_threshold():
+    with pytest.raises(ValueError, match="iou_threshold"):
+        detection_metrics([], {"particles": []}, iou_threshold=True)
 
 
 def test_detection_metrics_ignores_degenerate_detection_boxes():

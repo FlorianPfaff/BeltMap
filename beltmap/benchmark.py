@@ -44,6 +44,8 @@ def finite_float(value: Any) -> float | None:
 
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -56,11 +58,8 @@ def finite_float(value: Any) -> float | None:
 def finite_int(value: Any) -> int | None:
     """Return an integer or ``None`` when parsing fails."""
 
-    if value is None:
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
+    parsed = finite_float(value)
+    if parsed is None:
         return None
     if not math.isfinite(parsed) or not parsed.is_integer():
         return None
@@ -810,8 +809,10 @@ def detection_metrics(
 ) -> dict[str, Any]:
     """Compute greedy IoU detection precision/recall against synthetic boxes."""
 
-    if not 0 <= iou_threshold <= 1:
+    parsed_iou_threshold = finite_float(iou_threshold)
+    if parsed_iou_threshold is None or not 0 <= parsed_iou_threshold <= 1:
         raise ValueError("iou_threshold must be in [0, 1]")
+    iou_threshold = parsed_iou_threshold
 
     truth_by_frame = group_truth_boxes(truth)
     pred_by_frame = group_detection_boxes(detection_rows)
