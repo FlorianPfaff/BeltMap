@@ -63,6 +63,12 @@ def test_belt_revolution_indices_rejects_invalid_period(period_px):
         (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=1.5), "candidate_max_area_px"),
         (RecurrentArtifactConfig(min_revolutions=1, reject_max_area_px=float("nan")), "reject_max_area_px"),
         (RecurrentArtifactConfig(min_revolutions=1, reject_max_area_px=1.5), "reject_max_area_px"),
+        (RecurrentArtifactConfig(min_revolutions=True), "min_revolutions"),
+        (RecurrentArtifactConfig(min_revolutions=1, margin_px=True), "margin_px"),
+        (RecurrentArtifactConfig(min_revolutions=1, max_overlap_fraction=True), "max_overlap_fraction"),
+        (RecurrentArtifactConfig(min_revolutions=1, soft_penalty_weight=True), "soft_penalty_weight"),
+        (RecurrentArtifactConfig(min_revolutions=1, candidate_max_peak_signal=True), "candidate_max_peak_signal"),
+        (RecurrentArtifactConfig(min_revolutions=1, reject_max_peak_signal=True), "reject_max_peak_signal"),
     ],
 )
 def test_recurrent_artifact_config_rejects_invalid_integer_settings(config, message):
@@ -87,6 +93,17 @@ def test_recurrent_artifact_map_rejects_nonfinite_phase_values():
         )
 
 
+def test_recurrent_artifact_map_rejects_boolean_phase_values():
+    with pytest.raises(ValueError, match="phase_px_by_frame"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[True],
+            revolution_by_frame=[0],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
 def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
     with pytest.raises(ValueError, match="phase_px_by_frame"):
         score_recurrent_artifact_detections(
@@ -97,7 +114,7 @@ def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
         )
 
 
-@pytest.mark.parametrize("revolution", [float("nan"), 1.5])
+@pytest.mark.parametrize("revolution", [float("nan"), 1.5, True])
 def test_recurrent_artifact_map_rejects_invalid_revolution_values(revolution):
     with pytest.raises(ValueError, match="revolution_by_frame"):
         build_recurrent_artifact_map(
@@ -128,7 +145,7 @@ def test_recurrent_artifact_cross_revolution_scoring_rejects_invalid_revolution_
         )
 
 
-@pytest.mark.parametrize("map_shape", [(2.5, 2), (2, float("inf")), (0, 2)])
+@pytest.mark.parametrize("map_shape", [(2.5, 2), (2, float("inf")), (0, 2), (True, 2)])
 def test_recurrent_artifact_map_rejects_invalid_map_shape(map_shape):
     with pytest.raises(ValueError, match="map shape"):
         build_recurrent_artifact_map(
@@ -140,7 +157,7 @@ def test_recurrent_artifact_map_rejects_invalid_map_shape(map_shape):
         )
 
 
-@pytest.mark.parametrize("frame_shape", [(2.5, 2), (2, float("nan")), (0, 2)])
+@pytest.mark.parametrize("frame_shape", [(2.5, 2), (2, float("nan")), (0, 2), (True, 2)])
 def test_recurrent_artifact_map_rejects_invalid_frame_shape(frame_shape):
     with pytest.raises(ValueError, match="frame_shape"):
         build_recurrent_artifact_map(
@@ -150,6 +167,20 @@ def test_recurrent_artifact_map_rejects_invalid_frame_shape(frame_shape):
             map_shape=(2, 2),
             frame_shape=frame_shape,
             config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), True, -1.0])
+def test_recurrent_artifact_scoring_rejects_invalid_detection_threshold(threshold):
+    artifact_map = np.zeros((2, 2), dtype=bool)
+
+    with pytest.raises(ValueError, match="detection_threshold"):
+        score_recurrent_artifact_detections(
+            [[detection(0, 0, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
+            artifact_map=artifact_map,
+            config=RecurrentArtifactConfig(min_revolutions=0),
+            detection_threshold=threshold,
         )
 
 
