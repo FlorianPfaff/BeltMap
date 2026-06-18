@@ -554,6 +554,8 @@ def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
 
 
 def _finite_float_value(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
     parsed = float(value)
     if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")

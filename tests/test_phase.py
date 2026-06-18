@@ -116,6 +116,18 @@ def test_wrap_phase_rejects_nonfinite_values(phase_px, period_px, message):
         wrap_phase(phase_px, period_px)
 
 
+@pytest.mark.parametrize(
+    ("phase_px", "period_px", "message"),
+    [
+        (True, None, "phase_px"),
+        (0.0, True, "period_px"),
+    ],
+)
+def test_wrap_phase_rejects_boolean_values(phase_px, period_px, message):
+    with pytest.raises(ValueError, match=message):
+        wrap_phase(phase_px, period_px)
+
+
 def test_render_belt_view_rejects_nonfinite_phase():
     belt = np.arange(5, dtype=float)[:, None]
 
@@ -168,6 +180,8 @@ def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
         (PhaseRegistrationConfig(trim_fraction=float("nan")), "trim_fraction"),
         (PhaseRegistrationConfig(highpass_radius_px=float("nan")), "highpass_radius_px"),
         (PhaseRegistrationConfig(highpass_radius_px=1.5), "highpass_radius_px"),
+        (PhaseRegistrationConfig(search_radius_px=True), "search_radius_px"),
+        (PhaseRegistrationConfig(highpass_radius_px=True), "highpass_radius_px"),
     ],
 )
 def test_registration_config_rejects_invalid_numeric_settings(config, message):
