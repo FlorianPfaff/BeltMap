@@ -110,7 +110,6 @@ def main(argv: list[str] | None = None) -> int:
         belt_map_path = args.belt_map_path or input_dir / "belt_map.npy"
         phase_path = args.phase_estimates_path or input_dir / "phase_estimates.csv"
         metrics_path = args.map_only_metrics_path or default_map_only_path(input_dir, "metrics", "json")
-        detections_path = args.map_only_detections_path or default_map_only_path(input_dir, "detections", "csv")
         tracks_path = args.map_only_tracks_path or default_map_only_path(input_dir, "tracks", "csv")
         track_scores_path = args.map_only_track_scores_path or default_map_only_path(input_dir, "track_scores", "csv")
         velocities_path = args.map_only_velocities_path or default_map_only_path(input_dir, "velocities", "csv")
