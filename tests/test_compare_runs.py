@@ -599,7 +599,7 @@ def test_detection_froc_curve_restricts_truth_to_scored_frames():
     assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
 
 
-def test_detection_froc_curve_rejects_partial_score_fields():
+def test_detection_froc_curve_keeps_unscored_detections_in_threshold_points():
     truth = {
         "particles": [
             {
@@ -623,13 +623,13 @@ def test_detection_froc_curve_rejects_partial_score_fields():
             "peak_signal": "12.0",
         },
         {
-            "frame_index": "2",
-            "bbox_top": "20",
-            "bbox_left": "20",
-            "bbox_bottom": "22",
-            "bbox_right": "22",
-            "y": "21.0",
-            "x": "21.0",
+            "frame_index": "1",
+            "bbox_top": "10",
+            "bbox_left": "10",
+            "bbox_bottom": "12",
+            "bbox_right": "12",
+            "y": "11.0",
+            "x": "11.0",
             "peak_signal": "",
         },
     ]
@@ -637,16 +637,61 @@ def test_detection_froc_curve_rejects_partial_score_fields():
     froc = detection_froc_curve(
         detections,
         truth,
-        scored_frames={0, 2},
+        scored_frames={0, 1},
         iou_threshold=0.25,
     )
 
-    assert froc["available"] is False
-    assert froc["score_field"] is None
+    threshold_points = [
+        point
+        for point in froc["points"]
+        if point["score_threshold"] is not None
+    ]
+
     assert froc["skipped_score_rows"] == 1
-    assert froc["auc_fp_per_frame_le_1"] is None
-    assert froc["recall_at_0_1_fp_per_frame"] is None
-    assert "partial-score FROC" in froc["reason"]
+    assert threshold_points
+    assert all(point["false_positives"] == 1 for point in threshold_points)
+    assert all(point["predicted_boxes"] == 2 for point in threshold_points)
+
+
+def test_detection_froc_curve_can_limit_threshold_grid():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            }
+        ]
+    }
+    detections = []
+    for index, score in enumerate(range(20, 10, -1)):
+        detections.append(
+            {
+                "frame_index": "0",
+                "bbox_top": "1",
+                "bbox_left": str(2 + index * 4),
+                "bbox_bottom": "4",
+                "bbox_right": str(5 + index * 4),
+                "y": "2.0",
+                "x": str(3 + index * 4),
+                "peak_signal": str(score),
+            }
+        )
+
+    froc = detection_froc_curve(
+        detections,
+        truth,
+        scored_frames={0},
+        iou_threshold=0.25,
+        max_thresholds=3,
+    )
+
+    assert froc["available_thresholds"] == 10
+    assert froc["evaluated_thresholds"] == 3
+    assert froc["point_count"] == 4
+    assert froc["points"][1]["score_threshold"] == 20.0
 
 
 def test_generate_comparison_report_adds_bootstrap_confidence_intervals(tmp_path):
