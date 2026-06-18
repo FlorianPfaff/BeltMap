@@ -92,6 +92,8 @@ def read_progress_jsonl(path: Path) -> list[dict[str, Any]]:
 def finite_float(value: Any) -> float | None:
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -121,7 +123,7 @@ def scalar_from_sources(
         value = finite_float(metadata.get(key))
         if value is None:
             continue
-        if float(value).is_integer():
+        if value >= 0 and float(value).is_integer():
             return int(value)
     return fallback
 
@@ -147,7 +149,7 @@ def mean(values: Iterable[float]) -> float | None:
 def fraction(numerator: Any, denominator: Any) -> float | None:
     num = finite_float(numerator)
     den = finite_float(denominator)
-    if num is None or den is None or den <= 0:
+    if num is None or den is None or num < 0 or den <= 0 or num > den:
         return None
     return float(num / den)
 
