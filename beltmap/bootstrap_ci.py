@@ -11,7 +11,6 @@ from .benchmark import (
     detection_precision,
     detection_recall,
     f1_score,
-    finite_float,
     group_detection_boxes,
     group_truth_boxes,
     predicted_center,
@@ -80,6 +79,70 @@ def empty_bootstrap_metrics() -> dict[str, Any]:
     return {field: None for field in BOOTSTRAP_SUMMARY_FIELDS}
 
 
+def finite_float(value: Any) -> float | None:
+    """Parse a finite float without treating booleans as numeric samples."""
+
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def finite_int(value: Any) -> int | None:
+    """Parse an integer without treating booleans as frame ids or counts."""
+
+    parsed = finite_float(value)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
+def row_frame_index(row: Mapping[str, Any]) -> int | None:
+    """Infer frame index using strict numeric parsing for explicit fields."""
+
+    image = row.get("image")
+    if image is not None and str(image).strip():
+        frame_index = source_frame_index({"image": image})
+        if frame_index is not None:
+            return frame_index
+    return finite_int(row.get("frame_index"))
+
+
+def validated_nonnegative_int(value: Any, name: str) -> int:
+    parsed = finite_int(value)
+    if parsed is None or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return parsed
+
+
+def validated_positive_int(value: Any, name: str) -> int:
+    parsed = validated_nonnegative_int(value, name)
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def validated_open_unit_interval(value: Any, name: str) -> float:
+    parsed = finite_float(value)
+    if parsed is None or not 0.0 < parsed < 1.0:
+        raise ValueError(f"{name} must be a finite number between 0 and 1")
+    return parsed
+
+
+def validated_unit_interval(value: Any, name: str) -> float:
+    parsed = finite_float(value)
+    if parsed is None or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be a finite number in [0, 1]")
+    return parsed
+
+
 def finite_values(rows: Iterable[Mapping[str, Any]], field: str) -> list[float]:
     """Collect finite float values from a sequence of CSV-like rows."""
 
@@ -99,6 +162,8 @@ def resample_indices(
 ) -> np.ndarray:
     """Return bootstrap indices, optionally using circular contiguous blocks."""
 
+    n_units = validated_nonnegative_int(n_units, "n_units")
+    block_length = validated_positive_int(block_length, "block_length")
     if n_units <= 0:
         return np.asarray([], dtype=np.int64)
     if block_length <= 1:
@@ -118,8 +183,16 @@ def ci_summary(
 ) -> tuple[float | None, float | None, float | None]:
     """Return bootstrap median and equal-tailed confidence interval bounds."""
 
+    confidence_level = validated_open_unit_interval(
+        confidence_level,
+        "confidence_level",
+    )
     arr = np.asarray(
-        [float(value) for value in values if value is not None and math.isfinite(float(value))],
+        [
+            parsed
+            for value in values
+            if (parsed := finite_float(value)) is not None
+        ],
         dtype=np.float64,
     )
     if arr.size == 0:
@@ -159,6 +232,12 @@ def bootstrap_numeric_metrics(
     """Bootstrap scalar metrics computed from a one-dimensional numeric sample."""
 
     result: dict[str, Any] = {}
+    samples = validated_nonnegative_int(samples, "samples")
+    confidence_level = validated_open_unit_interval(
+        confidence_level,
+        "confidence_level",
+    )
+    block_length = validated_positive_int(block_length, "block_length")
     arr = np.asarray(values, dtype=np.float64)
     arr = arr[np.isfinite(arr)]
     estimates: dict[str, list[float | None]] = {name: [] for name in metrics}
@@ -210,7 +289,7 @@ def labeled_frame_outcomes(
 
     truth_by_frame = group_truth_boxes(dict(truth))
     pred_by_frame = group_detection_boxes(
-        [dict(row) for row in detection_rows if source_frame_index(dict(row)) in scored_frames]
+        [dict(row) for row in detection_rows if row_frame_index(row) in scored_frames]
     )
     frame_indices = sorted(scored_frames)
     outcomes: list[LabeledFrameOutcome] = []
@@ -293,6 +372,15 @@ def bootstrap_labeled_metrics(
 ) -> dict[str, Any]:
     """Bootstrap labeled detection metrics over scored frames."""
 
+    samples = validated_nonnegative_int(samples, "samples")
+    confidence_level = validated_open_unit_interval(
+        confidence_level,
+        "confidence_level",
+    )
+    block_length_frames = validated_positive_int(
+        block_length_frames,
+        "block_length_frames",
+    )
     metric_names = (
         "labeled_precision",
         "labeled_recall",
@@ -341,12 +429,21 @@ def bootstrap_run_summary(
 ) -> dict[str, Any]:
     """Return bootstrap median/CI fields for one comparison row."""
 
-    if samples < 0:
-        raise ValueError("bootstrap samples must be non-negative")
-    if not 0.0 < confidence_level < 1.0:
-        raise ValueError("bootstrap confidence level must be between 0 and 1")
-    if block_length_frames < 1:
-        raise ValueError("bootstrap block length must be at least 1 frame")
+    samples = validated_nonnegative_int(samples, "bootstrap samples")
+    confidence_level = validated_open_unit_interval(
+        confidence_level,
+        "bootstrap confidence level",
+    )
+    block_length_frames = validated_positive_int(
+        block_length_frames,
+        "bootstrap block length",
+    )
+    if seed is not None:
+        seed = validated_nonnegative_int(seed, "bootstrap seed")
+    truth_iou_threshold = validated_unit_interval(
+        truth_iou_threshold,
+        "truth_iou_threshold",
+    )
 
     result = empty_bootstrap_metrics()
     if samples == 0:
