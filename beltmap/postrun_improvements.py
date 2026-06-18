@@ -170,19 +170,22 @@ def finite_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
-def finite_float_or(value: Any, default: float) -> float:
-    parsed = finite_float(value)
-    return default if parsed is None else parsed
-
-
 def finite_int(value: Any) -> int | None:
     parsed = finite_float(value)
-    return None if parsed is None else int(parsed)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
-def finite_int_or(value: Any, default: int) -> int:
-    parsed = finite_int(value)
-    return default if parsed is None else parsed
+def metadata_count_or_rows(
+    metadata: Mapping[str, Any],
+    key: str,
+    rows: Sequence[Any],
+) -> int:
+    """Return a metadata count when present, preserving valid zero values."""
+
+    value = finite_int(metadata.get(key))
+    return value if value is not None else len(rows)
 
 
 def load_metadata(output_dir: Path) -> dict[str, Any]:
@@ -500,8 +503,8 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
         value for value in (finite_float(row.get("correction_px")) for row in phase_rows(output_dir))
         if value is not None
     ], dtype=np.float64)
-    search_radius = finite_float_or(metadata.get("registration_search_radius_px"), 8.0)
-    search_step = finite_float_or(metadata.get("registration_search_step_px"), 1.0)
+    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
+    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
         boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
@@ -535,8 +538,8 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
         if in_range < 0.5:
             flags.append(QualityFlag("warning", "implausible_velocity_ratios", "many velocity ratios are outside [0, 1.1]", in_range, 0.5))
 
-    recurrent_rejected = finite_int_or(metadata.get("n_recurrent_artifact_rejected"), 0)
-    n_detections = finite_int_or(metadata.get("n_detections"), len(detections))
+    recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
+    n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
     denom = recurrent_rejected + n_detections
     if denom > 0:
         rejected_share = recurrent_rejected / denom
@@ -982,8 +985,8 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
         value for value in (finite_float(row.get("correction_px")) for row in phase_rows(output_dir))
         if value is not None
     ], dtype=np.float64)
-    search_radius = finite_float_or(metadata.get("registration_search_radius_px"), 8.0)
-    search_step = finite_float_or(metadata.get("registration_search_step_px"), 1.0)
+    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
+    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     boundary_share = None if corrections.size == 0 else float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
     threshold = finite_float(contract.get("max_registration_boundary_share"))
@@ -1006,8 +1009,8 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
     if threshold is not None:
         results.append(ContractResult("velocity_ratio_in_range_share", in_range_share is None or in_range_share >= threshold, in_range_share, threshold, ">=", f"share of velocity ratios in [{lower}, {upper}]"))
 
-    recurrent_rejected = finite_int_or(metadata.get("n_recurrent_artifact_rejected"), 0)
-    n_detections = finite_int_or(metadata.get("n_detections"), len(detections))
+    recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
+    n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
     rejection_share = None if recurrent_rejected + n_detections == 0 else recurrent_rejected / (recurrent_rejected + n_detections)
     threshold = finite_float(contract.get("max_recurrent_rejection_share"))
     if threshold is not None:

@@ -13,7 +13,9 @@ from beltmap.benchmark import (
     event_metrics,
     finite_int,
     generate_benchmark_report,
+    source_frame_index,
     track_metrics,
+    velocity_metrics,
 )
 
 
@@ -215,6 +217,20 @@ def test_finite_int_accepts_float_like_integer_strings():
     assert finite_int("7.5") is None
 
 
+def test_source_frame_index_ignores_crop_coordinate_suffixes():
+    assert source_frame_index({"image": "frame_000123_crop_0_220_1330_1800.png"}) == 123
+    assert source_frame_index({"image": "sample_0042.png"}) == 42
+    assert (
+        source_frame_index(
+            {
+                "image": "sample_0042_crop_0_220.png",
+                "frame_index": "7",
+            }
+        )
+        == 7
+    )
+
+
 def test_detection_metrics_no_matches_report_zero_f1():
     truth = {
         "particles": [
@@ -244,6 +260,89 @@ def test_detection_metrics_no_matches_report_zero_f1():
     assert metrics["precision"] == 0.0
     assert metrics["recall"] == 0.0
     assert metrics["f1"] == 0.0
+
+
+def test_detection_metrics_scores_clean_reviewed_empty_frames():
+    metrics = detection_metrics(
+        [],
+        {"particles": []},
+        scored_frames={42},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["available"] is True
+    assert metrics["truth_boxes"] == 0
+    assert metrics["predicted_boxes"] == 0
+    assert metrics["precision"] == pytest.approx(1.0)
+    assert metrics["recall"] == pytest.approx(1.0)
+    assert metrics["f1"] == pytest.approx(1.0)
+
+
+def test_detection_metrics_restricts_counts_to_scored_frames():
+    truth = {
+        "particles": [
+            {"frame_index": 0, "top": 0, "left": 0, "bottom": 10, "right": 10},
+            {"frame_index": 99, "top": 0, "left": 0, "bottom": 10, "right": 10},
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "0",
+            "bbox_left": "0",
+            "bbox_bottom": "10",
+            "bbox_right": "10",
+            "y": "5",
+            "x": "5",
+        },
+        {
+            "frame_index": "99",
+            "bbox_top": "20",
+            "bbox_left": "20",
+            "bbox_bottom": "30",
+            "bbox_right": "30",
+            "y": "25",
+            "x": "25",
+        },
+    ]
+
+    metrics = detection_metrics(
+        detections,
+        truth,
+        scored_frames={0},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["truth_boxes"] == 1
+    assert metrics["predicted_boxes"] == 1
+    assert metrics["false_positives"] == 0
+    assert metrics["false_negatives"] == 0
+    assert metrics["recall"] == pytest.approx(1.0)
+
+
+def test_detection_metrics_ignores_degenerate_detection_boxes():
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "10",
+            "bbox_left": "0",
+            "bbox_bottom": "10",
+            "bbox_right": "10",
+            "y": "10",
+            "x": "5",
+        }
+    ]
+
+    metrics = detection_metrics(
+        detections,
+        {"particles": []},
+        scored_frames={0},
+        iou_threshold=0.5,
+    )
+
+    assert metrics["predicted_boxes"] == 0
+    assert metrics["false_positives"] == 0
+    assert metrics["precision"] == pytest.approx(1.0)
 
 
 def test_detection_metrics_accept_frame_box_truth_layout():
@@ -385,6 +484,36 @@ def test_compute_benchmark_metrics_falls_back_to_detection_events_without_tracks
     assert metrics["events"]["f1"] == pytest.approx(1.0)
 
 
+def test_compute_benchmark_metrics_keeps_empty_track_events_authoritative(tmp_path):
+    output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
+    write_csv(
+        output_dir / "tracks.csv",
+        [],
+        [
+            "track_id",
+            "track_detection_index",
+            "frame_index",
+            "image",
+            "bbox_top",
+            "bbox_left",
+            "bbox_bottom",
+            "bbox_right",
+            "y",
+            "x",
+        ],
+    )
+
+    metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
+
+    assert metrics["detections"]["f1"] == pytest.approx(1.0)
+    assert metrics["events"]["prediction_source"] == "tracks.csv"
+    assert metrics["events"]["prediction_rows"] == 0
+    assert metrics["events"]["predicted_events"] == 0
+    assert metrics["events"]["matched_events"] == 0
+    assert metrics["events"]["recall"] == pytest.approx(0.0)
+    assert metrics["events"]["f1"] is None
+
+
 def test_compute_benchmark_metrics_reports_filtered_track_events(tmp_path):
     output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
     with (output_dir / "tracks.csv").open(newline="", encoding="utf-8") as handle:
@@ -519,6 +648,36 @@ def test_compute_benchmark_metrics_reports_truth_matched_velocity(tmp_path):
     assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(0.005)
     assert metrics["filtered_velocity"]["representative_track_id"] == 10
     assert metrics["filtered_velocity"]["truth_matched_track_id"] == 11
+
+
+def test_velocity_metrics_ignores_rows_without_velocity_estimates():
+    rows = [
+        {"track_id": 10, "n_detections": 100, "velocity_y_px_per_frame": "", "velocity_ratio_y": ""},
+        {"track_id": 11, "n_detections": 2, "velocity_y_px_per_frame": 1.01, "velocity_ratio_y": 0.505},
+    ]
+    truth = {
+        "true_particle_velocity_y_px_per_frame": 1.0,
+        "true_belt_velocity_y_px_per_frame": 2.0,
+    }
+
+    metrics = velocity_metrics(rows, truth)
+
+    assert metrics["available"] is True
+    assert metrics["velocity_rows"] == 2
+    assert metrics["velocity_y_rows_with_estimate"] == 1
+    assert metrics["representative_track_id"] == 11
+    assert metrics["velocity_y_error_px_per_frame"] == pytest.approx(0.01)
+
+
+def test_velocity_metrics_counts_rows_without_velocity_estimates():
+    metrics = velocity_metrics(
+        [{"track_id": 10, "n_detections": 5, "velocity_y_px_per_frame": "", "velocity_ratio_y": ""}],
+        {"true_particle_velocity_y_px_per_frame": 1.0},
+    )
+
+    assert metrics["available"] is False
+    assert metrics["velocity_rows"] == 1
+    assert metrics["velocity_y_rows_with_estimate"] == 0
 
 
 def test_event_metrics_distinguishes_frame_coverage_from_event_recall():

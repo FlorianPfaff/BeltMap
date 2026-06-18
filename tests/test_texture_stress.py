@@ -220,7 +220,14 @@ def test_texture_stress_report_can_score_sparse_labels_by_subset(tmp_path):
     report = artifacts.report.read_text(encoding="utf-8")
     assert "## Labeled metrics by stress subset" in report
     rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    q1_raw = next(row for row in rows if row["run"] == "raw" and row["subset"] == "Q1")
     q4_raw = next(row for row in rows if row["run"] == "raw" and row["subset"] == "Q4")
+    assert q1_raw["labeled_detection_available"] == "True"
+    assert q1_raw["labeled_scored_frames"] == "1"
+    assert q1_raw["labeled_truth_boxes"] == "0"
+    assert q1_raw["labeled_precision"] == "1.0"
+    assert q1_raw["labeled_recall"] == "1.0"
+    assert q1_raw["labeled_f1"] == "1.0"
     assert q4_raw["labeled_detection_available"] == "True"
     assert q4_raw["labeled_scored_frames"] == "1"
 

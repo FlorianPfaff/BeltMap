@@ -124,9 +124,7 @@ def score_map_risk_detections(
         reject_max_low_support_fraction,
     )
     _validate_risk_map_shapes(maps)
-    height, width = frame_shape
-    if height <= 0 or width <= 0:
-        raise ValueError("frame_shape must contain positive height and width")
+    height, width = _validate_frame_shape(frame_shape)
     if maps.support.shape[1] != width:
         raise ValueError(
             "belt-map support width must match detection frame width: "
@@ -234,6 +232,21 @@ def _validate_risk_map_shapes(maps: BeltMapRiskMaps) -> None:
         arr = getattr(maps, name)
         if arr.shape != shape:
             raise ValueError(f"{name} shape must match support shape: {arr.shape} != {shape}")
+
+
+def _validate_frame_shape(frame_shape: tuple[int, int]) -> tuple[int, int]:
+    if len(frame_shape) != 2:
+        raise ValueError("frame_shape must contain height and width")
+    height = _positive_integer_dimension(frame_shape[0], "frame_shape height")
+    width = _positive_integer_dimension(frame_shape[1], "frame_shape width")
+    return height, width
+
+
+def _positive_integer_dimension(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a positive finite integer")
+    return int(parsed)
 
 
 def _validate_probability_threshold(name: str, value: float) -> None:

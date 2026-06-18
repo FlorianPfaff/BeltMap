@@ -139,16 +139,20 @@ def estimate_local_noise(
     """Estimate robust local noise scale for a residual image."""
 
     cfg = config or ResidualConfig()
-    if cfg.noise_radius_px < 0:
-        raise ValueError("noise_radius_px must be non-negative")
-    if cfg.min_noise <= 0:
-        raise ValueError("min_noise must be positive")
-    if cfg.clip_sigma is not None and cfg.clip_sigma <= 0:
-        raise ValueError("clip_sigma must be positive when set")
-    if cfg.noise_exclusion_sigma is not None and cfg.noise_exclusion_sigma <= 0:
-        raise ValueError("noise_exclusion_sigma must be positive when set")
-    if cfg.noise_exclusion_radius_px < 0:
-        raise ValueError("noise_exclusion_radius_px must be non-negative")
+    noise_radius_px = _nonnegative_integer_config_value(
+        cfg.noise_radius_px,
+        "noise_radius_px",
+    )
+    min_noise = _positive_config_value(cfg.min_noise, "min_noise")
+    clip_sigma = _optional_positive_config_value(cfg.clip_sigma, "clip_sigma")
+    noise_exclusion_sigma = _optional_positive_config_value(
+        cfg.noise_exclusion_sigma,
+        "noise_exclusion_sigma",
+    )
+    noise_exclusion_radius_px = _nonnegative_integer_config_value(
+        cfg.noise_exclusion_radius_px,
+        "noise_exclusion_radius_px",
+    )
     noise_exclusion_mode = _validate_noise_exclusion_mode(cfg.noise_exclusion_mode)
 
     values = _as_float_image(residual, name="residual")
@@ -163,14 +167,15 @@ def estimate_local_noise(
 
     sample = values[valid]
     center = float(np.median(sample))
-    global_sigma = _robust_sigma(sample, center=center, min_noise=cfg.min_noise)
+    global_sigma = _robust_sigma(sample, center=center, min_noise=min_noise)
     noise_valid = valid.copy()
     particle_noise_mask = _particle_noise_exclusion_mask(
         values,
         valid=valid,
         center=center,
         global_sigma=global_sigma,
-        config=cfg,
+        noise_exclusion_sigma=noise_exclusion_sigma,
+        noise_exclusion_radius_px=noise_exclusion_radius_px,
         mode=noise_exclusion_mode,
     )
     if particle_noise_mask.any():
@@ -179,24 +184,24 @@ def estimate_local_noise(
             noise_valid = valid.copy()
     centered = np.zeros(values.shape, dtype=np.float64)
     centered[valid] = values[valid] - center
-    if cfg.clip_sigma is not None:
+    if clip_sigma is not None:
         centered = np.clip(
             centered,
-            -cfg.clip_sigma * global_sigma,
-            cfg.clip_sigma * global_sigma,
+            -clip_sigma * global_sigma,
+            clip_sigma * global_sigma,
         )
 
     local_var = _masked_box_mean(
         np.square(centered),
         noise_valid,
-        radius=cfg.noise_radius_px,
+        radius=noise_radius_px,
     )
     local_var = np.where(
         np.isfinite(local_var),
         local_var,
         global_sigma * global_sigma,
     )
-    local_noise = np.sqrt(np.maximum(local_var, cfg.min_noise * cfg.min_noise))
+    local_noise = np.sqrt(np.maximum(local_var, min_noise * min_noise))
     local_noise[~valid] = cfg.fill_value
     return local_noise
 
@@ -227,18 +232,39 @@ def _validate_noise_exclusion_mode(mode: str) -> str:
     )
 
 
+def _positive_config_value(value: float, name: str) -> float:
+    parsed = float(value)
+    if not np.isfinite(parsed) or parsed <= 0:
+        raise ValueError(f"{name} must be finite and positive")
+    return parsed
+
+
+def _optional_positive_config_value(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _positive_config_value(value, name)
+
+
+def _nonnegative_integer_config_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or parsed < 0 or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
+
+
 def _particle_noise_exclusion_mask(
     values: FloatArray,
     *,
     valid: NDArray[np.bool_],
     center: float,
     global_sigma: float,
-    config: ResidualConfig,
+    noise_exclusion_sigma: float | None,
+    noise_exclusion_radius_px: int,
     mode: str,
 ) -> NDArray[np.bool_]:
-    if config.noise_exclusion_sigma is None:
+    if noise_exclusion_sigma is None:
         return np.zeros(values.shape, dtype=bool)
-    threshold = config.noise_exclusion_sigma * global_sigma
+    threshold = noise_exclusion_sigma * global_sigma
     centered = values - center
     if mode == "positive":
         particle_like = valid & (centered > threshold)
@@ -248,9 +274,9 @@ def _particle_noise_exclusion_mask(
         particle_like = valid & (np.abs(centered) > threshold)
     if not particle_like.any():
         return particle_like
-    if config.noise_exclusion_radius_px > 0:
+    if noise_exclusion_radius_px > 0:
         particle_like = (
-            _dilate_mask(particle_like, radius=config.noise_exclusion_radius_px)
+            _dilate_mask(particle_like, radius=noise_exclusion_radius_px)
             & valid
         )
     return particle_like

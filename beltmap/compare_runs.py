@@ -124,36 +124,14 @@ REQUIRED_CSV_COLUMNS = {
 
 TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
 TRUTH_FRAME_KEYS = ("frame", "image_index")
-TRUTH_FRAME_SET_KEYS = ("scored_frames", "frames", "labeled_frames")
-TRUTH_EMPTY_FRAME_SET_KEYS = (
+TRUTH_FRAME_SET_KEYS = (
+    "scored_frames",
+    "frames",
+    "labeled_frames",
     "empty_frames",
-    "reviewed_empty_frames",
-    "no_particle_frames",
+    "frame_reviews",
 )
-TRUTH_FRAME_REVIEW_KEYS = ("frame_reviews", "review_frames", "reviews")
-UNREVIEWED_TRUTH_STATUSES = {
-    "draft_review_output_not_ground_truth",
-    "needs_review",
-    "template_not_ground_truth",
-    "template_not_ground_truth_do_not_use_for_metrics_until_filled",
-    "needs_manual_review",
-}
-REVIEWED_TRUTH_STATUS = "reviewed_ground_truth"
-EMPTY_REVIEW_STATUSES = {
-    "empty",
-    "no_particle",
-    "no_particles",
-    "reviewed_empty",
-    "reviewed_no_particle",
-    "reviewed_no_particles",
-}
-UNREVIEWED_FRAME_REVIEW_STATUSES = {
-    "",
-    "needs_review",
-    "not_reviewed",
-    "pending",
-    "todo",
-}
+TRUTH_FRAME_BOX_CONTAINER_KEYS = ("boxes", *TRUTH_CONTAINER_KEYS)
 TRUTH_BOX_FIELD_SETS = (
     ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right"),
     ("top", "left", "bottom", "right"),
@@ -161,6 +139,7 @@ TRUTH_BOX_FIELD_SETS = (
     ("y1", "x1", "y2", "x2"),
 )
 TRUTH_EVENT_ID_KEYS = ("event_id", "particle_id", "track_id", "id")
+REVIEWED_GROUND_TRUTH_STATUS = "reviewed_ground_truth"
 
 LABELED_METRIC_FIELDS = (
     "precision",
@@ -289,7 +268,9 @@ def finite_int(value: Any) -> int | None:
     """Parse an integer value through finite-float handling."""
 
     parsed = finite_float(value)
-    return None if parsed is None else int(parsed)
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def nonempty_value(row: dict[str, Any], key: str) -> Any | None:
@@ -424,10 +405,79 @@ def parse_frame_set(value: Any) -> set[int]:
         values = [value]
     frames: set[int] = set()
     for item in values:
-        frame_index = finite_int(item)
+        frame_index = row_frame_index(item) if isinstance(item, dict) else finite_int(item)
         if frame_index is not None:
             frames.add(frame_index)
     return frames
+
+
+def boolean_review_flag(value: Any) -> bool:
+    """Parse common JSON review flags without treating ``"false"`` as true."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "n"}:
+            return False
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+    return bool(value)
+
+
+def validate_reviewed_truth_status(data: dict[str, Any]) -> None:
+    """Reject label scaffolds that still declare pending manual review."""
+
+    status = data.get("status")
+    requires_manual_review = data.get("requires_manual_review")
+    if status is None and requires_manual_review is None:
+        return
+    if status != REVIEWED_GROUND_TRUTH_STATUS or boolean_review_flag(
+        requires_manual_review
+    ):
+        raise ValueError(
+            "truth JSON is not reviewed ground truth; set status="
+            f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
+            "only after all scored frames have been reviewed"
+        )
+
+
+def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
+    """Flatten ``frames[].boxes[]`` style JSON labels into per-box rows."""
+
+    rows: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            raise ValueError("truth frame entries must be objects")
+        frame_index = row_frame_index(frame)
+        if frame_index is None:
+            raise ValueError(
+                "truth frame entries must contain a finite integer frame_index"
+            )
+        for key in TRUTH_FRAME_BOX_CONTAINER_KEYS:
+            boxes = frame.get(key)
+            if not isinstance(boxes, list):
+                continue
+            for box in boxes:
+                if not isinstance(box, dict):
+                    continue
+                row = dict(box)
+                if frame_index is not None and row_frame_index(row) is None:
+                    row["frame_index"] = frame_index
+                rows.append(row)
+            break
+    return rows
+
+
+def has_frame_box_containers(frames: list[Any]) -> bool:
+    """Return true when a ``frames`` list uses nested per-frame box containers."""
+
+    return any(
+        isinstance(frame, dict)
+        and any(
+            isinstance(frame.get(key), list)
+            for key in TRUTH_FRAME_BOX_CONTAINER_KEYS
+        )
+        for frame in frames
+    )
 
 
 def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
@@ -442,118 +492,15 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
     for key in TRUTH_FRAME_SET_KEYS:
         scored_frames.update(parse_frame_set(data.get(key)))
 
+    frame_rows = data.get("frames")
+    if isinstance(frame_rows, list) and has_frame_box_containers(frame_rows):
+        return label_rows_from_frame_objects(frame_rows), scored_frames
+
     for key in TRUTH_CONTAINER_KEYS:
         rows = data.get(key)
         if isinstance(rows, list):
             return [row for row in rows if isinstance(row, dict)], scored_frames
     return [data], scored_frames
-
-
-def truth_review_rows_from_json(data: Any) -> list[dict[str, Any]]:
-    """Extract optional frame-review rows from JSON label metadata."""
-
-    if not isinstance(data, dict):
-        return []
-    for key in TRUTH_FRAME_REVIEW_KEYS:
-        rows = data.get(key)
-        if isinstance(rows, list):
-            return [row for row in rows if isinstance(row, dict)]
-    return []
-
-
-def truth_explicit_empty_frame_indices(data: Any) -> set[int]:
-    """Return frames explicitly reviewed as containing no particles."""
-
-    if not isinstance(data, dict):
-        return set()
-    frames: set[int] = set()
-    for key in TRUTH_EMPTY_FRAME_SET_KEYS:
-        frames.update(parse_frame_set(data.get(key)))
-    for row in truth_review_rows_from_json(data):
-        frame_index = row_frame_index(row)
-        if frame_index is None:
-            continue
-        status = str(row.get("review_status", "")).strip().lower()
-        confirmed_empty = str(row.get("confirmed_empty", "")).strip().lower()
-        if status in EMPTY_REVIEW_STATUSES or confirmed_empty in {"1", "true", "yes"}:
-            frames.add(frame_index)
-    return frames
-
-
-def reject_unreviewed_truth_template(data: Any, path: Path) -> None:
-    """Reject JSON label templates that are explicitly not reviewed truth."""
-
-    if not isinstance(data, dict):
-        return
-    status = str(data.get("status", "")).strip().lower()
-    requires_review = bool(data.get("requires_manual_review"))
-    if requires_review or status in UNREVIEWED_TRUTH_STATUSES:
-        raise ValueError(
-            f"{path} is marked as an unreviewed label template; fill all scored "
-            "particle boxes, confirm any empty frames, and set status to "
-            "'reviewed_ground_truth' before using it as --truth-path"
-        )
-
-
-def validate_reviewed_truth_completeness(
-    data: Any,
-    rows: list[dict[str, Any]],
-    path: Path,
-) -> None:
-    """Ensure reviewed JSON truth explicitly accounts for each scored frame."""
-
-    if not isinstance(data, dict):
-        return
-    status = str(data.get("status", "")).strip().lower()
-    if status != REVIEWED_TRUTH_STATUS:
-        return
-    scored_frames = set()
-    for key in TRUTH_FRAME_SET_KEYS:
-        scored_frames.update(parse_frame_set(data.get(key)))
-    if not scored_frames:
-        raise ValueError(
-            f"{path} is marked as reviewed_ground_truth but has no scored_frames"
-        )
-
-    particle_frames = {
-        particle["frame_index"]
-        for row in rows
-        if (particle := truth_particle_from_label_row(row)) is not None
-    }
-    empty_frames = truth_explicit_empty_frame_indices(data)
-    unreviewed_frames: set[int] = set()
-    for row in truth_review_rows_from_json(data):
-        frame_index = row_frame_index(row)
-        if frame_index is None or frame_index not in scored_frames:
-            continue
-        status = str(row.get("review_status", "")).strip().lower()
-        if status in UNREVIEWED_FRAME_REVIEW_STATUSES:
-            unreviewed_frames.add(frame_index)
-    if unreviewed_frames:
-        preview = ", ".join(str(frame) for frame in sorted(unreviewed_frames)[:10])
-        raise ValueError(
-            f"{path} is reviewed_ground_truth but frame review row(s) are "
-            f"still marked needs_review: {preview}"
-        )
-    unknown_empty_frames = empty_frames - scored_frames
-    if unknown_empty_frames:
-        preview = ", ".join(str(frame) for frame in sorted(unknown_empty_frames)[:10])
-        raise ValueError(
-            f"{path} marks frame(s) as empty outside scored_frames: {preview}"
-        )
-    empty_particle_overlap = empty_frames & particle_frames
-    if empty_particle_overlap:
-        preview = ", ".join(str(frame) for frame in sorted(empty_particle_overlap)[:10])
-        raise ValueError(
-            f"{path} marks frame(s) as both empty and containing particles: {preview}"
-        )
-    missing_frames = scored_frames - particle_frames - empty_frames
-    if missing_frames:
-        preview = ", ".join(str(frame) for frame in sorted(missing_frames)[:10])
-        raise ValueError(
-            f"{path} is reviewed_ground_truth but frame(s) lack particle boxes "
-            f"or explicit empty confirmation: {preview}"
-        )
 
 
 def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -588,6 +535,16 @@ def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def label_row_has_nonempty_box_field(row: dict[str, Any]) -> bool:
+    """Return true when a label row appears to contain a non-empty box."""
+
+    return any(
+        nonempty_value(row, field) is not None
+        for field_set in TRUTH_BOX_FIELD_SETS
+        for field in field_set
+    )
+
+
 def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
     """Load manually labeled detection boxes from CSV or JSON.
 
@@ -606,9 +563,9 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
         scored_frames: set[int] = set()
     elif suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
-        reject_unreviewed_truth_template(data, path)
+        if isinstance(data, dict):
+            validate_reviewed_truth_status(data)
         rows, scored_frames = label_rows_from_json(data)
-        validate_reviewed_truth_completeness(data, rows, path)
     else:
         raise ValueError("truth labels must be a CSV or JSON file")
 
@@ -620,6 +577,11 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
             scored_frames.add(frame_index)
         particle = truth_particle_from_label_row(row)
         if particle is None:
+            if label_row_has_nonempty_box_field(row):
+                raise ValueError(
+                    "truth label boxes must contain finite positive "
+                    "top/left/bottom/right coordinates"
+                )
             skipped_rows += 1
             continue
         particles.append(particle)
@@ -696,6 +658,26 @@ def detection_score_field(
         if any(finite_float(row.get(field)) is not None for row in buffered_rows):
             return field
     return None
+
+
+def incomplete_score_row_count(
+    rows: Iterable[dict[str, Any]],
+    *,
+    score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
+) -> int:
+    """Return the fewest missing-score rows among candidate score fields."""
+
+    buffered_rows = list(rows)
+    if not buffered_rows:
+        return 0
+    missing_counts: list[int] = []
+    for field in score_fields:
+        finite_count = sum(
+            1 for row in buffered_rows if finite_float(row.get(field)) is not None
+        )
+        if finite_count:
+            missing_counts.append(len(buffered_rows) - finite_count)
+    return min(missing_counts) if missing_counts else len(buffered_rows)
 
 
 def froc_frame_denominator(
@@ -866,7 +848,12 @@ def detection_froc_curve(
         }
 
     score_field = detection_score_field(detection_rows, score_fields=score_fields)
-    empty_metrics = detection_metrics([], truth, iou_threshold=iou_threshold)
+    empty_metrics = detection_metrics(
+        [],
+        truth,
+        iou_threshold=iou_threshold,
+        scored_frames=scored_frames,
+    )
     truth_boxes = int(empty_metrics.get("truth_boxes") or 0)
     points = [
         froc_point_from_metrics(
@@ -902,7 +889,12 @@ def detection_froc_curve(
                 and score >= threshold
             ]
             kept_rows = [*unscored_rows, *scored_kept_rows]
-            metrics = detection_metrics(kept_rows, truth, iou_threshold=iou_threshold)
+            metrics = detection_metrics(
+                kept_rows,
+                truth,
+                iou_threshold=iou_threshold,
+                scored_frames=scored_frames,
+            )
             points.append(
                 froc_point_from_metrics(
                     metrics,
@@ -911,7 +903,12 @@ def detection_froc_curve(
                 )
             )
     elif detection_rows:
-        metrics = detection_metrics(detection_rows, truth, iou_threshold=iou_threshold)
+        metrics = detection_metrics(
+            detection_rows,
+            truth,
+            iou_threshold=iou_threshold,
+            scored_frames=scored_frames,
+        )
         points.append(
             froc_point_from_metrics(
                 metrics,
@@ -930,6 +927,8 @@ def detection_froc_curve(
         reason = "no truth boxes on scored frames"
     elif score_field is None and detection_rows:
         reason = "no finite per-detection score field available for threshold sweep"
+    if not available:
+        recall_limits = {limit: None for limit in FROC_FP_PER_FRAME_LIMITS}
 
     return {
         "available": available,
@@ -944,9 +943,13 @@ def detection_froc_curve(
         "max_thresholds": max_thresholds,
         "points": points,
         "point_count": len(points),
-        "auc_fp_per_frame_le_1": froc_auc_up_to_fp_per_frame(
-            points,
-            max_fp_per_frame=FROC_AUC_FP_PER_FRAME_LIMIT,
+        "auc_fp_per_frame_le_1": (
+            froc_auc_up_to_fp_per_frame(
+                points,
+                max_fp_per_frame=FROC_AUC_FP_PER_FRAME_LIMIT,
+            )
+            if available
+            else None
         ),
         "recall_at_0_1_fp_per_frame": recall_limits[0.1],
         "recall_at_0_5_fp_per_frame": recall_limits[0.5],
@@ -1002,7 +1005,22 @@ def metadata_or_count(data: RunData, key: str, rows: list[Any]) -> int | None:
     """Use metadata count when present, otherwise fall back to loaded rows."""
 
     value = finite_float(data.metadata.get(key))
-    return int(value) if value is not None else len(rows)
+    if value is None:
+        return len(rows)
+    if value < 0 or not value.is_integer():
+        raise ValueError(f"metadata {key!r} must be a non-negative integer-like value")
+    return int(value)
+
+
+def metadata_count_or_none(data: RunData, key: str) -> int | None:
+    """Return a validated metadata count, or ``None`` when it is absent."""
+
+    if key not in data.metadata:
+        return None
+    value = finite_float(data.metadata.get(key))
+    if value is None or value < 0 or not value.is_integer():
+        raise ValueError(f"metadata {key!r} must be a non-negative integer-like value")
+    return int(value)
 
 
 def empty_labeled_metrics() -> dict[str, Any]:
@@ -1088,10 +1106,10 @@ def summarize_run(
         "label": data.spec.label,
         "output_dir": str(data.spec.output_dir),
         "complete": (data.spec.output_dir / "metadata.json").is_file(),
-        "n_images": data.metadata.get("n_images") or len(data.detections_per_frame) or None,
+        "n_images": metadata_or_count(data, "n_images", data.detections_per_frame),
         "detection_threshold": detection_threshold,
         "n_detections": metadata_or_count(data, "n_detections", data.detections),
-        "n_tracks": data.metadata.get("n_tracks"),
+        "n_tracks": metadata_count_or_none(data, "n_tracks"),
         "n_velocity_estimates": metadata_or_count(data, "n_velocity_estimates", data.velocities),
         "n_filtered_velocity_estimates": metadata_or_count(
             data,
@@ -1138,6 +1156,7 @@ def summarize_run(
             scored_detections,
             labeled_truth,
             iou_threshold=truth_iou_threshold,
+            scored_frames=scored_frames,
         )
         false_positives = finite_int(metrics.get("false_positives")) or 0
         empty_frames = empty_labeled_frame_indices(labeled_truth)
@@ -1172,6 +1191,7 @@ def summarize_run(
             labeled_truth,
             scored_frames=scored_frames,
             iou_threshold=truth_iou_threshold,
+            max_thresholds=froc_max_thresholds,
         )
         row.update(
             {
@@ -1515,18 +1535,49 @@ def write_plots(
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
     froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
-    include_contact_sheets: bool = True,
+    make_metric_plots: bool = True,
+    make_contact_sheets: bool = True,
 ) -> tuple[dict[str, Path], dict[str, Path]]:
     """Write comparison plots and contact sheets."""
 
-    plots = {
-        "detections_per_frame": report_dir / "detections_per_frame_comparison.png",
-        "velocity_ratio_histogram": report_dir / "velocity_ratio_histogram_comparison.png",
-    }
-    if labeled_truth is not None:
-        plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
+    plots: dict[str, Path] = {}
+    if make_metric_plots:
+        plots = {
+            "detections_per_frame": report_dir / "detections_per_frame_comparison.png",
+            "velocity_ratio_histogram": report_dir / "velocity_ratio_histogram_comparison.png",
+        }
+        if labeled_truth is not None:
+            plots["labeled_detection_froc"] = report_dir / "labeled_detection_froc.png"
+        series = []
+        for run in runs:
+            xs, ys = paired_values(
+                run.detections_per_frame,
+                x_field="frame_index",
+                y_field="n_detections",
+            )
+            if not xs:
+                ys = finite_values(run.detections_per_frame, "n_detections")
+                xs = [float(index) for index in range(len(ys))]
+            series.append((run.spec.label, xs, ys))
+        draw_multiline_plot(
+            plots["detections_per_frame"],
+            title="Detections per frame",
+            labeled_series=series,
+            x_label="frame_index",
+            y_label="n_detections",
+        )
+        draw_velocity_ratio_histogram(plots["velocity_ratio_histogram"], runs)
+        if labeled_truth is not None:
+            draw_labeled_froc_plot(
+                plots["labeled_detection_froc"],
+                runs,
+                labeled_truth=labeled_truth,
+                truth_iou_threshold=truth_iou_threshold,
+                froc_max_thresholds=froc_max_thresholds,
+            )
+
     images: dict[str, Path] = {}
-    if include_contact_sheets:
+    if make_contact_sheets:
         images = {
             "detection_contact_sheet": report_dir / "detection_contact_sheet.png",
             "filtered_detection_contact_sheet": report_dir / "filtered_detection_contact_sheet.png",
@@ -1545,33 +1596,6 @@ def write_plots(
                     "raw_filtered_detection_contact_sheet": report_dir / "raw_filtered_detection_contact_sheet.png",
                 }
             )
-    series = []
-    for run in runs:
-        xs, ys = paired_values(
-            run.detections_per_frame,
-            x_field="frame_index",
-            y_field="n_detections",
-        )
-        if not xs:
-            ys = finite_values(run.detections_per_frame, "n_detections")
-            xs = [float(index) for index in range(len(ys))]
-        series.append((run.spec.label, xs, ys))
-    draw_multiline_plot(
-        plots["detections_per_frame"],
-        title="Detections per frame",
-        labeled_series=series,
-        x_label="frame_index",
-        y_label="n_detections",
-    )
-    draw_velocity_ratio_histogram(plots["velocity_ratio_histogram"], runs)
-    if labeled_truth is not None:
-        draw_labeled_froc_plot(
-            plots["labeled_detection_froc"],
-            runs,
-            labeled_truth=labeled_truth,
-            truth_iou_threshold=truth_iou_threshold,
-            froc_max_thresholds=froc_max_thresholds,
-        )
     return plots, images
 
 
@@ -1795,7 +1819,8 @@ def build_markdown_report(
                     "",
                 ]
             )
-        lines.extend(["## Filtered-track visual comparison", ""])
+        if any(key.endswith("filtered_detection_contact_sheet") for key in images):
+            lines.extend(["## Filtered-track visual comparison", ""])
         if "raw_filtered_detection_contact_sheet" in images:
             lines.extend(
                 [
@@ -1817,41 +1842,22 @@ def build_markdown_report(
                     "",
                 ]
             )
-    else:
+    if "detections_per_frame" in plots:
         lines.extend(
             [
                 "",
-                "## Visual comparison",
+                "## Detection counts",
                 "",
-                "Contact-sheet generation was skipped for this report.",
+                f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
                 "",
             ]
         )
-    if plots:
-        if "detections_per_frame" in plots:
-            lines.extend(
-                [
-                    "## Detection counts",
-                    "",
-                    f"![Detections per frame]({markdown_link(plots['detections_per_frame'], relative_to=report_dir)})",
-                    "",
-                ]
-            )
-        if "velocity_ratio_histogram" in plots:
-            lines.extend(
-                [
-                    "## Velocity ratios",
-                    "",
-                    f"![Velocity-ratio histogram]({markdown_link(plots['velocity_ratio_histogram'], relative_to=report_dir)})",
-                    "",
-                ]
-            )
-    else:
+    if "velocity_ratio_histogram" in plots:
         lines.extend(
             [
-                "## Plots",
+                "## Velocity ratios",
                 "",
-                "Plot generation was skipped for this metrics-only report.",
+                f"![Velocity-ratio histogram]({markdown_link(plots['velocity_ratio_histogram'], relative_to=report_dir)})",
                 "",
             ]
         )
@@ -1860,9 +1866,12 @@ def build_markdown_report(
         lines.append(
             "- Prefer higher labeled recall at a fixed false-positive-per-frame budget or higher labeled FROC AUC; empty-frame FP counts are the fastest ghost-artifact warning."
         )
+    if images:
+        lines.append(
+            "- Use the contact sheet to inspect which false positives are belt scratches or map ghosts."
+        )
     lines.extend(
         [
-            "- Use the contact sheet to inspect which false positives are belt scratches or map ghosts.",
             "- Prefer compact filled particles over hollow or fractured particle components when labeled metrics are tied.",
             "- Use velocity-ratio plausibility and long-track counts as secondary checks, not as substitutes for labels.",
             "- Treat total detection count alone as weak evidence because lower thresholds can simply fragment scratches.",
@@ -1884,8 +1893,8 @@ def generate_comparison_report(
     bootstrap_confidence_level: float = 0.95,
     bootstrap_seed: int | None = 0,
     bootstrap_block_length_frames: int = 1,
-    metrics_only: bool = False,
-    skip_contact_sheets: bool = False,
+    make_metric_plots: bool = True,
+    make_contact_sheets: bool = True,
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
@@ -1919,17 +1928,15 @@ def generate_comparison_report(
         )
     summary_csv = report_dir / "summary.csv"
     write_summary_csv(summary_csv, rows)
-    plots: dict[str, Path] = {}
-    images: dict[str, Path] = {}
-    if not metrics_only:
-        plots, images = write_plots(
-            report_dir,
-            runs,
-            labeled_truth=labeled_truth,
-            truth_iou_threshold=truth_iou_threshold,
-            froc_max_thresholds=froc_max_thresholds,
-            include_contact_sheets=not skip_contact_sheets,
-        )
+    plots, images = write_plots(
+        report_dir,
+        runs,
+        labeled_truth=labeled_truth,
+        truth_iou_threshold=truth_iou_threshold,
+        froc_max_thresholds=froc_max_thresholds,
+        make_metric_plots=make_metric_plots,
+        make_contact_sheets=make_contact_sheets,
+    )
     contact_sheet_specs = [
         ("detection_contact_sheet", "residual", False),
         ("filtered_detection_contact_sheet", "residual", True),
@@ -1938,17 +1945,16 @@ def generate_comparison_report(
         ("raw_detection_contact_sheet", "raw", False),
         ("raw_filtered_detection_contact_sheet", "raw", True),
     ]
-    if not metrics_only and not skip_contact_sheets:
-        for key, preview_kind, filtered in contact_sheet_specs:
-            if key not in images:
-                continue
-            draw_detection_contact_sheet(
-                images[key],
-                runs,
-                frames=[] if frames is None else frames,
-                filtered=filtered,
-                preview_kind=preview_kind,
-            )
+    for key, preview_kind, filtered in contact_sheet_specs:
+        if key not in images:
+            continue
+        draw_detection_contact_sheet(
+            images[key],
+            runs,
+            frames=[] if frames is None else frames,
+            filtered=filtered,
+            preview_kind=preview_kind,
+        )
     report = report_dir / "comparison_report.md"
     report.write_text(
         build_markdown_report(

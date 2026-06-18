@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from beltmap import compare_runs
 from beltmap.cli import compare as cli_compare
 from beltmap.compare_runs import (
     RunSpec,
     detection_froc_curve,
+    finite_int,
     generate_comparison_report,
     load_labeled_detection_truth,
     parse_run_spec,
@@ -117,6 +117,12 @@ def test_parse_run_spec_supports_label_and_default_label():
     assert parse_run_spec("outputs/T4p0") == RunSpec("T4p0", Path("outputs/T4p0"))
 
 
+def test_finite_int_rejects_fractional_values():
+    assert finite_int("7") == 7
+    assert finite_int("7.0") == 7
+    assert finite_int("7.5") is None
+
+
 def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_path):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"
@@ -152,6 +158,25 @@ def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_p
     assert rows[0]["small_accepted_tracks_lt_50"] == "1"
     assert rows[0]["near_threshold_peak_share"] == "1.0"
     assert "small accepted tracks" in report
+
+
+def test_generate_comparison_report_preserves_zero_image_metadata(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=2)
+    metadata_path = run_a / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["n_images"] = 0
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+    )
+
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["n_images"] == "0"
 
 
 def test_generate_comparison_report_includes_fixed_and_raw_preview_sheets(tmp_path):
@@ -193,43 +218,17 @@ def test_generate_comparison_report_can_skip_contact_sheets(tmp_path):
         [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
         report_dir=tmp_path / "comparison",
         frames=[0, 2],
-        skip_contact_sheets=True,
+        make_contact_sheets=False,
     )
 
-    assert artifacts.report.is_file()
-    assert artifacts.summary_csv.is_file()
     assert set(artifacts.plots) == {"detections_per_frame", "velocity_ratio_histogram"}
     assert artifacts.images == {}
     for path in artifacts.plots.values():
         assert path.is_file()
-        assert path.stat().st_size > 0
+    assert not list((tmp_path / "comparison").glob("*contact_sheet.png"))
     report = artifacts.report.read_text(encoding="utf-8")
-    assert "Contact-sheet generation was skipped" in report
-    assert "![Detection contact sheet]" not in report
-
-
-def test_generate_comparison_report_metrics_only_skips_plots_and_images(tmp_path):
-    run_a = tmp_path / "T4p0"
-    run_b = tmp_path / "T3p5"
-    make_run(run_a, threshold=4.0, count_offset=0)
-    make_run(run_b, threshold=3.5, count_offset=2)
-
-    artifacts = generate_comparison_report(
-        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
-        report_dir=tmp_path / "comparison",
-        frames=[0, 2],
-        metrics_only=True,
-    )
-
-    assert artifacts.report.is_file()
-    assert artifacts.summary_csv.is_file()
-    assert artifacts.plots == {}
-    assert artifacts.images == {}
-    report = artifacts.report.read_text(encoding="utf-8")
-    assert "Plot generation was skipped for this metrics-only report" in report
-    assert "Contact-sheet generation was skipped" in report
-    assert not (tmp_path / "comparison" / "detections_per_frame_comparison.png").exists()
-    assert not (tmp_path / "comparison" / "detection_contact_sheet.png").exists()
+    assert "## Detection counts" in report
+    assert "Detection contact sheet" not in report
 
 
 def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
@@ -303,37 +302,155 @@ def test_generate_comparison_report_scores_labeled_detection_target(tmp_path):
     assert float(rows[1]["labeled_froc_recall_at_0_5_fp_per_frame"]) == pytest.approx(1.0)
 
 
-def test_labeled_froc_plot_uses_only_scored_frame_detections(tmp_path, monkeypatch):
-    run_a = tmp_path / "T4p0"
-    run_b = tmp_path / "T3p5"
-    make_run(run_a, threshold=4.0, count_offset=0)
-    make_run(run_b, threshold=3.5, count_offset=1)
+def test_labeled_truth_rejects_unreviewed_json_scaffold(tmp_path):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+            {
+                "status": "template_not_ground_truth_do_not_use_for_metrics_until_filled",
+                "requires_manual_review": True,
+                "scored_frames": [0],
+                "particles": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="reviewed_ground_truth"):
+        load_labeled_detection_truth(truth_path)
+
+
+@pytest.mark.parametrize(
+    ("frames", "message"),
+    [
+        ([{"frame_index": 0.5, "boxes": []}], "frame_index"),
+        ([42, {"frame_index": 0, "boxes": []}], "frame entries must be objects"),
+    ],
+)
+def test_labeled_truth_rejects_invalid_reviewed_frame_containers(tmp_path, frames, message):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+                {
+                    "status": "reviewed_ground_truth",
+                    "requires_manual_review": False,
+                    "frames": frames,
+                }
+            ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_labeled_detection_truth(truth_path)
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        {"top": 0, "left": 0, "bottom": 0, "right": 1},
+        {"top": 0, "left": 0, "bottom": float("nan"), "right": 1},
+        {"top": 0, "left": 0, "right": 1},
+    ],
+)
+def test_labeled_truth_rejects_malformed_reviewed_boxes(tmp_path, box):
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [{"frame_index": 0, "boxes": [box]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="truth label boxes"):
+        load_labeled_detection_truth(truth_path)
+
+
+def test_labeled_truth_keeps_blank_csv_rows_as_empty_frames(tmp_path):
     truth_path = tmp_path / "labels.csv"
     write_csv(
         truth_path,
         [
             {
-                "frame_index": 0,
-                "bbox_top": 1,
-                "bbox_left": 2,
-                "bbox_bottom": 4,
-                "bbox_right": 5,
+                "frame_index": 2,
+                "bbox_top": "",
+                "bbox_left": "",
+                "bbox_bottom": "",
+                "bbox_right": "",
             },
-            {"frame_index": 2, "bbox_top": "", "bbox_left": "", "bbox_bottom": "", "bbox_right": ""},
         ],
     )
-    original = compare_runs.detection_froc_curve
 
-    def assert_scored_rows_only(detection_rows, truth, *, scored_frames=None, **kwargs):
-        if scored_frames is not None:
-            frames = {
-                compare_runs.row_frame_index(row)
-                for row in detection_rows
+    truth = load_labeled_detection_truth(truth_path)
+
+    assert truth["particles"] == []
+    assert truth["scored_frames"] == [2]
+    assert truth["skipped_label_rows"] == 1
+
+
+def test_generate_comparison_report_scores_reviewed_frame_box_json(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    with (run_b / "detections.csv").open(newline="", encoding="utf-8") as handle:
+        run_b_detections = list(csv.DictReader(handle))
+    run_b_detections.append(
+        {
+            "frame_index": 2,
+            "label": 2,
+            "y": 7.0,
+            "x": 7.0,
+            "area_px": 9,
+            "peak_signal": 4.0,
+            "bbox_top": 6,
+            "bbox_left": 6,
+            "bbox_bottom": 8,
+            "bbox_right": 8,
+        }
+    )
+    write_csv(run_b / "detections.csv", run_b_detections)
+    truth_path = tmp_path / "labels.json"
+    truth_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [
+                            {
+                                "top": 1,
+                                "left": 2,
+                                "bottom": 4,
+                                "right": 5,
+                                "particle_id": "p0",
+                            }
+                        ],
+                    },
+                    {"frame_index": 2, "boxes": []},
+                ],
             }
-            assert frames <= scored_frames
-        return original(detection_rows, truth, scored_frames=scored_frames, **kwargs)
+        ),
+        encoding="utf-8",
+    )
 
-    monkeypatch.setattr(compare_runs, "detection_froc_curve", assert_scored_rows_only)
+    truth = load_labeled_detection_truth(truth_path)
+    assert truth["scored_frames"] == [0, 2]
+    assert truth["particles"] == [
+        {
+            "frame_index": 0,
+            "top": 1.0,
+            "left": 2.0,
+            "bottom": 4.0,
+            "right": 5.0,
+            "particle_id": "p0",
+        }
+    ]
 
     artifacts = generate_comparison_report(
         [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
@@ -341,198 +458,51 @@ def test_labeled_froc_plot_uses_only_scored_frame_detections(tmp_path, monkeypat
         frames=[0, 2],
         truth_path=truth_path,
         truth_iou_threshold=0.25,
-        skip_contact_sheets=True,
+    )
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["labeled_truth_boxes"] == "1"
+    assert rows[0]["labeled_empty_scored_frames"] == "1"
+    assert rows[1]["labeled_false_positives"] == "1"
+    assert rows[1]["labeled_empty_frame_false_positives"] == "1"
+
+
+def test_generate_comparison_report_scores_all_empty_reviewed_frames(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=0)
+    truth_path = tmp_path / "labels.csv"
+    write_csv(
+        truth_path,
+        [
+            {"frame_index": 2, "bbox_top": "", "bbox_left": "", "bbox_bottom": "", "bbox_right": ""},
+        ],
     )
 
-    assert artifacts.plots["labeled_detection_froc"].is_file()
-
-
-def test_unreviewed_json_label_template_is_rejected(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "template_not_ground_truth_do_not_use_for_metrics_until_filled",
-                "scored_frames": [0, 2],
-                "particles": [],
-            }
-        ),
-        encoding="utf-8",
+    artifacts = generate_comparison_report(
+        [RunSpec("T4.0", run_a), RunSpec("T3.5", run_b)],
+        report_dir=tmp_path / "comparison",
+        frames=[2],
+        truth_path=truth_path,
+        truth_iou_threshold=0.25,
+        bootstrap_samples=10,
+        bootstrap_seed=3,
     )
 
-    with pytest.raises(ValueError, match="unreviewed label template"):
-        load_labeled_detection_truth(truth_path)
-
-
-def test_draft_json_label_output_is_rejected_even_without_review_flag(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "draft_review_output_not_ground_truth",
-                "requires_manual_review": False,
-                "scored_frames": [0],
-                "particles": [
-                    {
-                        "frame_index": 0,
-                        "bbox_top": 1,
-                        "bbox_left": 2,
-                        "bbox_bottom": 4,
-                        "bbox_right": 5,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="unreviewed label template"):
-        load_labeled_detection_truth(truth_path)
-
-
-def test_reviewed_json_truth_accepts_explicit_empty_frame_set(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "reviewed_ground_truth",
-                "requires_manual_review": False,
-                "scored_frames": [0, 2],
-                "empty_frames": [2],
-                "particles": [
-                    {
-                        "frame_index": 0,
-                        "bbox_top": 1,
-                        "bbox_left": 2,
-                        "bbox_bottom": 4,
-                        "bbox_right": 5,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    truth = load_labeled_detection_truth(truth_path)
-
-    assert truth["scored_frames"] == [0, 2]
-    assert len(truth["particles"]) == 1
-    assert truth["particles"][0]["frame_index"] == 0
-
-
-def test_reviewed_json_truth_accepts_empty_frame_review_rows(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "reviewed_ground_truth",
-                "requires_manual_review": False,
-                "scored_frames": [0, 2],
-                "frame_reviews": [
-                    {"frame_index": 0, "review_status": "reviewed_with_particles"},
-                    {"frame_index": 2, "review_status": "reviewed_empty"},
-                ],
-                "particles": [
-                    {
-                        "frame_index": 0,
-                        "bbox_top": 1,
-                        "bbox_left": 2,
-                        "bbox_bottom": 4,
-                        "bbox_right": 5,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    truth = load_labeled_detection_truth(truth_path)
-
-    assert truth["scored_frames"] == [0, 2]
-    assert len(truth["particles"]) == 1
-    assert truth["label_rows"] == 1
-
-
-def test_reviewed_json_truth_requires_every_scored_frame_to_be_reviewed(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "reviewed_ground_truth",
-                "requires_manual_review": False,
-                "scored_frames": [0, 2],
-                "particles": [
-                    {
-                        "frame_index": 0,
-                        "bbox_top": 1,
-                        "bbox_left": 2,
-                        "bbox_bottom": 4,
-                        "bbox_right": 5,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="lack particle boxes or explicit empty confirmation: 2"):
-        load_labeled_detection_truth(truth_path)
-
-
-def test_reviewed_json_truth_rejects_stale_needs_review_rows(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "reviewed_ground_truth",
-                "requires_manual_review": False,
-                "scored_frames": [0],
-                "frame_reviews": [
-                    {"frame_index": 0, "review_status": "needs_review"},
-                ],
-                "particles": [
-                    {
-                        "frame_index": 0,
-                        "bbox_top": 1,
-                        "bbox_left": 2,
-                        "bbox_bottom": 4,
-                        "bbox_right": 5,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="still marked needs_review: 0"):
-        load_labeled_detection_truth(truth_path)
-
-
-def test_reviewed_json_truth_rejects_frames_marked_empty_and_particle(tmp_path):
-    truth_path = tmp_path / "labels.json"
-    truth_path.write_text(
-        json.dumps(
-            {
-                "status": "reviewed_ground_truth",
-                "requires_manual_review": False,
-                "scored_frames": [0],
-                "empty_frames": [0],
-                "particles": [
-                    {
-                        "frame_index": 0,
-                        "bbox_top": 1,
-                        "bbox_left": 2,
-                        "bbox_bottom": 4,
-                        "bbox_right": 5,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="both empty and containing particles: 0"):
-        load_labeled_detection_truth(truth_path)
+    rows = list(csv.DictReader(artifacts.summary_csv.open(newline="", encoding="utf-8")))
+    assert rows[0]["labeled_detection_available"] == "True"
+    assert rows[0]["labeled_scored_frames"] == "1"
+    assert rows[0]["labeled_truth_boxes"] == "0"
+    assert rows[0]["labeled_predicted_boxes"] == "0"
+    assert rows[0]["labeled_false_positives_per_frame"] == "0.0"
+    assert rows[0]["labeled_empty_scored_frames"] == "1"
+    assert rows[0]["labeled_empty_frame_false_positives"] == "0"
+    assert rows[0]["labeled_precision"] == "1.0"
+    assert rows[0]["labeled_recall"] == "1.0"
+    assert rows[0]["labeled_f1"] == "1.0"
+    assert rows[0]["labeled_f1_bootstrap_median"] == "1.0"
+    assert rows[0]["labeled_f1_ci_low"] == "1.0"
+    assert rows[0]["labeled_f1_ci_high"] == "1.0"
 
 
 def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
@@ -585,6 +555,50 @@ def test_detection_froc_curve_sweeps_peak_signal_with_empty_scored_frames():
     assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
 
 
+def test_detection_froc_curve_restricts_truth_to_scored_frames():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            },
+            {
+                "frame_index": 99,
+                "top": 1,
+                "left": 2,
+                "bottom": 4,
+                "right": 5,
+            },
+        ]
+    }
+    detections = [
+        {
+            "frame_index": "0",
+            "bbox_top": "1",
+            "bbox_left": "2",
+            "bbox_bottom": "4",
+            "bbox_right": "5",
+            "y": "2.0",
+            "x": "3.0",
+            "peak_signal": "12.0",
+        }
+    ]
+
+    froc = detection_froc_curve(
+        detections,
+        truth,
+        scored_frames={0},
+        iou_threshold=0.25,
+    )
+
+    assert froc["truth_boxes"] == 1
+    assert froc["recall_at_0_1_fp_per_frame"] == pytest.approx(1.0)
+    assert froc["auc_fp_per_frame_le_1"] == pytest.approx(1.0)
+
+
 def test_detection_froc_curve_keeps_unscored_detections_in_threshold_points():
     truth = {
         "particles": [
@@ -604,6 +618,8 @@ def test_detection_froc_curve_keeps_unscored_detections_in_threshold_points():
             "bbox_left": "2",
             "bbox_bottom": "4",
             "bbox_right": "5",
+            "y": "2.0",
+            "x": "3.0",
             "peak_signal": "12.0",
         },
         {
@@ -612,6 +628,8 @@ def test_detection_froc_curve_keeps_unscored_detections_in_threshold_points():
             "bbox_left": "10",
             "bbox_bottom": "12",
             "bbox_right": "12",
+            "y": "11.0",
+            "x": "11.0",
             "peak_signal": "",
         },
     ]
@@ -747,7 +765,7 @@ def test_compare_main_prints_artifact_paths(tmp_path, capsys):
     assert Path(payload["summary_csv"]).is_file()
 
 
-def test_compare_main_supports_metrics_only(tmp_path, capsys):
+def test_compare_main_metrics_only_skips_png_outputs(tmp_path, capsys):
     run_a = tmp_path / "T4p0"
     run_b = tmp_path / "T3p5"
     make_run(run_a, threshold=4.0, count_offset=0)
@@ -767,11 +785,16 @@ def test_compare_main_supports_metrics_only(tmp_path, capsys):
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["metrics_only"] is True
-    assert payload["plots"] == {}
-    assert payload["images"] == {}
     assert Path(payload["report"]).is_file()
     assert Path(payload["summary_csv"]).is_file()
+    assert payload["plots"] == {}
+    assert payload["images"] == {}
+    assert payload["make_metric_plots"] is False
+    assert payload["make_contact_sheets"] is False
+    assert not list((tmp_path / "comparison").glob("*.png"))
+    report = Path(payload["report"]).read_text(encoding="utf-8")
+    assert "# BeltMap run comparison" in report
+    assert "![" not in report
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-0.1", "1.1"])
@@ -829,3 +852,35 @@ def test_compare_rejects_existing_csv_with_missing_required_columns(tmp_path):
         assert "bbox_bottom" in str(exc)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("expected schema validation to reject malformed CSV")
+
+
+def test_compare_rejects_fractional_metadata_counts(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    metadata = json.loads((run_b / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_detections"] = 2.5
+    (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="n_detections"):
+        generate_comparison_report(
+            [RunSpec("a", run_a), RunSpec("b", run_b)],
+            report_dir=tmp_path / "comparison",
+        )
+
+
+def test_compare_rejects_fractional_track_metadata_count(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    metadata = json.loads((run_b / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_tracks"] = 2.5
+    (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="n_tracks"):
+        generate_comparison_report(
+            [RunSpec("a", run_a), RunSpec("b", run_b)],
+            report_dir=tmp_path / "comparison",
+        )

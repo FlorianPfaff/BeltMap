@@ -45,18 +45,43 @@ class PhaseRegistrationConfig:
     robust_normalization: bool = False
 
     def candidate_offsets(self) -> FloatArray:
-        if self.search_radius_px < 0:
+        cfg = self.normalized()
+        radius = cfg.search_radius_px
+        if radius < 0:
             raise ValueError("search_radius_px must be non-negative")
-        if self.search_step_px <= 0:
+        step = cfg.search_step_px
+        if step <= 0:
             raise ValueError("search_step_px must be positive")
-        radius = float(self.search_radius_px)
         if radius == 0.0:
             return np.asarray([0.0], dtype=np.float64)
-        step = float(self.search_step_px)
         positive = step * np.arange(int(np.floor(radius / step)) + 1, dtype=np.float64)
         if not np.any(np.isclose(positive, radius)):
             positive = np.append(positive, radius)
         return np.r_[-positive[:0:-1], positive].astype(np.float64, copy=False)
+
+    def normalized(self) -> PhaseRegistrationConfig:
+        search_radius_px = _finite_float_value(
+            self.search_radius_px,
+            "search_radius_px",
+        )
+        search_step_px = _finite_float_value(
+            self.search_step_px,
+            "search_step_px",
+        )
+        trim_fraction = _finite_float_value(self.trim_fraction, "trim_fraction")
+        highpass_radius_px = _nonnegative_integer_value(
+            self.highpass_radius_px,
+            "highpass_radius_px",
+        )
+        if not 0 <= trim_fraction < 1:
+            raise ValueError("trim_fraction must be in [0, 1)")
+        return replace(
+            self,
+            search_radius_px=search_radius_px,
+            search_step_px=search_step_px,
+            trim_fraction=trim_fraction,
+            highpass_radius_px=highpass_radius_px,
+        )
 
 
 @dataclass(frozen=True)
@@ -70,15 +95,22 @@ class PhaseTrajectorySmoothingConfig:
     min_support: int = 3
 
     def validate(self) -> None:
-        if self.window_radius_frames < 0:
-            raise ValueError("window_radius_frames must be non-negative")
-        if self.min_support < 1:
-            raise ValueError("min_support must be positive")
-        if self.robust_sigma <= 0:
+        _nonnegative_integer_value(
+            self.window_radius_frames,
+            "window_radius_frames",
+        )
+        _positive_integer_value(self.min_support, "min_support")
+        robust_sigma = _finite_float_value(self.robust_sigma, "robust_sigma")
+        if robust_sigma <= 0:
             raise ValueError("robust_sigma must be positive")
-        if self.min_score is not None and self.min_score < 0:
+        min_score = _optional_finite_float_value(self.min_score, "min_score")
+        if min_score is not None and min_score < 0:
             raise ValueError("min_score must be non-negative when set")
-        if self.max_abs_correction_px is not None and self.max_abs_correction_px < 0:
+        max_abs_correction_px = _optional_finite_float_value(
+            self.max_abs_correction_px,
+            "max_abs_correction_px",
+        )
+        if max_abs_correction_px is not None and max_abs_correction_px < 0:
             raise ValueError("max_abs_correction_px must be non-negative when set")
 
 
@@ -169,11 +201,13 @@ class PhaseDriftFilter:
 
 
 def wrap_phase(phase_px: float, period_px: float | None) -> float:
+    phase = _finite_float_value(phase_px, "phase_px")
     if period_px is None:
-        return float(phase_px)
-    if period_px <= 0:
+        return phase
+    period = _finite_float_value(period_px, "period_px")
+    if period <= 0:
         raise ValueError("period_px must be positive")
-    return float(phase_px % period_px)
+    return float(phase % period)
 
 
 def render_belt_view(
@@ -193,13 +227,14 @@ def render_belt_view(
     belt = _as_float_image(belt_map, name="belt_map")
     if belt.ndim != 2:
         raise ValueError("belt_map must be a 2-D array")
+    phase = _finite_float_value(phase_px, "phase_px")
     if height <= 0:
         raise ValueError("height must be positive")
     if x_slice is not None:
         belt = belt[:, x_slice]
 
     map_height = belt.shape[0]
-    rows = np.arange(height, dtype=np.float64) + float(phase_px)
+    rows = np.arange(height, dtype=np.float64) + phase
     if periodic:
         rows = rows % map_height
         row0 = np.floor(rows).astype(np.int64)
@@ -254,7 +289,7 @@ def refine_phase_by_registration(
     config: PhaseRegistrationConfig | None = None,
     mask: ArrayLike | None = None,
 ) -> PhaseEstimate:
-    cfg = config or PhaseRegistrationConfig()
+    cfg = (config or PhaseRegistrationConfig()).normalized()
     observed = _as_float_image(frame, name="frame")
     belt = _as_float_image(belt_map, name="belt_map")
     if observed.ndim != 2 or belt.ndim != 2:
@@ -516,6 +551,33 @@ def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
     if arr.size == 0:
         raise ValueError(f"{name} must not be empty")
     return arr
+
+
+def _finite_float_value(value: float, name: str) -> float:
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_float_value(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_float_value(value, name)
+
+
+def _nonnegative_integer_value(value: int, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if parsed < 0 or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
+
+
+def _positive_integer_value(value: int, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if parsed < 1 or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite positive integer")
+    return int(parsed)
 
 
 def _prepare_mask(mask: ArrayLike | None, shape: tuple[int, int]) -> NDArray[np.bool_] | None:

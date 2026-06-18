@@ -95,6 +95,35 @@ def test_generate_visual_qc_writes_histogram_coverage_and_overlays(tmp_path):
             assert path.stat().st_size > 0
 
 
+def test_parse_detection_records_rejects_fractional_frame_indices():
+    records = visual_qc.parse_detection_records(
+        [
+            {
+                "frame_index": "0.5",
+                "label": 1,
+                "y": 2.0,
+                "x": 3.0,
+                "bbox_top": 1,
+                "bbox_left": 2,
+                "bbox_bottom": 4,
+                "bbox_right": 5,
+            },
+            {
+                "frame_index": "1.0",
+                "label": 1,
+                "y": 4.0,
+                "x": 3.0,
+                "bbox_top": 3,
+                "bbox_left": 2,
+                "bbox_bottom": 6,
+                "bbox_right": 5,
+            },
+        ]
+    )
+
+    assert [record.frame_index for record in records] == [1]
+
+
 def test_visual_qc_tracks_use_pyrecest_tracker(monkeypatch):
     calls = {}
     records = visual_qc.group_detections_by_frame(

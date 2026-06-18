@@ -68,6 +68,19 @@ def test_events_from_tracks_aggregates_rows():
     assert events[0]["velocity_y_px_per_frame"] == 2.0
 
 
+def test_events_from_tracks_accepts_float_formatted_track_ids():
+    rows = [
+        {"track_id": "4.0", "frame_index": "0", "y": "1", "x": "2"},
+        {"track_id": "4.5", "frame_index": "1", "y": "3", "x": "2"},
+    ]
+
+    events = events_from_tracks(rows)
+
+    assert len(events) == 1
+    assert events[0]["track_id"] == 4
+    assert events[0]["n_observations"] == 1
+
+
 def test_confidence_rows_penalizes_truncation_and_artifacts():
     rows = [
         {"peak_signal": "8", "area_px": "20", "is_truncated": "False"},

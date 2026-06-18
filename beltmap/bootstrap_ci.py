@@ -8,6 +8,9 @@ import numpy as np
 
 from .benchmark import (
     bbox_iou,
+    detection_precision,
+    detection_recall,
+    f1_score,
     finite_float,
     group_detection_boxes,
     group_truth_boxes,
@@ -209,7 +212,7 @@ def labeled_frame_outcomes(
     pred_by_frame = group_detection_boxes(
         [dict(row) for row in detection_rows if source_frame_index(dict(row)) in scored_frames]
     )
-    frame_indices = sorted(scored_frames | set(truth_by_frame) | set(pred_by_frame))
+    frame_indices = sorted(scored_frames)
     outcomes: list[LabeledFrameOutcome] = []
 
     for frame_index in frame_indices:
@@ -260,16 +263,9 @@ def aggregate_labeled_outcomes(outcomes: Sequence[LabeledFrameOutcome]) -> dict[
     true_positives = sum(outcome.true_positives for outcome in outcomes)
     false_positives = sum(outcome.false_positives for outcome in outcomes)
     false_negatives = sum(outcome.false_negatives for outcome in outcomes)
-    precision_denominator = true_positives + false_positives
-    recall_denominator = true_positives + false_negatives
-    precision = None if precision_denominator == 0 else true_positives / precision_denominator
-    recall = None if recall_denominator == 0 else true_positives / recall_denominator
-    if precision is None or recall is None:
-        f1 = None
-    elif precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2.0 * precision * recall / (precision + recall)
+    precision = detection_precision(true_positives, false_positives, false_negatives)
+    recall = detection_recall(true_positives, false_positives, false_negatives)
+    f1 = f1_score(precision, recall)
 
     matched_ious = [value for outcome in outcomes for value in outcome.matched_ious]
     centroid_errors = [value for outcome in outcomes for value in outcome.centroid_errors_px]

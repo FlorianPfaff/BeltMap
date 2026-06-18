@@ -68,3 +68,16 @@ def test_score_map_risk_detections_rejects_invalid_thresholds():
             maps=maps,
             reject_max_mean_risk=1.5,
         )
+
+
+@pytest.mark.parametrize("frame_shape", [(1.5, 2), (1, float("nan")), (0, 2)])
+def test_score_map_risk_detections_rejects_invalid_frame_shape(frame_shape):
+    maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
+
+    with pytest.raises(ValueError, match="frame_shape"):
+        score_map_risk_detections(
+            [_detection(bbox_left=0, bbox_right=1)],
+            phase_px=0.0,
+            frame_shape=frame_shape,
+            maps=maps,
+        )

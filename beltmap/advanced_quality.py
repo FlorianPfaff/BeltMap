@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 FloatArray = NDArray[np.floating]
+REVIEWED_GROUND_TRUTH_STATUS = "reviewed_ground_truth"
 
 
 @dataclass(frozen=True)
@@ -431,13 +432,12 @@ def detection_boxes_by_frame(output_dir: Path) -> dict[int, list[dict[str, float
     grouped: dict[int, list[dict[str, float]]] = {}
     for row in rows:
         try:
-            frame = int(float(row["frame_index"]))
-            box = {
-                "top": float(row["bbox_top"]),
-                "left": float(row["bbox_left"]),
-                "bottom": float(row["bbox_bottom"]),
-                "right": float(row["bbox_right"]),
-            }
+            frame = finite_int(row["frame_index"])
+            if frame is None:
+                continue
+            box = _parse_detection_box(row)
+            if box is None:
+                continue
         except (KeyError, TypeError, ValueError):
             continue
         grouped.setdefault(frame, []).append(box)
@@ -454,17 +454,80 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
     """
 
     data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        _validate_reviewed_truth_status(data)
     frames = data.get("frames") if isinstance(data, dict) else None
     if not isinstance(frames, list):
         raise ValueError("label JSON must contain a 'frames' list")
     result: dict[int, list[dict[str, float]]] = {}
     for frame in frames:
-        frame_index = int(frame["frame_index"])
-        boxes = []
+        if not isinstance(frame, Mapping):
+            raise ValueError("label frames must be objects")
+        frame_index = finite_int(frame.get("frame_index"))
+        if frame_index is None:
+            raise ValueError("label frame_index values must be finite integers")
+        if frame_index in result:
+            raise ValueError(f"duplicate label frame_index {frame_index}")
+        boxes: list[dict[str, float]] = []
         for box in frame.get("boxes", []):
-            boxes.append({key: float(box[key]) for key in ("top", "left", "bottom", "right")})
+            boxes.append(_parse_real_label_box(box))
         result[frame_index] = boxes
     return result
+
+
+def _review_flag_is_true(value: Any) -> bool:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "n"}:
+            return False
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+    return bool(value)
+
+
+def _validate_reviewed_truth_status(data: dict[str, Any]) -> None:
+    status = data.get("status")
+    requires_manual_review = data.get("requires_manual_review")
+    if status is None and requires_manual_review is None:
+        return
+    if status != REVIEWED_GROUND_TRUTH_STATUS or _review_flag_is_true(
+        requires_manual_review,
+    ):
+        raise ValueError(
+            "label JSON is not reviewed ground truth; set status="
+            f"{REVIEWED_GROUND_TRUTH_STATUS!r} and requires_manual_review=false "
+            "only after all scored frames have been reviewed"
+        )
+
+
+def _parse_real_label_box(box: Mapping[str, Any]) -> dict[str, float]:
+    try:
+        top = float(box["top"])
+        left = float(box["left"])
+        bottom = float(box["bottom"])
+        right = float(box["right"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("label boxes must contain numeric top/left/bottom/right") from exc
+    if not all(math.isfinite(value) for value in (top, left, bottom, right)):
+        raise ValueError("label box coordinates must be finite")
+    if bottom <= top or right <= left:
+        raise ValueError("label boxes must have positive half-open area")
+    return {"top": top, "left": left, "bottom": bottom, "right": right}
+
+
+def _parse_detection_box(row: Mapping[str, Any]) -> dict[str, float] | None:
+    values = [
+        finite_float(row.get(key))
+        for key in ("bbox_top", "bbox_left", "bbox_bottom", "bbox_right")
+    ]
+    if any(value is None for value in values):
+        return None
+    top, left, bottom, right = values
+    assert top is not None and left is not None
+    assert bottom is not None and right is not None
+    if bottom <= top or right <= left:
+        return None
+    return {"top": top, "left": left, "bottom": bottom, "right": right}
 
 
 def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5) -> RealLabelMetrics:
@@ -500,14 +563,19 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
             ty, tx = _box_centroid(truth_boxes[t_idx])
             dy, dx = _box_centroid(frame_detections[d_idx])
             centroid_errors.append(float(math.hypot(ty - dy, tx - dx)))
-    precision = None if detection_count == 0 else matches / detection_count
-    recall = None if truth_count == 0 else matches / truth_count
-    if precision is None or recall is None:
-        f1 = None
-    elif precision + recall == 0:
-        f1 = 0.0
+    if detection_count == 0 and truth_count == 0:
+        precision = 1.0
+        recall = 1.0
+        f1 = 1.0
     else:
-        f1 = 2.0 * precision * recall / (precision + recall)
+        precision = None if detection_count == 0 else matches / detection_count
+        recall = None if truth_count == 0 else matches / truth_count
+        if precision is None or recall is None:
+            f1 = None
+        elif precision + recall == 0:
+            f1 = 0.0
+        else:
+            f1 = 2.0 * precision * recall / (precision + recall)
     return RealLabelMetrics(
         frames=len(truth),
         truth_boxes=truth_count,
@@ -533,19 +601,11 @@ def finite_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
-def finite_float_or(value: Any, default: float) -> float:
-    parsed = finite_float(value)
-    return default if parsed is None else parsed
-
-
 def finite_int(value: Any) -> int | None:
     parsed = finite_float(value)
-    return None if parsed is None else int(parsed)
-
-
-def finite_int_or(value: Any, default: int) -> int:
-    parsed = finite_int(value)
-    return default if parsed is None else parsed
+    if parsed is None or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def quality_flags(output_dir: Path) -> dict[str, Any]:
@@ -561,8 +621,8 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
 
     correction_values = [finite_float(row.get("correction_px")) for row in phase_rows]
     corrections = np.asarray([v for v in correction_values if v is not None], dtype=np.float64)
-    search_radius = finite_float_or(metadata.get("registration_search_radius_px"), 8.0)
-    search_step = finite_float_or(metadata.get("registration_search_step_px"), 1.0)
+    search_radius = finite_float(metadata.get("registration_search_radius_px")) or 8.0
+    search_step = finite_float(metadata.get("registration_search_step_px")) or 1.0
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
         boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
@@ -581,11 +641,18 @@ def quality_flags(output_dir: Path) -> dict[str, Any]:
     if ratios.size and float(np.mean((0.0 <= ratios) & (ratios <= 1.1))) < 0.5:
         flags.append({"severity": "warning", "code": "implausible_velocity_ratios", "message": "many velocity ratios are outside the expected belt-relative interval", "share_0_to_1p1": float(np.mean((0.0 <= ratios) & (ratios <= 1.1)))})
 
-    recurrent_rejected = finite_int_or(metadata.get("n_recurrent_artifact_rejected"), 0)
-    n_detections = finite_int_or(metadata.get("n_detections"), len(detections))
-    denominator = recurrent_rejected + n_detections
-    if denominator > 0 and recurrent_rejected / denominator > 0.75:
-        flags.append({"severity": "info", "code": "heavy_recurrent_filtering", "message": "recurrent artifact filtering rejected most first-pass detections", "rejected": recurrent_rejected})
+    recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
+    metadata_detection_count = finite_int(metadata.get("n_detections"))
+    n_detections = (
+        metadata_detection_count
+        if metadata_detection_count is not None
+        else len(detections)
+    )
+    recurrent_denominator = recurrent_rejected + n_detections
+    if recurrent_denominator > 0:
+        recurrent_share = recurrent_rejected / recurrent_denominator
+        if recurrent_share > 0.75:
+            flags.append({"severity": "info", "code": "heavy_recurrent_filtering", "message": "recurrent artifact filtering rejected most first-pass detections", "rejected": recurrent_rejected, "share": recurrent_share})
 
     return {"output_dir": str(output_dir), "metadata_present": bool(metadata), "flags": flags}
 

@@ -1,10 +1,12 @@
 import json
 
 import numpy as np
+import pytest
 
 from beltmap.advanced_quality import (
     bbox_iou,
     evaluate_real_detections,
+    finite_int,
     quality_flags,
     quadratic_subpixel_minimum,
     robust_gain_offset,
@@ -47,6 +49,12 @@ def test_bbox_iou_and_track_confidence_are_finite():
     assert 0.0 < score <= 1.0
 
 
+def test_finite_int_rejects_fractional_values():
+    assert finite_int("7") == 7
+    assert finite_int("7.0") == 7
+    assert finite_int("7.5") is None
+
+
 def test_real_label_metrics_count_detections_only_on_labeled_frames(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
@@ -67,6 +75,53 @@ def test_real_label_metrics_count_detections_only_on_labeled_frames(tmp_path):
     assert metrics.detection_boxes == 1
     assert metrics.truth_boxes == 1
     assert metrics.matches == 1
+    assert metrics.precision == 1.0
+    assert metrics.recall == 1.0
+    assert metrics.f1 == 1.0
+
+
+def test_real_label_metrics_ignore_fractional_detection_frame_indices(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
+        "0.5,0,0,10,10\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"frames": [{"frame_index": 0, "boxes": [{"top": 0, "left": 0, "bottom": 10, "right": 10}]}]}),
+        encoding="utf-8",
+    )
+
+    metrics = evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+    assert metrics.detection_boxes == 0
+    assert metrics.truth_boxes == 1
+    assert metrics.matches == 0
+    assert metrics.precision is None
+    assert metrics.recall == 0.0
+    assert metrics.f1 is None
+
+
+def test_real_label_metrics_score_clean_empty_labeled_frames(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"frames": [{"frame_index": 0, "boxes": []}]}),
+        encoding="utf-8",
+    )
+
+    metrics = evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+    assert metrics.frames == 1
+    assert metrics.detection_boxes == 0
+    assert metrics.truth_boxes == 0
     assert metrics.precision == 1.0
     assert metrics.recall == 1.0
     assert metrics.f1 == 1.0
@@ -94,32 +149,157 @@ def test_real_label_metrics_zero_match_f1_is_zero_not_missing(tmp_path):
     assert metrics.f1 == 0.0
 
 
-def test_quality_flags_preserve_zero_registration_search_radius(tmp_path):
+def test_real_label_metrics_reject_unreviewed_json_scaffold(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
-    (out / "metadata.json").write_text(
-        json.dumps({"registration_search_radius_px": 0.0, "registration_search_step_px": 0.5}),
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
         encoding="utf-8",
     )
-    (out / "phase_estimates.csv").write_text("frame_index,correction_px\n0,0.0\n", encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "template_not_ground_truth_do_not_use_for_metrics_until_filled",
+                "requires_manual_review": True,
+                "frames": [{"frame_index": 0, "boxes": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    report = quality_flags(out)
-
-    assert report["flags"]
-    assert report["flags"][0]["code"] == "registration_boundary"
-    assert report["flags"][0]["share"] == 1.0
+    with pytest.raises(ValueError, match="reviewed ground truth"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
 
 
-def test_quality_flags_preserve_zero_detection_count_metadata(tmp_path):
+@pytest.mark.parametrize(
+    ("frame", "message"),
+    [
+        ({"frame_index": 0.5, "boxes": []}, "frame_index"),
+        (42, "frames must be objects"),
+    ],
+)
+def test_real_label_metrics_reject_invalid_reviewed_frames(tmp_path, frame, message):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [frame],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+def test_real_label_metrics_reject_duplicate_reviewed_frames(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 0, "left": 0, "bottom": 1, "right": 1}],
+                    },
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": 2, "left": 2, "bottom": 3, "right": 3}],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate label frame_index"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+@pytest.mark.parametrize(
+    ("box", "message"),
+    [
+        ({"top": 0, "left": 0, "bottom": float("nan"), "right": 10}, "finite"),
+        ({"top": 10, "left": 0, "bottom": 10, "right": 10}, "positive"),
+    ],
+)
+def test_real_label_metrics_reject_invalid_reviewed_boxes(tmp_path, box, message):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [{"frame_index": 0, "boxes": [box]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+def test_real_label_metrics_ignore_degenerate_detection_boxes(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
+        "0,10,0,10,10\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"frames": [{"frame_index": 0, "boxes": []}]}),
+        encoding="utf-8",
+    )
+
+    metrics = evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+    assert metrics.detection_boxes == 0
+    assert metrics.precision == 1.0
+    assert metrics.recall == 1.0
+    assert metrics.f1 == 1.0
+
+
+def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "metadata.json").write_text(
         json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
         encoding="utf-8",
     )
-    stale_rows = ["frame_index,area_px", *[f"{index},10" for index in range(95)]]
-    (out / "detections.csv").write_text("\n".join(stale_rows) + "\n", encoding="utf-8")
+    (out / "detections.csv").write_text(
+        "frame_index,area_px\n0,10\n1,12\n",
+        encoding="utf-8",
+    )
 
-    report = quality_flags(out)
+    payload = quality_flags(out)
 
-    assert any(flag["code"] == "heavy_recurrent_filtering" for flag in report["flags"])
+    flag = next(flag for flag in payload["flags"] if flag["code"] == "heavy_recurrent_filtering")
+    assert flag["rejected"] == 5
+    assert flag["share"] == 1.0

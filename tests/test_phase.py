@@ -7,6 +7,7 @@ from beltmap import (
     PhaseRegistrationConfig,
     PhaseTrajectorySmoothingConfig,
     estimate_phase,
+    refine_phase_by_registration,
     render_belt_view,
     smooth_phase_estimates,
 )
@@ -16,6 +17,7 @@ from beltmap.phase import (
     _refine_quadratic_offset,
     _registration_loss_diagnostics,
     _uniform_filter_axis,
+    wrap_phase,
 )
 
 
@@ -102,6 +104,25 @@ def test_render_belt_view_can_mark_nonperiodic_out_of_support_rows():
     assert np.isnan(after_end[2, 0])
 
 
+@pytest.mark.parametrize(
+    ("phase_px", "period_px", "message"),
+    [
+        (float("nan"), None, "phase_px"),
+        (0.0, float("nan"), "period_px"),
+    ],
+)
+def test_wrap_phase_rejects_nonfinite_values(phase_px, period_px, message):
+    with pytest.raises(ValueError, match=message):
+        wrap_phase(phase_px, period_px)
+
+
+def test_render_belt_view_rejects_nonfinite_phase():
+    belt = np.arange(5, dtype=float)[:, None]
+
+    with pytest.raises(ValueError, match="phase_px"):
+        render_belt_view(belt, phase_px=float("nan"), height=3)
+
+
 def test_quadratic_refinement_returns_consistent_loss_offset_pair():
     losses = [(1.25, -1.0), (1.0, 0.0), (1.25, 1.0)]
 
@@ -137,6 +158,34 @@ def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
     ).candidate_offsets()
 
     np.testing.assert_allclose(offsets, [-1.0, -0.6, 0.0, 0.6, 1.0])
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (PhaseRegistrationConfig(search_radius_px=float("nan")), "search_radius_px"),
+        (PhaseRegistrationConfig(search_step_px=float("nan")), "search_step_px"),
+        (PhaseRegistrationConfig(trim_fraction=float("nan")), "trim_fraction"),
+        (PhaseRegistrationConfig(highpass_radius_px=float("nan")), "highpass_radius_px"),
+        (PhaseRegistrationConfig(highpass_radius_px=1.5), "highpass_radius_px"),
+    ],
+)
+def test_registration_config_rejects_invalid_numeric_settings(config, message):
+    with pytest.raises(ValueError, match=message):
+        config.normalized()
+
+
+def test_registration_refinement_validates_full_config_before_search():
+    frame = np.zeros((4, 4), dtype=float)
+    belt = np.zeros((8, 4), dtype=float)
+
+    with pytest.raises(ValueError, match="trim_fraction"):
+        refine_phase_by_registration(
+            frame=frame,
+            belt_map=belt,
+            predicted_phase_px=0.0,
+            config=PhaseRegistrationConfig(trim_fraction=float("nan")),
+        )
 
 
 def test_uniform_filter_axis_matches_edge_padded_reference():
@@ -265,6 +314,23 @@ def test_smooth_phase_estimates_rejects_registration_outlier():
         atol=1e-9,
     )
     assert smoothed[4].method == "registration_smoothed"
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=float("nan")), "window_radius_frames"),
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=1.5), "window_radius_frames"),
+        (PhaseTrajectorySmoothingConfig(min_support=float("nan")), "min_support"),
+        (PhaseTrajectorySmoothingConfig(min_support=1.5), "min_support"),
+        (PhaseTrajectorySmoothingConfig(robust_sigma=float("nan")), "robust_sigma"),
+        (PhaseTrajectorySmoothingConfig(min_score=float("nan")), "min_score"),
+        (PhaseTrajectorySmoothingConfig(max_abs_correction_px=float("nan")), "max_abs_correction_px"),
+    ],
+)
+def test_phase_smoothing_config_rejects_invalid_numeric_settings(config, message):
+    with pytest.raises(ValueError, match=message):
+        config.validate()
 
 
 def test_smooth_phase_estimates_uses_cyclic_corrections():

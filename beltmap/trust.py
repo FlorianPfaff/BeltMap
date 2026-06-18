@@ -186,12 +186,10 @@ def finite_float_or(value: Any, default: float) -> float:
 def finite_int(value: Any) -> int | None:
     """Parse an integer, returning ``None`` when parsing fails."""
 
-    if value is None:
+    parsed = finite_float(value)
+    if parsed is None or not parsed.is_integer():
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    return int(parsed)
 
 
 def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int] | None:

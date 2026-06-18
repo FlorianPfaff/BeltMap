@@ -152,17 +152,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--metrics-only",
+        "--skip-contact-sheets",
         action="store_true",
         help=(
-            "Write summary.csv and comparison_report.md tables without plots or contact sheets. "
-            "Use this for large labeled comparisons where image generation is unnecessary."
+            "Skip contact-sheet PNG assembly while still writing summary CSV, "
+            "Markdown, and metric plots such as FROC."
         ),
     )
     parser.add_argument(
-        "--skip-contact-sheets",
+        "--metrics-only",
         action="store_true",
-        help="Write summary tables and plots, but skip contact-sheet image generation.",
+        help="Write only metric tables in summary.csv and comparison_report.md; skip all PNG generation.",
     )
     parser.add_argument(
         "--quiet",
@@ -188,8 +188,8 @@ def main(argv: list[str] | None = None) -> int:
             bootstrap_confidence_level=args.bootstrap_confidence_level,
             bootstrap_seed=args.bootstrap_seed,
             bootstrap_block_length_frames=args.bootstrap_block_length_frames,
-            metrics_only=args.metrics_only,
-            skip_contact_sheets=args.skip_contact_sheets,
+            make_metric_plots=not args.metrics_only,
+            make_contact_sheets=not args.metrics_only and not args.skip_contact_sheets,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
@@ -208,8 +208,9 @@ def main(argv: list[str] | None = None) -> int:
                     "bootstrap_confidence_level": args.bootstrap_confidence_level,
                     "bootstrap_seed": args.bootstrap_seed,
                     "bootstrap_block_length_frames": args.bootstrap_block_length_frames,
-                    "metrics_only": args.metrics_only,
-                    "skip_contact_sheets": args.skip_contact_sheets,
+                    "make_metric_plots": not args.metrics_only,
+                    "make_contact_sheets": not args.metrics_only
+                    and not args.skip_contact_sheets,
                 },
                 indent=2,
             ),

@@ -13,8 +13,6 @@ from PIL import Image, ImageDraw
 from .compare_runs import (
     DEFAULT_FROC_MAX_THRESHOLDS,
     RunSpec,
-    finite_float,
-    finite_int,
     load_labeled_detection_truth,
     load_run_data,
     read_csv_rows,
@@ -536,7 +534,6 @@ def write_plot(path: Path, rows: list[dict[str, Any]]) -> None:
     row_h = 44
     top = 72
     left = 250
-    right = 40
     height = max(260, top + row_h * len(rows) + 50)
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
