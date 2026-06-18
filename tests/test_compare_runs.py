@@ -121,6 +121,7 @@ def test_finite_int_rejects_fractional_values():
     assert finite_int("7") == 7
     assert finite_int("7.0") == 7
     assert finite_int("7.5") is None
+    assert finite_int(True) is None
 
 
 def test_generate_comparison_report_writes_summary_plots_and_contact_sheet(tmp_path):
@@ -838,4 +839,39 @@ def test_compare_rejects_fractional_track_metadata_count(tmp_path):
         generate_comparison_report(
             [RunSpec("a", run_a), RunSpec("b", run_b)],
             report_dir=tmp_path / "comparison",
+        )
+
+
+def test_compare_rejects_boolean_metadata_count(tmp_path):
+    run_a = tmp_path / "T4p0"
+    run_b = tmp_path / "T3p5"
+    make_run(run_a, threshold=4.0, count_offset=0)
+    make_run(run_b, threshold=3.5, count_offset=1)
+    metadata = json.loads((run_b / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_tracks"] = True
+    (run_b / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="n_tracks"):
+        generate_comparison_report(
+            [RunSpec("a", run_a), RunSpec("b", run_b)],
+            report_dir=tmp_path / "comparison",
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"truth_iou_threshold": True}, "truth_iou_threshold"),
+        ({"bootstrap_samples": True}, "bootstrap_samples"),
+        ({"bootstrap_confidence_level": True}, "bootstrap_confidence_level"),
+        ({"bootstrap_block_length_frames": True}, "bootstrap_block_length_frames"),
+        ({"bootstrap_seed": True}, "bootstrap_seed"),
+    ],
+)
+def test_compare_rejects_boolean_numeric_api_options(tmp_path, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        generate_comparison_report(
+            [RunSpec("a", tmp_path / "a"), RunSpec("b", tmp_path / "b")],
+            report_dir=tmp_path / "comparison",
+            **kwargs,
         )
