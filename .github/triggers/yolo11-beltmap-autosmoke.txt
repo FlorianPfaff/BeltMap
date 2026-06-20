@@ -1,0 +1,6 @@
+YOLO11 BeltMap autosmoke trigger
+
+This file is intentionally tracked so commits can trigger .github/workflows/yolo11-beltmap-autosmoke.yml.
+
+Triggered-at: 2026-06-20T00:00:00Z
+Purpose: start the first push-triggered YOLO11 autosmoke run after adding the workflow.
