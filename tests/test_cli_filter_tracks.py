@@ -153,6 +153,22 @@ def test_filter_tracks_rejects_fractional_velocity_counts(tmp_path):
         )
 
 
+def test_filter_tracks_rejects_nonfinite_velocity_values(tmp_path):
+    make_velocities(tmp_path)
+    velocity_rows = list(csv.DictReader((tmp_path / "velocities.csv").open()))
+    velocity_rows[0]["velocity_ratio_y"] = "nan"
+    write_csv(tmp_path / "velocities.csv", velocity_rows)
+
+    with pytest.raises(ValueError, match="velocity_ratio_y must be a finite number"):
+        cli_filter_tracks.filter_tracks(
+            tmp_path,
+            config=cli_filter_tracks.TrackFilterConfig(
+                min_track_length=5,
+                max_velocity_ratio_y=1.1,
+            ),
+        )
+
+
 def test_filter_tracks_cli_treats_zero_lateral_gate_as_disabled(tmp_path, capsys):
     make_velocities(tmp_path)
 
@@ -215,6 +231,29 @@ def test_filter_tracks_preserves_recurrent_artifact_probability(tmp_path):
         filtered_track_rows = list(reader)
     assert "recurrent_artifact_probability" in (reader.fieldnames or [])
     assert filtered_track_rows[0]["recurrent_artifact_probability"] == "0.25"
+
+
+def test_parse_detection_ignores_nonfinite_optional_signals(tmp_path):
+    make_velocities(tmp_path)
+    track_rows = list(csv.DictReader((tmp_path / "tracks.csv").open()))
+    track_rows[0]["mean_signal"] = "nan"
+    track_rows[0]["peak_signal"] = "inf"
+    track_rows[0]["recurrent_artifact_probability"] = "bad"
+
+    detection = cli_filter_tracks.parse_detection(track_rows[0])
+
+    assert detection.mean_signal is None
+    assert detection.peak_signal is None
+    assert detection.recurrent_artifact_probability is None
+
+
+def test_parse_tracks_rejects_fractional_track_frame_index(tmp_path):
+    make_velocities(tmp_path)
+    track_rows = list(csv.DictReader((tmp_path / "tracks.csv").open()))
+    track_rows[0]["frame_index"] = "0.5"
+
+    with pytest.raises(ValueError, match="frame_index must be an integer"):
+        cli_filter_tracks.parse_tracks(track_rows)
 
 
 def test_parse_tracks_rejects_fractional_track_detection_index(tmp_path):
@@ -379,6 +418,56 @@ def test_filter_tracks_rejects_fractional_detection_frame_when_reconstructing_tr
     )
 
     with pytest.raises(ValueError, match="frame_index must be an integer"):
+        cli_filter_tracks.filter_tracks(
+            tmp_path,
+            config=cli_filter_tracks.TrackFilterConfig(min_track_length=1),
+        )
+
+
+def test_filter_tracks_rejects_nonfinite_reconstruction_metadata(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "metadata.json").write_text(
+        json.dumps({"belt_velocity_px_per_frame": "nan"}),
+        encoding="utf-8",
+    )
+    write_csv(
+        tmp_path / "velocities.csv",
+        [
+            {
+                "track_id": 0,
+                "n_detections": 1,
+                "frame_start": 0,
+                "frame_end": 0,
+                "velocity_y_px_per_frame": 4.0,
+                "velocity_x_px_per_frame": 0.0,
+                "speed_px_per_frame": 4.0,
+                "belt_velocity_y_px_per_frame": 5.0,
+                "velocity_ratio_y": 0.8,
+                "belt_minus_particle_velocity_y_px_per_frame": 1.0,
+            },
+        ],
+    )
+    write_csv(
+        tmp_path / "detections.csv",
+        [
+            {
+                "frame_index": 0,
+                "image": "frame0.bmp",
+                "label": 1,
+                "y": 10.0,
+                "x": 5.0,
+                "area_px": 6,
+                "bbox_top": 9,
+                "bbox_left": 4,
+                "bbox_bottom": 12,
+                "bbox_right": 7,
+                "mean_signal": 4.5,
+                "peak_signal": 7.5,
+            },
+        ],
+    )
+
+    with pytest.raises(ValueError, match="belt_velocity_px_per_frame must be a finite number"):
         cli_filter_tracks.filter_tracks(
             tmp_path,
             config=cli_filter_tracks.TrackFilterConfig(min_track_length=1),
