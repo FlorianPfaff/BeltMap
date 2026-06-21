@@ -292,8 +292,10 @@ def score_recurrent_artifact_detections(
         raise ValueError(
             "detection_threshold is required for soft/probabilistic recurrent filtering"
         )
-    if detection_threshold is not None and not np.isfinite(detection_threshold):
-        raise ValueError("detection_threshold must be finite")
+    if detection_threshold is not None:
+        detection_threshold = _finite_float(detection_threshold, "detection_threshold")
+        if detection_threshold < 0:
+            raise ValueError("detection_threshold must be finite and non-negative")
     phase_px_values = _validate_phase_px_by_frame(
         phase_px_by_frame,
         frame_count=len(detections_by_frame),
@@ -639,16 +641,20 @@ def _validate_config(config: RecurrentArtifactConfig) -> None:
 
 def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
     _nonnegative_integer_config_value(config.margin_px, "margin_px")
-    if config.margin_px < 0:
-        raise ValueError("margin_px must be non-negative")
-    if not 0 <= config.max_overlap_fraction <= 1:
+    max_overlap_fraction = _finite_float(config.max_overlap_fraction, "max_overlap_fraction")
+    if not 0 <= max_overlap_fraction <= 1:
         raise ValueError("max_overlap_fraction must be in [0, 1]")
-    if not 0 <= config.min_recurrence_probability <= 1:
+    min_recurrence_probability = _finite_float(
+        config.min_recurrence_probability,
+        "min_recurrence_probability",
+    )
+    if not 0 <= min_recurrence_probability <= 1:
         raise ValueError("min_recurrence_probability must be in [0, 1]")
     if config.mode.strip().lower() not in RECURRENT_ARTIFACT_MODES:
         choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
         raise ValueError(f"mode must be one of {choices}")
-    if not np.isfinite(config.soft_penalty_weight) or config.soft_penalty_weight < 0:
+    soft_penalty_weight = _finite_float(config.soft_penalty_weight, "soft_penalty_weight")
+    if soft_penalty_weight < 0:
         raise ValueError("soft_penalty_weight must be finite and non-negative")
     candidate_max_area_px = _optional_positive_integer_config_value(
         config.candidate_max_area_px,
@@ -656,26 +662,24 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
     )
     if candidate_max_area_px is not None and candidate_max_area_px < 1:
         raise ValueError("candidate_max_area_px must be positive when set")
-    if config.candidate_max_peak_signal is not None and (
-        not np.isfinite(config.candidate_max_peak_signal)
-        or config.candidate_max_peak_signal < 0
-    ):
-        raise ValueError(
-            "candidate_max_peak_signal must be finite and non-negative when set"
-        )
+    candidate_max_peak_signal = _optional_nonnegative_float_config_value(
+        config.candidate_max_peak_signal,
+        "candidate_max_peak_signal",
+    )
+    if candidate_max_peak_signal is not None and candidate_max_peak_signal < 0:
+        raise ValueError("candidate_max_peak_signal must be finite and non-negative when set")
     reject_max_area_px = _optional_positive_integer_config_value(
         config.reject_max_area_px,
         "reject_max_area_px",
     )
     if reject_max_area_px is not None and reject_max_area_px < 1:
         raise ValueError("reject_max_area_px must be positive when set")
-    if config.reject_max_peak_signal is not None and (
-        not np.isfinite(config.reject_max_peak_signal)
-        or config.reject_max_peak_signal < 0
-    ):
-        raise ValueError(
-            "reject_max_peak_signal must be finite and non-negative when set"
-        )
+    reject_max_peak_signal = _optional_nonnegative_float_config_value(
+        config.reject_max_peak_signal,
+        "reject_max_peak_signal",
+    )
+    if reject_max_peak_signal is not None and reject_max_peak_signal < 0:
+        raise ValueError("reject_max_peak_signal must be finite and non-negative when set")
 
 
 def _validate_phase_px_by_frame(
@@ -685,10 +689,7 @@ def _validate_phase_px_by_frame(
 ) -> list[float]:
     if len(phase_px_by_frame) != frame_count:
         raise ValueError("phase_px_by_frame must match detections_by_frame length")
-    values = [float(value) for value in phase_px_by_frame]
-    if not all(np.isfinite(value) for value in values):
-        raise ValueError("phase_px_by_frame values must be finite")
-    return values
+    return [_finite_float(value, "phase_px_by_frame") for value in phase_px_by_frame]
 
 
 def _validate_revolution_by_frame(
@@ -700,16 +701,16 @@ def _validate_revolution_by_frame(
         raise ValueError("revolution_by_frame must match detections_by_frame length")
     values: list[int] = []
     for revolution in revolution_by_frame:
-        parsed = float(revolution)
-        if not np.isfinite(parsed) or not parsed.is_integer():
+        parsed = _finite_float(revolution, "revolution_by_frame")
+        if not parsed.is_integer():
             raise ValueError("revolution_by_frame values must be finite integers")
         values.append(int(parsed))
     return values
 
 
 def _integer_config_value(value: int, name: str) -> int:
-    parsed = float(value)
-    if not np.isfinite(parsed) or not parsed.is_integer():
+    parsed = _finite_float(value, name)
+    if not parsed.is_integer():
         raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
 
@@ -735,6 +736,18 @@ def _optional_positive_integer_config_value(
     if value is None:
         return None
     return _positive_integer_config_value(value, name)
+
+
+def _optional_nonnegative_float_config_value(
+    value: float | None,
+    name: str,
+) -> float | None:
+    if value is None:
+        return None
+    parsed = _finite_float(value, name)
+    if parsed < 0:
+        raise ValueError(f"{name} must be finite and non-negative when set")
+    return parsed
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
@@ -771,7 +784,21 @@ def _positive_integer_dimension(value: int, name: str) -> int:
 
 
 def _integer_dimension(value: int, name: str) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be a finite integer")
     parsed = float(value)
     if not np.isfinite(parsed) or not parsed.is_integer():
         raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
+
+
+def _finite_float(value: object, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
