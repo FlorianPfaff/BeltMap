@@ -57,7 +57,10 @@ def test_belt_revolution_indices_rejects_invalid_period(period_px):
     [
         (RecurrentArtifactConfig(min_revolutions=float("nan")), "min_revolutions"),
         (RecurrentArtifactConfig(min_revolutions=1.5), "min_revolutions"),
-        (RecurrentArtifactConfig(min_revolutions=1, margin_px=float("nan")), "margin_px"),
+        (
+            RecurrentArtifactConfig(min_revolutions=1, margin_px=float("nan")),
+            "margin_px",
+        ),
         (RecurrentArtifactConfig(min_revolutions=1, margin_px=1.5), "margin_px"),
         (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=float("nan")), "candidate_max_area_px"),
         (RecurrentArtifactConfig(min_revolutions=1, candidate_max_area_px=1.5), "candidate_max_area_px"),
@@ -109,6 +112,27 @@ def test_recurrent_artifact_scoring_rejects_nonfinite_phase_values():
         score_recurrent_artifact_detections(
             [[detection(0, 0, 0, 1, 1)]],
             phase_px_by_frame=[float("nan")],
+            artifact_map=np.zeros((2, 2), dtype=bool),
+            config=RecurrentArtifactConfig(min_revolutions=0),
+        )
+
+
+def test_recurrent_artifact_map_rejects_fractional_detection_bbox_coordinates():
+    with pytest.raises(ValueError, match="bbox_top"):
+        build_recurrent_artifact_map(
+            [[detection(0, 0.5, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
+            revolution_by_frame=[0],
+            map_shape=(2, 2),
+            config=RecurrentArtifactConfig(min_revolutions=1),
+        )
+
+
+def test_recurrent_artifact_scoring_rejects_fractional_detection_bbox_coordinates():
+    with pytest.raises(ValueError, match="bbox_top"):
+        score_recurrent_artifact_detections(
+            [[detection(0, 0.5, 0, 1, 1)]],
+            phase_px_by_frame=[0.0],
             artifact_map=np.zeros((2, 2), dtype=bool),
             config=RecurrentArtifactConfig(min_revolutions=0),
         )
@@ -435,7 +459,10 @@ def test_built_recurrent_probability_excludes_current_revolution_exposure():
         frame_shape=(1, 4),
     )
 
-    assert [score.artifact_probability for frame in scores for score in frame] == [1.0, 1.0]
+    assert [score.artifact_probability for frame in scores for score in frame] == [
+        1.0,
+        1.0,
+    ]
 
 
 def test_soft_recurrent_filter_keeps_strong_peak_and_rejects_weak_peak():

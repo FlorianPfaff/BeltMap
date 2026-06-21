@@ -1,4 +1,3 @@
-
 import numpy as np
 import pytest
 from PIL import Image
@@ -55,7 +54,10 @@ def test_cross_map_agreement_accepts_detection_confirmed_by_both_maps():
         primary,
         confirming,
         primary_residual=_residual(points=((10, 10),)),
-        confirming_residuals=[_residual(points=((10, 10),)), _residual(points=((10, 10),))],
+        confirming_residuals=[
+            _residual(points=((10, 10),)),
+            _residual(points=((10, 10),)),
+        ],
         config=CrossMapAgreementConfig(
             max_centroid_distance_px=2.0,
             min_bbox_iou=0.2,
@@ -81,7 +83,10 @@ def test_cross_map_agreement_rejects_when_one_map_does_not_reproduce_component()
         primary,
         confirming,
         primary_residual=_residual(points=((10, 10),)),
-        confirming_residuals=[_residual(points=((10, 10),)), _residual(points=((18, 18),))],
+        confirming_residuals=[
+            _residual(points=((10, 10),)),
+            _residual(points=((18, 18),)),
+        ],
         config=CrossMapAgreementConfig(
             max_centroid_distance_px=2.0,
             min_bbox_iou=0.2,
@@ -94,6 +99,36 @@ def test_cross_map_agreement_rejects_when_one_map_does_not_reproduce_component()
     assert not scores[0].accepted
     assert scores[0].confirming_maps == 1
     assert filter_detections_by_agreement(scores) == []
+
+
+def test_cross_map_agreement_rejects_fractional_bbox_coordinates():
+    primary = [_detection(bbox=(8.5, 8, 13, 13))]
+    confirming = [[_detection(label=7)]]
+
+    with pytest.raises(ValueError, match="first bbox_top"):
+        score_cross_map_agreement(
+            primary,
+            confirming,
+            config=CrossMapAgreementConfig(
+                require_sign_consistency=False,
+                min_confirming_maps=1,
+            ),
+        )
+
+
+def test_cross_map_agreement_rejects_degenerate_bbox_coordinates():
+    primary = [_detection(bbox=(8, 8, 8, 13))]
+    confirming = [[_detection(label=7)]]
+
+    with pytest.raises(ValueError, match="first bbox must have positive"):
+        score_cross_map_agreement(
+            primary,
+            confirming,
+            config=CrossMapAgreementConfig(
+                require_sign_consistency=False,
+                min_confirming_maps=1,
+            ),
+        )
 
 
 @pytest.mark.parametrize("min_confirming_maps", [float("nan"), 1.5, 0])
