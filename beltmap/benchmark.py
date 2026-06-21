@@ -78,6 +78,19 @@ def finite_nonnegative_int(value: Any) -> int | None:
     return parsed
 
 
+def truth_frame_index(value: Any) -> int | None:
+    """Return a truth frame index, ignoring negative explicit sentinels."""
+
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return None
+    parsed = finite_int(value)
+    if parsed is None:
+        raise ValueError("truth boxes must contain finite integer frame_index")
+    if parsed < 0:
+        return None
+    return parsed
+
+
 def validate_iou_threshold(value: float) -> float:
     """Return a finite IoU threshold in the open matching interval."""
 
@@ -467,10 +480,8 @@ def truth_event_boxes(truth: dict[str, Any]) -> list[dict[str, Any]]:
 
     boxes: list[dict[str, Any]] = []
     for particle in truth_particle_rows(truth):
-        frame_index = finite_nonnegative_int(particle.get("frame_index"))
+        frame_index = truth_frame_index(particle.get("frame_index"))
         if frame_index is None:
-            if truth_row_has_box_field(particle):
-                raise ValueError("truth boxes must contain a finite integer frame_index")
             continue
         try:
             box: dict[str, Any] = bbox_from_truth(particle)
@@ -890,10 +901,8 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
 
     grouped: dict[int, list[dict[str, float]]] = {}
     for particle in truth_particle_rows(truth):
-        frame_index = finite_nonnegative_int(particle.get("frame_index"))
+        frame_index = truth_frame_index(particle.get("frame_index"))
         if frame_index is None:
-            if truth_row_has_box_field(particle):
-                raise ValueError("truth boxes must contain a finite integer frame_index")
             continue
         try:
             grouped.setdefault(frame_index, []).append(bbox_from_truth(particle))
