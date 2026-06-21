@@ -67,11 +67,34 @@ def finite_int(value: Any) -> int | None:
     return int(parsed)
 
 
+def finite_nonnegative_int(value: Any) -> int | None:
+    """Return a non-negative integer or ``None`` when parsing fails."""
+
+    if isinstance(value, bool):
+        return None
+    parsed = finite_int(value)
+    if parsed is None or parsed < 0:
+        return None
+    return parsed
+
+
+def validate_iou_threshold(value: float) -> float:
+    """Return a finite IoU threshold in the open matching interval."""
+
+    threshold = finite_float(value)
+    if threshold is None or not 0.0 < threshold <= 1.0:
+        raise ValueError("iou_threshold must be finite and in (0, 1]")
+    return threshold
+
+
 def circular_signed_error_px(estimate: float, truth: float, period: float) -> float:
     """Return the signed circular error ``estimate - truth`` in pixels."""
 
-    if period <= 0:
-        raise ValueError("period must be positive")
+    if (
+        not all(math.isfinite(value) for value in (estimate, truth, period))
+        or period <= 0
+    ):
+        raise ValueError("estimate, truth, and positive period must be finite")
     return float((estimate - truth + 0.5 * period) % period - 0.5 * period)
 
 
@@ -88,19 +111,24 @@ def source_frame_index(row: dict[str, Any]) -> int | None:
     image = str(row.get("image", ""))
     if image:
         stem = Path(image).stem
-        frame_matches = re.findall(r"(?:^|[^A-Za-z0-9])frame[_-]?(\d+)", stem, flags=re.IGNORECASE)
+        frame_matches = re.findall(
+            r"(?:^|[^A-Za-z0-9])frame[_-]?(\d+)", stem, flags=re.IGNORECASE
+        )
         if frame_matches:
             return int(frame_matches[-1])
         matches = re.findall(r"\d+", stem)
         if len(matches) == 1:
             return int(matches[0])
-    return finite_int(row.get("frame_index"))
+    return finite_nonnegative_int(row.get("frame_index"))
 
 
-def summary_errors(values: Iterable[float], *, unit: str) -> dict[str, float | int | None]:
+def summary_errors(
+    values: Iterable[float], *, unit: str
+) -> dict[str, float | int | None]:
     """Summarize signed errors with absolute-error and RMSE statistics."""
 
     arr = np.asarray(list(values), dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
     if arr.size == 0:
         return {
             "count": 0,
@@ -144,7 +172,9 @@ def true_phase_px(truth: dict[str, Any], frame_index: int, period_px: float) -> 
     return float((-belt_shift * frame_index) % period_px)
 
 
-def phase_metrics(phase_rows: list[dict[str, str]], truth: dict[str, Any]) -> dict[str, Any]:
+def phase_metrics(
+    phase_rows: list[dict[str, str]], truth: dict[str, Any]
+) -> dict[str, Any]:
     """Compute circular phase-estimation errors against synthetic truth."""
 
     period = finite_float(truth.get("belt_period_px", truth.get("height")))
@@ -183,7 +213,9 @@ def resolve_truth_path(truth_path: Path, value: Any, fallback_name: str) -> Path
     return truth_path.parent / fallback_name
 
 
-def map_metrics(output_dir: Path, truth_path: Path, truth: dict[str, Any]) -> dict[str, Any]:
+def map_metrics(
+    output_dir: Path, truth_path: Path, truth: dict[str, Any]
+) -> dict[str, Any]:
     """Compare reconstructed and true belt maps with cyclic row-shift invariance."""
 
     reconstructed_path = output_dir / "belt_map.npy"
@@ -212,24 +244,45 @@ def map_metrics(output_dir: Path, truth_path: Path, truth: dict[str, Any]) -> di
             "reason": "Expected 2-D belt maps",
             "reconstructed_shape": list(reconstructed.shape),
         }
+    if reconstructed.shape[0] == 0 or reconstructed.shape[1] == 0:
+        return {
+            "available": False,
+            "reason": "Empty belt maps",
+            "reconstructed_shape": list(reconstructed.shape),
+        }
 
     best_shift = 0
     best_rmse = float("inf")
     best_mae = float("inf")
+    best_finite_pixels = 0
     for shift in range(target.shape[0]):
         shifted = np.roll(reconstructed, shift=shift, axis=0)
-        error = shifted - target
+        valid = np.isfinite(shifted) & np.isfinite(target)
+        if not np.any(valid):
+            continue
+        error = shifted[valid] - target[valid]
         rmse = float(np.sqrt(np.mean(np.square(error))))
         if rmse < best_rmse:
             best_shift = shift
             best_rmse = rmse
             best_mae = float(np.mean(np.abs(error)))
+            best_finite_pixels = int(np.count_nonzero(valid))
+
+    if not math.isfinite(best_rmse):
+        return {
+            "available": False,
+            "reason": "No finite paired belt-map pixels",
+            "reconstructed_map": str(reconstructed_path),
+            "truth_map": str(true_map_path),
+            "shape": list(reconstructed.shape),
+        }
 
     return {
         "available": True,
         "truth_map": str(true_map_path),
         "reconstructed_map": str(reconstructed_path),
         "shape": list(reconstructed.shape),
+        "finite_pixels": best_finite_pixels,
         "best_cyclic_shift_px": int(best_shift),
         "rmse_gray": best_rmse,
         "mean_abs_error_gray": best_mae,
@@ -299,7 +352,9 @@ def bbox_iou(a: dict[str, float], b: dict[str, float]) -> float:
     return 0.0 if union <= 0 else float(intersection / union)
 
 
-def detection_precision(true_positives: int, false_positives: int, false_negatives: int) -> float | None:
+def detection_precision(
+    true_positives: int, false_positives: int, false_negatives: int
+) -> float | None:
     """Return detection precision with a defined value for clean empty frames."""
 
     denominator = true_positives + false_positives
@@ -308,7 +363,9 @@ def detection_precision(true_positives: int, false_positives: int, false_negativ
     return 1.0 if false_negatives == 0 else 0.0
 
 
-def detection_recall(true_positives: int, false_positives: int, false_negatives: int) -> float | None:
+def detection_recall(
+    true_positives: int, false_positives: int, false_negatives: int
+) -> float | None:
     """Return detection recall with a defined value for clean empty frames."""
 
     denominator = true_positives + false_negatives
@@ -391,12 +448,15 @@ def truth_particle_rows(truth: dict[str, Any]) -> list[dict[str, Any]]:
         for frame in frames:
             if not isinstance(frame, dict):
                 continue
-            frame_index = finite_int(frame.get("frame_index"))
+            frame_index = finite_nonnegative_int(frame.get("frame_index"))
             for box in frame.get("boxes", []):
                 if not isinstance(box, dict):
                     continue
                 row = dict(box)
-                if frame_index is not None and finite_int(row.get("frame_index")) is None:
+                if (
+                    frame_index is not None
+                    and str(row.get("frame_index", "")).strip() == ""
+                ):
                     row["frame_index"] = frame_index
                 rows.append(row)
     return rows
@@ -407,7 +467,7 @@ def truth_event_boxes(truth: dict[str, Any]) -> list[dict[str, Any]]:
 
     boxes: list[dict[str, Any]] = []
     for particle in truth_particle_rows(truth):
-        frame_index = finite_int(particle.get("frame_index"))
+        frame_index = finite_nonnegative_int(particle.get("frame_index"))
         if frame_index is None:
             if truth_row_has_box_field(particle):
                 raise ValueError("truth boxes must contain a finite integer frame_index")
@@ -622,8 +682,13 @@ def compare_events(
         "predicted_frame_precision": matched_frames / pred_frames,
         "mean_frame_iou": float(np.mean(matched_ious)) if matched_ious else None,
         "first_matched_frame": first_matched_frame,
-        "latency_frames": None if first_matched_frame is None else first_matched_frame - int(target["frame_start"]),
-        "duration_error_frames": int(predicted["duration_frames"]) - int(target["duration_frames"]),
+        "latency_frames": (
+            None
+            if first_matched_frame is None
+            else first_matched_frame - int(target["frame_start"])
+        ),
+        "duration_error_frames": int(predicted["duration_frames"])
+        - int(target["duration_frames"]),
     }
 
 
@@ -636,8 +701,7 @@ def event_metrics(
 ) -> dict[str, Any]:
     """Compute event-level precision/recall against synthetic particle events."""
 
-    if not 0 <= iou_threshold <= 1:
-        raise ValueError("iou_threshold must be in [0, 1]")
+    iou_threshold = validate_iou_threshold(iou_threshold)
 
     truth_events = build_events_from_boxes(
         truth_event_boxes(truth),
@@ -655,7 +719,14 @@ def event_metrics(
         for truth_index, target in enumerate(truth_events):
             comparison = compare_events(predicted, target, iou_threshold=iou_threshold)
             if comparison["matched_frames"] > 0:
-                candidates.append((float(comparison["temporal_iou"]), pred_index, truth_index, comparison))
+                candidates.append(
+                    (
+                        float(comparison["temporal_iou"]),
+                        pred_index,
+                        truth_index,
+                        comparison,
+                    )
+                )
 
     matched_predictions: set[int] = set()
     matched_truths: set[int] = set()
@@ -672,7 +743,9 @@ def event_metrics(
     false_negatives = len(truth_events) - true_positives
     precision = true_positives / len(predicted_events) if predicted_events else None
     recall = true_positives / len(truth_events) if truth_events else None
-    birth_false_positive_rate = false_positives / len(predicted_events) if predicted_events else None
+    birth_false_positive_rate = (
+        false_positives / len(predicted_events) if predicted_events else None
+    )
     missed_event_rate = false_negatives / len(truth_events) if truth_events else None
     if precision is None or recall is None:
         f1 = None
@@ -685,13 +758,19 @@ def event_metrics(
     for _score, _pred_index, truth_index, _comparison in candidates:
         fragments_by_truth[truth_index] += 1
     extra_fragments = sum(max(0, count - 1) for count in fragments_by_truth.values())
-    fragmented_truth_events = sum(1 for count in fragments_by_truth.values() if count > 1)
+    fragmented_truth_events = sum(
+        1 for count in fragments_by_truth.values() if count > 1
+    )
     mean_fragments = (
         None
         if not truth_events
-        else float(np.mean(np.asarray(list(fragments_by_truth.values()), dtype=np.float64)))
+        else float(
+            np.mean(np.asarray(list(fragments_by_truth.values()), dtype=np.float64))
+        )
     )
-    track_fragmentation = None if not truth_events else float(extra_fragments / len(truth_events))
+    track_fragmentation = (
+        None if not truth_events else float(extra_fragments / len(truth_events))
+    )
 
     def mean_field(name: str) -> float | None:
         values = [finite_float(match.get(name)) for match in matches]
@@ -712,8 +791,14 @@ def event_metrics(
         "extra_fragment_events": extra_fragments,
         "mean_fragments_per_truth_event": mean_fragments,
         "track_fragmentation": track_fragmentation,
-        "birth_false_positive_rate": None if birth_false_positive_rate is None else float(birth_false_positive_rate),
-        "missed_event_rate": None if missed_event_rate is None else float(missed_event_rate),
+        "birth_false_positive_rate": (
+            None
+            if birth_false_positive_rate is None
+            else float(birth_false_positive_rate)
+        ),
+        "missed_event_rate": (
+            None if missed_event_rate is None else float(missed_event_rate)
+        ),
         "precision": None if precision is None else float(precision),
         "recall": None if recall is None else float(recall),
         "f1": None if f1 is None else float(f1),
@@ -727,7 +812,9 @@ def event_metrics(
     }
 
 
-def group_track_rows(track_rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+def group_track_rows(
+    track_rows: list[dict[str, str]],
+) -> dict[str, list[dict[str, str]]]:
     """Group track CSV rows by track identifier."""
 
     grouped: dict[str, list[dict[str, str]]] = {}
@@ -765,9 +852,13 @@ def track_metrics(
         "median_track_length": None if lengths.size == 0 else float(np.median(lengths)),
         "max_track_length": None if lengths.size == 0 else int(np.max(lengths)),
         "single_frame_tracks": single_frame_tracks,
-        "single_frame_track_fraction": None if lengths.size == 0 else float(single_frame_tracks / lengths.size),
+        "single_frame_track_fraction": (
+            None if lengths.size == 0 else float(single_frame_tracks / lengths.size)
+        ),
         "mean_track_span_frames": None if spans.size == 0 else float(np.mean(spans)),
-        "median_track_span_frames": None if spans.size == 0 else float(np.median(spans)),
+        "median_track_span_frames": (
+            None if spans.size == 0 else float(np.median(spans))
+        ),
     }
 
 
@@ -799,7 +890,7 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
 
     grouped: dict[int, list[dict[str, float]]] = {}
     for particle in truth_particle_rows(truth):
-        frame_index = finite_int(particle.get("frame_index"))
+        frame_index = finite_nonnegative_int(particle.get("frame_index"))
         if frame_index is None:
             if truth_row_has_box_field(particle):
                 raise ValueError("truth boxes must contain a finite integer frame_index")
@@ -813,7 +904,9 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
     return grouped
 
 
-def group_detection_boxes(detection_rows: list[dict[str, str]]) -> dict[int, list[dict[str, float]]]:
+def group_detection_boxes(
+    detection_rows: list[dict[str, str]],
+) -> dict[int, list[dict[str, float]]]:
     """Group predicted detection boxes by source frame."""
 
     grouped: dict[int, list[dict[str, float]]] = {}
@@ -835,8 +928,7 @@ def detection_metrics(
 ) -> dict[str, Any]:
     """Compute greedy IoU detection precision/recall against synthetic boxes."""
 
-    if not 0 <= iou_threshold <= 1:
-        raise ValueError("iou_threshold must be in [0, 1]")
+    iou_threshold = validate_iou_threshold(iou_threshold)
 
     truth_by_frame = group_truth_boxes(truth)
     pred_by_frame = group_detection_boxes(detection_rows)
@@ -873,7 +965,9 @@ def detection_metrics(
             matched_ious.append(iou)
             pred_y, pred_x = predicted_center(preds[pred_index])
             truth_y, truth_x = truth_center(truths[truth_index])
-            centroid_errors.append(float(math.hypot(pred_y - truth_y, pred_x - truth_x)))
+            centroid_errors.append(
+                float(math.hypot(pred_y - truth_y, pred_x - truth_x))
+            )
 
         false_positives += len(preds) - len(matched_preds)
         false_negatives += len(truths) - len(matched_truths)
@@ -887,37 +981,53 @@ def detection_metrics(
     return {
         "available": bool(frame_indices),
         "iou_threshold": iou_threshold,
-        "truth_boxes": sum(len(truth_by_frame.get(frame, [])) for frame in frame_indices),
-        "predicted_boxes": sum(len(pred_by_frame.get(frame, [])) for frame in frame_indices),
+        "truth_boxes": sum(
+            len(truth_by_frame.get(frame, [])) for frame in frame_indices
+        ),
+        "predicted_boxes": sum(
+            len(pred_by_frame.get(frame, [])) for frame in frame_indices
+        ),
         "true_positives": true_positives,
         "false_positives": false_positives,
         "false_negatives": false_negatives,
         "precision": None if precision is None else float(precision),
         "recall": None if recall is None else float(recall),
         "f1": None if f1 is None else float(f1),
-        "mean_matched_iou": None if iou_values.size == 0 else float(np.mean(iou_values)),
+        "mean_matched_iou": (
+            None if iou_values.size == 0 else float(np.mean(iou_values))
+        ),
         "mean_centroid_error_px": centroid_stats["mean_abs_error_px"],
         "median_centroid_error_px": centroid_stats["median_abs_error_px"],
         "max_centroid_error_px": centroid_stats["max_abs_error_px"],
     }
 
 
-def choose_velocity_row(velocity_rows: list[dict[str, str]], true_ratio: float | None) -> dict[str, str] | None:
+def choose_velocity_row(
+    velocity_rows: list[dict[str, str]], true_ratio: float | None
+) -> dict[str, str] | None:
     """Choose the representative velocity row for the simple synthetic benchmark."""
 
     if not velocity_rows:
         return None
 
     def key(row: dict[str, str]) -> tuple[int, float] | None:
-        detections = finite_int(row.get("n_detections")) or 0
+        detections = finite_nonnegative_int(row.get("n_detections")) or 0
         velocity = finite_float(row.get("velocity_y_px_per_frame"))
         ratio = finite_float(row.get("velocity_ratio_y"))
         if velocity is None and ratio is None:
             return None
-        ratio_penalty = abs(ratio - true_ratio) if ratio is not None and true_ratio is not None else float("inf")
+        ratio_penalty = (
+            abs(ratio - true_ratio)
+            if ratio is not None and true_ratio is not None
+            else float("inf")
+        )
         return detections, -ratio_penalty
 
-    candidates = [(candidate_key, row) for row in velocity_rows if (candidate_key := key(row)) is not None]
+    candidates = [
+        (candidate_key, row)
+        for row in velocity_rows
+        if (candidate_key := key(row)) is not None
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda item: item[0])[1]
@@ -935,11 +1045,19 @@ def choose_truth_matched_velocity_row(
         return None
 
     def penalties(row: dict[str, str]) -> tuple[float, float, int] | None:
-        detections = finite_int(row.get("n_detections")) or 0
+        detections = finite_nonnegative_int(row.get("n_detections")) or 0
         velocity = finite_float(row.get("velocity_y_px_per_frame"))
         ratio = finite_float(row.get("velocity_ratio_y"))
-        ratio_penalty = abs(ratio - true_ratio) if ratio is not None and true_ratio is not None else math.inf
-        velocity_penalty = abs(velocity - true_velocity) if velocity is not None and true_velocity is not None else math.inf
+        ratio_penalty = (
+            abs(ratio - true_ratio)
+            if ratio is not None and true_ratio is not None
+            else math.inf
+        )
+        velocity_penalty = (
+            abs(velocity - true_velocity)
+            if velocity is not None and true_velocity is not None
+            else math.inf
+        )
         if math.isinf(ratio_penalty) and math.isinf(velocity_penalty):
             return None
         return ratio_penalty, velocity_penalty, -detections
@@ -970,7 +1088,11 @@ def truth_velocity_values(truth: dict[str, Any]) -> tuple[float | None, float | 
         )
     )
     true_ratio = finite_float(truth.get("true_velocity_ratio_y"))
-    if true_ratio is None and true_velocity is not None and true_belt_velocity not in (None, 0):
+    if (
+        true_ratio is None
+        and true_velocity is not None
+        and true_belt_velocity not in (None, 0)
+    ):
         true_ratio = true_velocity / true_belt_velocity
     return true_velocity, true_ratio
 
@@ -990,8 +1112,12 @@ def velocity_distribution_metrics(
     estimate_arr = np.asarray(estimates, dtype=np.float64)
     result: dict[str, Any] = {
         "velocity_y_rows_with_estimate": int(estimate_arr.size),
-        "velocity_y_mean_px_per_frame": None if estimate_arr.size == 0 else float(np.mean(estimate_arr)),
-        "velocity_y_variance_px2_per_frame2": None if estimate_arr.size == 0 else float(np.var(estimate_arr)),
+        "velocity_y_mean_px_per_frame": (
+            None if estimate_arr.size == 0 else float(np.mean(estimate_arr))
+        ),
+        "velocity_y_variance_px2_per_frame2": (
+            None if estimate_arr.size == 0 else float(np.var(estimate_arr))
+        ),
     }
     if true_velocity is None or estimate_arr.size == 0:
         result.update(
@@ -1026,7 +1152,9 @@ def velocity_metrics(
     """Compare estimated track velocity against synthetic particle truth."""
 
     true_velocity, true_ratio = truth_velocity_values(truth)
-    distribution = velocity_distribution_metrics(velocity_rows, true_velocity=true_velocity)
+    distribution = velocity_distribution_metrics(
+        velocity_rows, true_velocity=true_velocity
+    )
 
     representative = choose_velocity_row(velocity_rows, true_ratio)
     if representative is None:
@@ -1047,26 +1175,58 @@ def velocity_metrics(
         true_velocity=true_velocity,
         true_ratio=true_ratio,
     )
-    matched_velocity = None if truth_matched is None else finite_float(truth_matched.get("velocity_y_px_per_frame"))
-    matched_ratio = None if truth_matched is None else finite_float(truth_matched.get("velocity_ratio_y"))
+    matched_velocity = (
+        None
+        if truth_matched is None
+        else finite_float(truth_matched.get("velocity_y_px_per_frame"))
+    )
+    matched_ratio = (
+        None
+        if truth_matched is None
+        else finite_float(truth_matched.get("velocity_ratio_y"))
+    )
     return {
         "available": estimated_velocity is not None or estimated_ratio is not None,
         "prediction_source": prediction_source,
         "velocity_rows": len(velocity_rows),
         "representative_track_id": finite_int(representative.get("track_id")),
-        "representative_track_detections": finite_int(representative.get("n_detections")),
+        "representative_track_detections": finite_nonnegative_int(
+            representative.get("n_detections")
+        ),
         "truth_velocity_y_px_per_frame": true_velocity,
         "estimated_velocity_y_px_per_frame": estimated_velocity,
-        "velocity_y_error_px_per_frame": None if true_velocity is None or estimated_velocity is None else float(estimated_velocity - true_velocity),
+        "velocity_y_error_px_per_frame": (
+            None
+            if true_velocity is None or estimated_velocity is None
+            else float(estimated_velocity - true_velocity)
+        ),
         "truth_velocity_ratio_y": true_ratio,
         "estimated_velocity_ratio_y": estimated_ratio,
-        "velocity_ratio_error": None if true_ratio is None or estimated_ratio is None else float(estimated_ratio - true_ratio),
-        "truth_matched_track_id": None if truth_matched is None else finite_int(truth_matched.get("track_id")),
-        "truth_matched_track_detections": None if truth_matched is None else finite_int(truth_matched.get("n_detections")),
+        "velocity_ratio_error": (
+            None
+            if true_ratio is None or estimated_ratio is None
+            else float(estimated_ratio - true_ratio)
+        ),
+        "truth_matched_track_id": (
+            None if truth_matched is None else finite_int(truth_matched.get("track_id"))
+        ),
+        "truth_matched_track_detections": (
+            None
+            if truth_matched is None
+            else finite_nonnegative_int(truth_matched.get("n_detections"))
+        ),
         "truth_matched_velocity_y_px_per_frame": matched_velocity,
-        "truth_matched_velocity_y_error_px_per_frame": None if true_velocity is None or matched_velocity is None else float(matched_velocity - true_velocity),
+        "truth_matched_velocity_y_error_px_per_frame": (
+            None
+            if true_velocity is None or matched_velocity is None
+            else float(matched_velocity - true_velocity)
+        ),
         "truth_matched_velocity_ratio_y": matched_ratio,
-        "truth_matched_velocity_ratio_error": None if true_ratio is None or matched_ratio is None else float(matched_ratio - true_ratio),
+        "truth_matched_velocity_ratio_error": (
+            None
+            if true_ratio is None or matched_ratio is None
+            else float(matched_ratio - true_ratio)
+        ),
         **distribution,
     }
 
@@ -1096,10 +1256,11 @@ def runtime_metrics(output_dir: Path) -> dict[str, Any]:
     metadata_path = output_dir / "metadata.json"
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
     progress_rows = read_progress_jsonl(output_dir / "progress.jsonl")
-    elapsed = finite_float(metadata.get("elapsed_s"))
-    frames = finite_int(metadata.get("n_images"))
+    raw_elapsed = finite_float(metadata.get("elapsed_s"))
+    elapsed = raw_elapsed if raw_elapsed is not None and raw_elapsed >= 0 else None
+    frames = finite_nonnegative_int(metadata.get("n_images"))
     rss_values = [finite_float(row.get("rss_mb")) for row in progress_rows]
-    rss_values = [value for value in rss_values if value is not None]
+    rss_values = [value for value in rss_values if value is not None and value >= 0]
     fps = None if elapsed in (None, 0) or frames is None else frames / elapsed
     return {
         "available": bool(metadata or progress_rows),
@@ -1132,11 +1293,13 @@ def compute_benchmark_metrics(
     metadata = read_json(metadata_path) if metadata_path.is_file() else {}
     truth_rows = truth_particle_rows(truth)
     event_prediction_rows = track_rows if tracks_path.is_file() else detection_rows
-    event_prediction_source = "tracks.csv" if tracks_path.is_file() else "detections.csv"
+    event_prediction_source = (
+        "tracks.csv" if tracks_path.is_file() else "detections.csv"
+    )
     truth_frame_count = (
         len(truth.get("frames"))
         if isinstance(truth.get("frames"), list)
-        else finite_int(truth.get("frames"))
+        else finite_nonnegative_int(truth.get("frames"))
     )
 
     return {
@@ -1166,7 +1329,9 @@ def compute_benchmark_metrics(
         },
         "phase": phase_metrics(phase_rows, truth),
         "belt_map": map_metrics(output_dir, truth_path, truth),
-        "detections": detection_metrics(detection_rows, truth, iou_threshold=iou_threshold),
+        "detections": detection_metrics(
+            detection_rows, truth, iou_threshold=iou_threshold
+        ),
         "tracks": (
             track_metrics(track_rows, prediction_source="tracks.csv")
             if tracks_path.is_file()
@@ -1202,7 +1367,9 @@ def compute_benchmark_metrics(
                 prediction_source="filtered_tracks.csv",
             )
         ),
-        "velocity": velocity_metrics(velocity_rows, truth, prediction_source="velocities.csv"),
+        "velocity": velocity_metrics(
+            velocity_rows, truth, prediction_source="velocities.csv"
+        ),
         "filtered_velocity": (
             velocity_metrics(
                 filtered_velocity_rows,
@@ -1224,13 +1391,31 @@ def compute_benchmark_metrics(
 def format_value(value: Any, *, digits: int = 4) -> str:
     """Format values compactly for Markdown tables."""
 
+    if isinstance(value, np.generic):
+        return format_value(value.item(), digits=digits)
     if value is None:
         return "n/a"
     if isinstance(value, float):
+        if not math.isfinite(value):
+            return "n/a"
         if abs(value) >= 1000 or (0 < abs(value) < 1e-3):
             return f"{value:.{digits}g}"
         return f"{value:.{digits}f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def json_safe(value: Any) -> Any:
+    """Return JSON-safe benchmark output without non-finite number literals."""
+
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, np.generic):
+        return json_safe(value.item())
+    if isinstance(value, dict):
+        return {str(key): json_safe(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [json_safe(child) for child in value]
+    return value
 
 
 def markdown_report(metrics: dict[str, Any]) -> str:
@@ -1385,7 +1570,10 @@ def write_benchmark_artifacts(
 
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    safe_metrics = json_safe(metrics)
+    metrics_path.write_text(
+        json.dumps(safe_metrics, indent=2, allow_nan=False), encoding="utf-8"
+    )
     report_path.write_text(markdown_report(metrics), encoding="utf-8")
     return BenchmarkArtifacts(metrics=metrics_path, report=report_path)
 
@@ -1401,7 +1589,9 @@ def generate_benchmark_report(
     """Compute and write synthetic benchmark artifacts."""
 
     if not output_dir.is_dir():
-        raise FileNotFoundError(f"BeltMap output directory does not exist: {output_dir}")
+        raise FileNotFoundError(
+            f"BeltMap output directory does not exist: {output_dir}"
+        )
     metrics = compute_benchmark_metrics(
         output_dir=output_dir,
         truth_path=truth_path,
