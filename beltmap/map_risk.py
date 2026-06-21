@@ -70,18 +70,19 @@ def compute_belt_map_risk_maps(
     support_arr = np.asarray(support, dtype=np.float32)
     if support_arr.ndim != 2:
         raise ValueError("support must be a 2-D array")
-    if not np.isfinite(min_support) or min_support < 0.0:
+    min_support_value = _finite_float(min_support, "min_support")
+    if min_support_value < 0.0:
         raise ValueError("min_support must be finite and non-negative")
 
     observed = np.isfinite(support_arr) & (support_arr > 0.0)
     clean_support = np.where(observed, support_arr, 0.0).astype(np.float32, copy=False)
     interpolated = ~observed
-    if min_support <= 0.0:
+    if min_support_value <= 0.0:
         low_support = interpolated.copy()
         risk = interpolated.astype(np.float32)
     else:
-        low_support = clean_support < float(min_support)
-        deficit = (float(min_support) - clean_support) / float(min_support)
+        low_support = clean_support < min_support_value
+        deficit = (min_support_value - clean_support) / min_support_value
         risk = np.clip(deficit, 0.0, 1.0).astype(np.float32, copy=False)
         risk[interpolated] = 1.0
 
@@ -180,10 +181,10 @@ def _bbox_map_risk_stats(
     low_support_view: np.ndarray,
 ) -> dict[str, float | None]:
     height, width = support_view.shape
-    top = max(0, int(detection.bbox_top))
-    left = max(0, int(detection.bbox_left))
-    bottom = min(height, int(detection.bbox_bottom))
-    right = min(width, int(detection.bbox_right))
+    top = max(0, _integer_coordinate(detection.bbox_top, "bbox_top"))
+    left = max(0, _integer_coordinate(detection.bbox_left, "bbox_left"))
+    bottom = min(height, _integer_coordinate(detection.bbox_bottom, "bbox_bottom"))
+    right = min(width, _integer_coordinate(detection.bbox_right, "bbox_right"))
     if bottom <= top or right <= left:
         return {
             "map_support_min": None,
@@ -243,12 +244,32 @@ def _validate_frame_shape(frame_shape: tuple[int, int]) -> tuple[int, int]:
 
 
 def _positive_integer_dimension(value: int, name: str) -> int:
-    parsed = float(value)
-    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+    parsed = _finite_float(value, name)
+    if not parsed.is_integer() or parsed < 1:
         raise ValueError(f"{name} must be a positive finite integer")
     return int(parsed)
 
 
+def _integer_coordinate(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
+
+
 def _validate_probability_threshold(name: str, value: float) -> None:
-    if not np.isfinite(value) or value < 0.0 or value > 1.0:
+    parsed = _finite_float(value, name)
+    if parsed < 0.0 or parsed > 1.0:
         raise ValueError(f"{name} must be in [0, 1], got {value!r}")
+
+
+def _finite_float(value: object, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed

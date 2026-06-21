@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import numpy as np
 from PIL import Image
@@ -13,6 +15,7 @@ from beltmap import (
     render_belt_view,
 )
 from beltmap import _driver_runtime as rt
+from beltmap.cli.apply import build_parser, resolve_driver_env
 from beltmap._driver_map import (
     build_belt_map,
     map_sampling_strategy_from_env,
@@ -83,6 +86,23 @@ def test_map_sampling_strategy_env_prefers_canonical_alias(monkeypatch):
     monkeypatch.setenv("MAP_SAMPLING_STRATEGY", "adaptive_phase_coverage")
 
     assert map_sampling_strategy_from_env() == "adaptive_phase_coverage"
+
+
+def test_apply_config_resolves_map_exclusion_mask_path(tmp_path):
+    mask_path = tmp_path / "ghost_defect_mask.npy"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"map": {"exclusion_mask_path": str(mask_path)}}),
+        encoding="utf-8",
+    )
+
+    namespace = build_parser().parse_args(["--config", str(config_path), "--dry-run"])
+    env_updates, report = resolve_driver_env(namespace, environ={})
+
+    assert env_updates["MAP_EXCLUSION_MASK_PATH"] == str(mask_path)
+    option = report["options"]["map_exclusion_mask_path"]
+    assert option["env_var"] == "MAP_EXCLUSION_MASK_PATH"
+    assert option["source"] == f"config:{config_path}"
 
 
 def test_phase_estimate_row_reports_circular_coordinates():
@@ -433,7 +453,21 @@ def test_learn_static_residual_noise_map_estimates_per_pixel_mad(tmp_path, monke
     assert not any(output_dir.glob("static_noise_*"))
 
 
-def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("mask_mode", "belt_base", "particle_signal"),
+    [
+        ("positive", 70.0, 80.0),
+        ("dark", 170.0, -80.0),
+    ],
+    ids=["bright-particles", "dark-particles"],
+)
+def test_build_belt_map_masks_particle_contaminated_observations(
+    tmp_path,
+    monkeypatch,
+    mask_mode,
+    belt_base,
+    particle_signal,
+):
     monkeypatch.setenv("MAP_SAMPLE_FRAMES", "40")
     monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
 
@@ -443,7 +477,12 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
     velocity = 4.0
     y = np.arange(period, dtype=float)[:, None]
     x = np.arange(width, dtype=float)[None, :]
-    true_belt = np.round(70 + 0.35 * y + 8 * np.sin(2 * np.pi * y / 11) + 3 * np.cos(2 * np.pi * x / 5))
+    true_belt = np.round(
+        belt_base
+        + 0.35 * y
+        + 8 * np.sin(2 * np.pi * y / 11)
+        + 3 * np.cos(2 * np.pi * x / 5)
+    )
     particle_rows = np.arange(12, 17)
     particle_cols = np.arange(5, 10)
     particle_frames = set(range(10))
@@ -456,7 +495,7 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
         if frame_index in particle_frames:
             for image_y, belt_y in enumerate(rows):
                 if belt_y in particle_rows:
-                    frame[image_y, particle_cols] += 80
+                    frame[image_y, particle_cols] += particle_signal
         path = tmp_path / f"frame_{frame_index:03d}.bmp"
         Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)).save(path)
         paths.append(path)
@@ -474,6 +513,7 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
         velocity,
         period,
         mask_iterations=1,
+        mask_mode=mask_mode,
         mask_threshold=3.0,
         mask_margin_px=1,
         mask_min_area_px=2,
