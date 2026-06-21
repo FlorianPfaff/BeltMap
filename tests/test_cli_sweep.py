@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from beltmap.cli import sweep as cli_sweep
 
 
@@ -18,6 +20,146 @@ low_threshold = 0.0
 """,
         encoding="utf-8",
     )
+
+
+@pytest.mark.parametrize("value", ["", " ", "nan", "inf"])
+def test_sweep_parse_scalar_rejects_empty_or_nonfinite_values(value):
+    with pytest.raises(ValueError):
+        cli_sweep.parse_scalar(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["=1", "detection.=1", "detection.threshold=", "detection.threshold=1,"],
+)
+def test_sweep_parse_param_rejects_malformed_keys_or_values(value):
+    with pytest.raises(ValueError):
+        cli_sweep.parse_param(value)
+
+
+def test_sweep_set_and_get_dotted_reject_empty_components():
+    with pytest.raises(ValueError, match="dotted keys"):
+        cli_sweep.set_dotted({}, "detection..threshold", 3.0)
+    with pytest.raises(ValueError, match="dotted keys"):
+        cli_sweep.get_dotted({}, "detection..threshold")
+
+
+def test_sweep_toml_value_rejects_none_and_nonfinite_numbers():
+    with pytest.raises(ValueError, match="None"):
+        cli_sweep.toml_value(None)
+    with pytest.raises(ValueError, match="finite"):
+        cli_sweep.toml_value(float("nan"))
+
+
+def test_sweep_false_positives_per_frame_ignores_invalid_counts():
+    assert (
+        cli_sweep.false_positives_per_frame(
+            {"detections": {"false_positives": -1}, "case": {"frames": 10}}
+        )
+        is None
+    )
+    assert (
+        cli_sweep.false_positives_per_frame(
+            {"detections": {"false_positives": 1}, "case": {"frames": -10}}
+        )
+        is None
+    )
+
+
+def test_sweep_froc_points_filters_invalid_operating_points():
+    points = cli_sweep.sweep_froc_points(
+        [
+            {"false_positives_per_frame": -0.1, "detection_recall": 0.8},
+            {"false_positives_per_frame": 0.1, "detection_recall": 1.2},
+            {
+                "false_positives_per_frame": 0.2,
+                "detection_recall": 0.7,
+                "detection_threshold": 3.0,
+            },
+        ]
+    )
+
+    assert points == [(0.2, 0.7, "3.0")]
+
+
+def test_sweep_benchmark_summary_sanitizes_invalid_metrics(tmp_path):
+    row = cli_sweep.benchmark_summary_row(
+        run_index=0,
+        output_dir=tmp_path / "run",
+        config={"detection": {"threshold": 3.0}},
+        overrides={},
+        metrics={
+            "case": {"frames": 10},
+            "detections": {
+                "precision": 1.2,
+                "recall": 0.5,
+                "f1": float("nan"),
+                "false_positives": -1,
+            },
+            "tracks": {"mean_track_length": -2, "single_frame_track_fraction": 1.5},
+            "velocity": {
+                "velocity_y_error_std_px_per_frame": -0.1,
+                "velocity_y_bias_px_per_frame": float("inf"),
+            },
+            "phase": {"rmse_px": -0.5},
+        },
+    )
+
+    assert row["detection_precision"] is None
+    assert row["detection_recall"] == 0.5
+    assert row["detection_f1"] is None
+    assert row["false_positives_per_frame"] is None
+    assert row["mean_track_length"] is None
+    assert row["single_frame_track_fraction"] is None
+    assert row["velocity_y_error_std_px_per_frame"] is None
+    assert row["velocity_y_bias_px_per_frame"] is None
+    assert row["phase_rmse_px"] is None
+
+
+def test_sweep_markdown_value_hides_nonfinite_values():
+    assert cli_sweep.markdown_value(float("nan")) == "n/a"
+
+
+def test_sweep_cli_rejects_invalid_benchmark_iou_threshold(tmp_path, capsys):
+    base_config = tmp_path / "beltmap.toml"
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    write_base_config(base_config, image_dir)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_sweep.main(
+            [
+                "--base-config",
+                str(base_config),
+                "--benchmark-iou-threshold",
+                "nan",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "IoU threshold" in capsys.readouterr().err
+
+
+def test_sweep_cli_rejects_none_sweep_values_that_cannot_be_written(tmp_path, capsys):
+    base_config = tmp_path / "beltmap.toml"
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    write_base_config(base_config, image_dir)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_sweep.main(
+            [
+                "--base-config",
+                str(base_config),
+                "--param",
+                "detection.threshold=none",
+                "--output-root",
+                str(tmp_path / "sweep"),
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "None" in capsys.readouterr().err
 
 
 def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
@@ -88,7 +230,9 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
             "belt_map": {"rmse_gray": 1.5},
         }
         metrics_file.write_text(json.dumps(metrics), encoding="utf-8")
-        return SimpleNamespace(metrics=metrics_file, report=Path(output_dir) / "benchmark_report.md")
+        return SimpleNamespace(
+            metrics=metrics_file, report=Path(output_dir) / "benchmark_report.md"
+        )
 
     monkeypatch.setattr(cli_sweep, "generate_benchmark_report", fake_benchmark_report)
 
@@ -107,7 +251,11 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
 
     assert exit_code == 0
     rows = list(
-        csv.DictReader((tmp_path / "sweep" / "sweep_metrics.csv").open(newline="", encoding="utf-8"))
+        csv.DictReader(
+            (tmp_path / "sweep" / "sweep_metrics.csv").open(
+                newline="", encoding="utf-8"
+            )
+        )
     )
     assert [row["detection_threshold"] for row in rows] == ["2.0", "3.0"]
     assert rows[0]["false_positives_per_frame"] == "0.2"
@@ -117,9 +265,12 @@ def test_sweep_writes_benchmark_curve_summaries(tmp_path, monkeypatch):
     assert rows[0]["velocity_y_bias_px_per_frame"] == "-0.15"
     assert rows[0]["birth_false_positive_rate"] == "0.25"
     assert rows[0]["truth_matched_velocity_y_error_px_per_frame"] == "-0.1"
-    assert json.loads((tmp_path / "sweep" / "sweep_metrics.json").read_text(encoding="utf-8"))[1][
-        "detection_precision"
-    ] == 0.9
+    assert (
+        json.loads(
+            (tmp_path / "sweep" / "sweep_metrics.json").read_text(encoding="utf-8")
+        )[1]["detection_precision"]
+        == 0.9
+    )
     report = (tmp_path / "sweep" / "sweep_report.md").read_text(encoding="utf-8")
     assert (tmp_path / "sweep" / "sweep_froc_curve.svg").is_file()
     assert "Detection FROC" in report
