@@ -75,12 +75,23 @@ MetricFunction = Callable[[np.ndarray], float | None]
 
 
 def _finite_float_value(value: Any, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be finite") from exc
     if not math.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    parsed = finite_float(value)
     return parsed
 
 
@@ -123,7 +134,7 @@ def finite_values(rows: Iterable[Mapping[str, Any]], field: str) -> list[float]:
 
     values: list[float] = []
     for row in rows:
-        value = finite_float(row.get(field))
+        value = _optional_finite_float(row.get(field))
         if value is not None:
             values.append(value)
     return values
@@ -161,9 +172,9 @@ def ci_summary(
     confidence_level = _confidence_level_value(confidence_level)
     arr = np.asarray(
         [
-            float(value)
+            parsed
             for value in values
-            if value is not None and math.isfinite(float(value))
+            if (parsed := _optional_finite_float(value)) is not None
         ],
         dtype=np.float64,
     )
@@ -454,6 +465,8 @@ def bootstrap_run_summary(
         "block_length_frames",
     )
     truth_iou_threshold = _iou_threshold_value(truth_iou_threshold)
+    if seed is not None:
+        seed = _nonnegative_integer_value(seed, "seed")
 
     result = empty_bootstrap_metrics()
     if samples == 0:
