@@ -255,6 +255,8 @@ def finite_float(value: Any) -> float | None:
 
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -271,6 +273,42 @@ def finite_int(value: Any) -> int | None:
     if parsed is None or not parsed.is_integer():
         return None
     return int(parsed)
+
+
+def validated_unit_interval(value: Any, name: str) -> float:
+    """Parse a finite numeric value in the closed interval [0, 1]."""
+
+    parsed = finite_float(value)
+    if parsed is None or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be a finite number in [0, 1]")
+    return parsed
+
+
+def validated_open_unit_interval(value: Any, name: str) -> float:
+    """Parse a finite numeric value in the open interval (0, 1)."""
+
+    parsed = finite_float(value)
+    if parsed is None or not 0.0 < parsed < 1.0:
+        raise ValueError(f"{name} must be a finite number in (0, 1)")
+    return parsed
+
+
+def validated_nonnegative_int(value: Any, name: str) -> int:
+    """Parse a non-negative integer without boolean coercion."""
+
+    parsed = finite_int(value)
+    if parsed is None or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return parsed
+
+
+def validated_positive_int(value: Any, name: str) -> int:
+    """Parse a positive integer without boolean coercion."""
+
+    parsed = validated_nonnegative_int(value, name)
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
 
 
 def nonempty_value(row: dict[str, Any], key: str) -> Any | None:
@@ -1912,12 +1950,24 @@ def generate_comparison_report(
         raise ValueError("at least one run is required")
     if len(specs) < 2 and truth_path is None:
         raise ValueError("at least two runs are required when no truth labels are supplied")
-    if bootstrap_samples < 0:
-        raise ValueError("bootstrap samples must be non-negative")
-    if not 0.0 < bootstrap_confidence_level < 1.0:
-        raise ValueError("bootstrap confidence level must be between 0 and 1")
-    if bootstrap_block_length_frames < 1:
-        raise ValueError("bootstrap block length must be at least 1 frame")
+    truth_iou_threshold = validated_unit_interval(
+        truth_iou_threshold,
+        "truth_iou_threshold",
+    )
+    bootstrap_samples = validated_nonnegative_int(
+        bootstrap_samples,
+        "bootstrap_samples",
+    )
+    bootstrap_confidence_level = validated_open_unit_interval(
+        bootstrap_confidence_level,
+        "bootstrap_confidence_level",
+    )
+    bootstrap_block_length_frames = validated_positive_int(
+        bootstrap_block_length_frames,
+        "bootstrap_block_length_frames",
+    )
+    if bootstrap_seed is not None:
+        bootstrap_seed = validated_nonnegative_int(bootstrap_seed, "bootstrap_seed")
     report_dir.mkdir(parents=True, exist_ok=True)
     labeled_truth = (
         None if truth_path is None else load_labeled_detection_truth(truth_path)
