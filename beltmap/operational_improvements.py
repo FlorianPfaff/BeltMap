@@ -1114,19 +1114,24 @@ def classify_failure_modes(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
     def add(code: str, severity: str, message: str) -> None:
         warnings.append({"code": code, "severity": severity, "message": message})
 
-    if metric("phase_boundary_fraction", 0.0) > 0.1:
+    if _summary_metric(summary, "phase_boundary_fraction", default=0.0) > 0.1:
         add("registration-search-boundary", "high", "Many phase corrections hit the search boundary; increase registration radius or improve velocity calibration.")
-    if metric("registration_score_median", 1.0) < 0.2:
+    if _summary_metric(summary, "registration_score_median", default=1.0) < 0.2:
         add("low-registration-score", "high", "Median phase-registration score is low; check belt texture, crop, and map quality.")
-    if metric("small_component_share_area_le_8", 0.0) > 0.5:
+    if _summary_metric(summary, "small_component_share_area_le_8", default=0.0) > 0.5:
         add("many-small-components", "medium", "Most detections are tiny; raise threshold or enable shape/edge gates.")
-    if metric("velocity_ratio_share_0_to_1", 1.0) < 0.5:
+    if _summary_metric(summary, "velocity_ratio_share_0_to_1", default=1.0) < 0.5:
         add("implausible-velocity-ratios", "high", "Few velocities are in the expected [0, 1] belt-relative range.")
-    if metric("map_low_coverage_fraction", 0.0) > 0.05:
+    if _summary_metric(summary, "map_low_coverage_fraction", default=0.0) > 0.05:
         add("low-map-coverage", "medium", "Some belt-map pixels have low coverage; increase sample frames or use adaptive sampling.")
-    if metric("track_fragmentation", 0.0) > 0.5:
+    if _summary_metric(summary, "track_fragmentation", default=0.0) > 0.5:
         add("track-fragmentation", "medium", "Tracks are fragmented; use wider PyRecEst matching or tracklet stitching.")
     return warnings
+
+
+def _summary_metric(summary: Mapping[str, Any], key: str, *, default: float) -> float:
+    value = _finite_float(summary.get(key))
+    return default if value is None else value
 
 
 def classify_event(
@@ -1396,6 +1401,8 @@ def _connected_component_masks(mask: BoolArray) -> list[BoolArray]:
 
 def _finite_float(value: Any) -> float | None:
     if value is None or value == "":
+        return None
+    if isinstance(value, (bool, np.bool_)):
         return None
     try:
         parsed = float(value)
