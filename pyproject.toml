@@ -79,7 +79,7 @@ beltmap-evaluate-tracklets = "beltmap.cli.evaluate_tracklets:main"
 
 [project.optional-dependencies]
 test = [
-    "pytest>=7",
+    "pytest>=9.1.1",
 ]
 speed = [
     "scikit-image>=0.26.0",
