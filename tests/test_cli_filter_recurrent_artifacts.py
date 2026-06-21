@@ -95,6 +95,61 @@ def test_int_option_rejects_fractional_config_values():
         )
 
 
+def test_finite_int_rejects_boolean_values():
+    assert fra.finite_int(True) is None
+    assert fra.finite_int(False) is None
+
+
+def test_group_detections_rejects_nonfinite_centroids():
+    with pytest.raises(ValueError, match="y must be a finite numeric field"):
+        fra.group_detections([detection_row(y="nan")], frame_count=1)
+
+
+def test_parse_detection_ignores_nonfinite_optional_signals():
+    detection = fra.parse_detection(
+        detection_row(
+            mean_signal="nan",
+            peak_signal="inf",
+            recurrent_artifact_overlap_fraction="bad",
+        )
+    )
+
+    assert detection.mean_signal is None
+    assert detection.peak_signal is None
+    assert detection.recurrent_artifact_overlap_fraction is None
+
+
+def test_load_phase_px_by_frame_rejects_nonfinite_phase(tmp_path):
+    phase_path = tmp_path / "phase_estimates.csv"
+    write_csv(
+        phase_path,
+        [
+            {"frame_index": "0", "phase_px": "nan"},
+        ],
+        ["frame_index", "phase_px"],
+    )
+
+    with pytest.raises(ValueError, match="phase_px must be a finite numeric field"):
+        fra.load_phase_px_by_frame(phase_path, frame_count=1)
+
+
+def test_finite_nonzero_float_rejects_boolean_values():
+    with pytest.raises(ValueError, match="belt_velocity_px_per_frame must be finite and non-zero"):
+        fra.finite_nonzero_float(True, name="belt_velocity_px_per_frame")
+
+
+def test_summarize_detection_areas_ignores_invalid_values():
+    rows = [
+        {"area_px": True},
+        {"area_px": "nan"},
+        {"area_px": "bad"},
+        {"area_px": 8},
+        {"area_px": 12},
+    ]
+
+    assert fra.summarize_detection_areas(rows) == 10.0
+
+
 def test_postrun_recurrent_artifact_filter_rejects_cross_revolution_hits(tmp_path):
     input_dir = tmp_path / "source"
     output_dir = tmp_path / "filtered"

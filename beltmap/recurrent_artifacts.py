@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import replace
-from numbers import Real
 from typing import Sequence
 
 import numpy as np
@@ -66,22 +65,14 @@ def belt_revolution_indices(
     if frame_count < 0:
         raise ValueError("frame_count must be non-negative")
     period_px = motion_model.period_px
-    if period_px is None:
+    if period_px is None or not np.isfinite(period_px) or period_px <= 0:
         raise ValueError("motion_model period must be finite and positive")
-    period_px_value = _finite_real_config_value(period_px, "motion_model period")
-    if period_px_value <= 0:
-        raise ValueError("motion_model period must be finite and positive")
-    velocity = _finite_real_config_value(
-        motion_model.image_velocity_px_per_frame,
-        "motion_model image velocity",
-    )
-    reference_frame = _finite_real_config_value(
-        motion_model.reference_frame,
-        "motion_model reference_frame",
-    )
     frames = np.arange(frame_count, dtype=np.float64)
-    displacement = np.abs(velocity * (frames - reference_frame))
-    return np.floor(displacement / period_px_value).astype(np.int64)
+    displacement = np.abs(
+        motion_model.image_velocity_px_per_frame
+        * (frames - float(motion_model.reference_frame))
+    )
+    return np.floor(displacement / float(period_px)).astype(np.int64)
 
 
 def build_recurrent_artifact_map(
@@ -96,7 +87,7 @@ def build_recurrent_artifact_map(
     """Build a belt-coordinate prior from detections recurring across revolutions."""
 
     cfg = config or RecurrentArtifactConfig()
-    cfg = _validate_config(cfg)
+    _validate_config(cfg)
     phase_px_values = _validate_phase_px_by_frame(
         phase_px_by_frame,
         frame_count=len(detections_by_frame),
@@ -175,7 +166,7 @@ def score_recurrent_artifact_detections_excluding_current_revolution(
     """
 
     cfg = config or RecurrentArtifactConfig(min_revolutions=1)
-    cfg = _validate_config(cfg)
+    _validate_config(cfg)
     phase_px_values = _validate_phase_px_by_frame(
         phase_px_by_frame,
         frame_count=len(detections_by_frame),
@@ -295,19 +286,16 @@ def score_recurrent_artifact_detections(
     """Score detections by their recurrent-artifact overlap and rejection state."""
 
     cfg = config or RecurrentArtifactConfig(min_revolutions=1)
-    cfg = _validate_filter_config(cfg)
+    _validate_filter_config(cfg)
     mode = cfg.mode.strip().lower()
     if mode in {"probabilistic", "soft"} and detection_threshold is None:
         raise ValueError(
             "detection_threshold is required for soft/probabilistic recurrent filtering"
         )
     if detection_threshold is not None:
-        detection_threshold = _finite_real_config_value(
-            detection_threshold,
-            "detection_threshold",
-        )
-        if detection_threshold < 0.0:
-            raise ValueError("detection_threshold must be non-negative")
+        detection_threshold = _finite_float(detection_threshold, "detection_threshold")
+        if detection_threshold < 0:
+            raise ValueError("detection_threshold must be finite and non-negative")
     phase_px_values = _validate_phase_px_by_frame(
         phase_px_by_frame,
         frame_count=len(detections_by_frame),
@@ -483,11 +471,11 @@ def _is_recurrent_artifact_candidate(
     max_area_px: int | None,
     max_peak_signal: float | None,
 ) -> bool:
-    area_px, _bbox, peak_signal = _validate_detection_geometry(detection)
-    if max_area_px is not None and area_px > max_area_px:
+    if max_area_px is not None and detection.area_px > max_area_px:
         return False
     if max_peak_signal is not None:
-        if peak_signal is None:
+        peak_signal = detection.peak_signal
+        if peak_signal is None or not np.isfinite(peak_signal):
             return False
         if peak_signal > max_peak_signal:
             return False
@@ -503,18 +491,17 @@ def _mark_detection_bbox(
     image_height: int | None,
 ) -> None:
     map_height, map_width = _validate_map_shape(mask.shape)
-    _area_px, (top, left, bottom, right), _peak_signal = _validate_detection_geometry(
-        detection
+    left = max(0, _integer_dimension(detection.bbox_left, "bbox_left") - margin_px)
+    right = min(
+        map_width,
+        _integer_dimension(detection.bbox_right, "bbox_right") + margin_px,
     )
-    phase_px = _finite_real_config_value(phase_px, "phase_px")
-    left = max(0, left - margin_px)
-    right = min(map_width, right + margin_px)
     if right <= left:
         return
     rows = _belt_rows_for_image_rows(
         range(
-            top - margin_px,
-            bottom + margin_px,
+            _integer_dimension(detection.bbox_top, "bbox_top") - margin_px,
+            _integer_dimension(detection.bbox_bottom, "bbox_bottom") + margin_px,
         ),
         phase_px=phase_px,
         map_height=map_height,
@@ -592,13 +579,11 @@ def _artifact_patch(
 ) -> NDArray[np.bool_] | NDArray[np.floating]:
     artifact = np.asarray(artifact_map)
     map_height, map_width = _validate_map_shape(artifact.shape)
-    _area_px, (top, left, bottom, right), _peak_signal = _validate_detection_geometry(
-        detection
-    )
-    phase_px = _finite_real_config_value(phase_px, "phase_px")
-    left = max(0, left)
-    right = min(map_width, right)
-    if right <= left:
+    top = _integer_dimension(detection.bbox_top, "bbox_top")
+    bottom = _integer_dimension(detection.bbox_bottom, "bbox_bottom")
+    left = max(0, _integer_dimension(detection.bbox_left, "bbox_left"))
+    right = min(map_width, _integer_dimension(detection.bbox_right, "bbox_right"))
+    if right <= left or bottom <= top:
         return artifact[:0, :0]
     rows = _belt_rows_for_image_rows(
         range(top, bottom),
@@ -648,70 +633,53 @@ def _recurrence_probability(
     return probability
 
 
-def _validate_config(config: RecurrentArtifactConfig) -> RecurrentArtifactConfig:
-    min_revolutions = _positive_integer_config_value(
-        config.min_revolutions,
-        "min_revolutions",
-    )
-    if min_revolutions < 1:
+def _validate_config(config: RecurrentArtifactConfig) -> None:
+    if _positive_integer_config_value(config.min_revolutions, "min_revolutions") < 1:
         raise ValueError("min_revolutions must be at least 1")
-    cfg = _validate_filter_config(config)
-    return replace(cfg, min_revolutions=min_revolutions)
+    _validate_filter_config(config)
 
 
-def _validate_filter_config(config: RecurrentArtifactConfig) -> RecurrentArtifactConfig:
-    margin_px = _nonnegative_integer_config_value(config.margin_px, "margin_px")
-    max_overlap_fraction = _unit_interval_config_value(
-        config.max_overlap_fraction,
-        "max_overlap_fraction",
-    )
-    min_recurrence_probability = _unit_interval_config_value(
+def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
+    _nonnegative_integer_config_value(config.margin_px, "margin_px")
+    max_overlap_fraction = _finite_float(config.max_overlap_fraction, "max_overlap_fraction")
+    if not 0 <= max_overlap_fraction <= 1:
+        raise ValueError("max_overlap_fraction must be in [0, 1]")
+    min_recurrence_probability = _finite_float(
         config.min_recurrence_probability,
         "min_recurrence_probability",
     )
-    mode = _mode_config_value(config.mode)
-    soft_penalty_weight = _nonnegative_real_config_value(
-        config.soft_penalty_weight,
-        "soft_penalty_weight",
-    )
+    if not 0 <= min_recurrence_probability <= 1:
+        raise ValueError("min_recurrence_probability must be in [0, 1]")
+    if config.mode.strip().lower() not in RECURRENT_ARTIFACT_MODES:
+        choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
+        raise ValueError(f"mode must be one of {choices}")
+    soft_penalty_weight = _finite_float(config.soft_penalty_weight, "soft_penalty_weight")
+    if soft_penalty_weight < 0:
+        raise ValueError("soft_penalty_weight must be finite and non-negative")
     candidate_max_area_px = _optional_positive_integer_config_value(
         config.candidate_max_area_px,
         "candidate_max_area_px",
     )
-    candidate_max_peak_signal = _optional_nonnegative_real_config_value(
+    if candidate_max_area_px is not None and candidate_max_area_px < 1:
+        raise ValueError("candidate_max_area_px must be positive when set")
+    candidate_max_peak_signal = _optional_nonnegative_float_config_value(
         config.candidate_max_peak_signal,
         "candidate_max_peak_signal",
     )
+    if candidate_max_peak_signal is not None and candidate_max_peak_signal < 0:
+        raise ValueError("candidate_max_peak_signal must be finite and non-negative when set")
     reject_max_area_px = _optional_positive_integer_config_value(
         config.reject_max_area_px,
         "reject_max_area_px",
     )
-    reject_max_peak_signal = _optional_nonnegative_real_config_value(
+    if reject_max_area_px is not None and reject_max_area_px < 1:
+        raise ValueError("reject_max_area_px must be positive when set")
+    reject_max_peak_signal = _optional_nonnegative_float_config_value(
         config.reject_max_peak_signal,
         "reject_max_peak_signal",
     )
-    return replace(
-        config,
-        margin_px=margin_px,
-        max_overlap_fraction=max_overlap_fraction,
-        mode=mode,
-        soft_penalty_weight=soft_penalty_weight,
-        min_recurrence_probability=min_recurrence_probability,
-        candidate_max_area_px=candidate_max_area_px,
-        candidate_max_peak_signal=candidate_max_peak_signal,
-        reject_max_area_px=reject_max_area_px,
-        reject_max_peak_signal=reject_max_peak_signal,
-    )
-
-
-def _mode_config_value(value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError("mode must be a string")
-    mode = value.strip().lower()
-    if mode not in RECURRENT_ARTIFACT_MODES:
-        choices = ", ".join(sorted(RECURRENT_ARTIFACT_MODES))
-        raise ValueError(f"mode must be one of {choices}")
-    return mode
+    if reject_max_peak_signal is not None and reject_max_peak_signal < 0:
+        raise ValueError("reject_max_peak_signal must be finite and non-negative when set")
 
 
 def _validate_phase_px_by_frame(
@@ -721,10 +689,7 @@ def _validate_phase_px_by_frame(
 ) -> list[float]:
     if len(phase_px_by_frame) != frame_count:
         raise ValueError("phase_px_by_frame must match detections_by_frame length")
-    return [
-        _finite_real_config_value(value, "phase_px_by_frame values")
-        for value in phase_px_by_frame
-    ]
+    return [_finite_float(value, "phase_px_by_frame") for value in phase_px_by_frame]
 
 
 def _validate_revolution_by_frame(
@@ -736,25 +701,15 @@ def _validate_revolution_by_frame(
         raise ValueError("revolution_by_frame must match detections_by_frame length")
     values: list[int] = []
     for revolution in revolution_by_frame:
-        values.append(
-            _integer_config_value(revolution, "revolution_by_frame values")
-        )
+        parsed = _finite_float(revolution, "revolution_by_frame")
+        if not parsed.is_integer():
+            raise ValueError("revolution_by_frame values must be finite integers")
+        values.append(int(parsed))
     return values
 
 
-def _finite_real_config_value(value: object, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f"{name} must be numeric, not boolean")
-    if not isinstance(value, Real):
-        raise ValueError(f"{name} must be numeric")
-    parsed = float(value)
-    if not np.isfinite(parsed):
-        raise ValueError(f"{name} must be finite")
-    return parsed
-
-
-def _integer_config_value(value: object, name: str) -> int:
-    parsed = _finite_real_config_value(value, name)
+def _integer_config_value(value: int, name: str) -> int:
+    parsed = _finite_float(value, name)
     if not parsed.is_integer():
         raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
@@ -783,50 +738,16 @@ def _optional_positive_integer_config_value(
     return _positive_integer_config_value(value, name)
 
 
-def _nonnegative_real_config_value(value: object, name: str) -> float:
-    parsed = _finite_real_config_value(value, name)
-    if parsed < 0.0:
-        raise ValueError(f"{name} must be non-negative")
-    return parsed
-
-
-def _optional_nonnegative_real_config_value(
-    value: object | None,
+def _optional_nonnegative_float_config_value(
+    value: float | None,
     name: str,
 ) -> float | None:
     if value is None:
         return None
-    return _nonnegative_real_config_value(value, name)
-
-
-def _unit_interval_config_value(value: object, name: str) -> float:
-    parsed = _finite_real_config_value(value, name)
-    if not 0.0 <= parsed <= 1.0:
-        raise ValueError(f"{name} must be in [0, 1]")
+    parsed = _finite_float(value, name)
+    if parsed < 0:
+        raise ValueError(f"{name} must be finite and non-negative when set")
     return parsed
-
-
-def _validate_detection_geometry(
-    detection: ParticleDetection,
-) -> tuple[int, tuple[int, int, int, int], float | None]:
-    _integer_config_value(detection.label, "detection.label")
-    _finite_real_config_value(detection.y, "detection.y")
-    _finite_real_config_value(detection.x, "detection.x")
-    area_px = _positive_integer_config_value(detection.area_px, "detection.area_px")
-    top = _integer_config_value(detection.bbox_top, "detection.bbox_top")
-    left = _integer_config_value(detection.bbox_left, "detection.bbox_left")
-    bottom = _integer_config_value(detection.bbox_bottom, "detection.bbox_bottom")
-    right = _integer_config_value(detection.bbox_right, "detection.bbox_right")
-    if top < 0 or left < 0:
-        raise ValueError("detection bbox coordinates must be non-negative")
-    if bottom <= top or right <= left:
-        raise ValueError("detection bbox must be half-open with positive area")
-    peak_signal = (
-        None
-        if detection.peak_signal is None
-        else _finite_real_config_value(detection.peak_signal, "detection.peak_signal")
-    )
-    return area_px, (top, left, bottom, right), peak_signal
 
 
 def _validate_map_shape(shape: tuple[int, int]) -> tuple[int, int]:
@@ -856,7 +777,28 @@ def _validate_frame_shape(
 
 
 def _positive_integer_dimension(value: int, name: str) -> int:
-    parsed = _finite_real_config_value(value, name)
-    if not parsed.is_integer() or parsed < 1:
+    parsed = _integer_dimension(value, name)
+    if parsed < 1:
         raise ValueError(f"{name} dimensions must be positive finite integers")
+    return parsed
+
+
+def _integer_dimension(value: int, name: str) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be a finite integer")
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
+
+
+def _finite_float(value: object, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed

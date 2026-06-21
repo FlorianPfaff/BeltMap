@@ -5,6 +5,7 @@ from beltmap.phase import PhaseEstimate
 from beltmap.registration_quality import (
     RegistrationQualityGateConfig,
     evaluate_registration_quality,
+    registration_quality_inflation_factor,
     registration_quality_failure_reasons,
     residual_with_inflated_noise,
 )
@@ -79,6 +80,40 @@ def test_registration_quality_config_rejects_nonfinite_thresholds(kwargs):
         config.validate()
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"enabled": "false"}, "enabled"),
+        ({"action": None}, "ACTION"),
+        ({"min_score": True}, "min_score"),
+        ({"min_loss_gap_ratio": True}, "min_loss_gap_ratio"),
+        ({"max_uncertainty_px": True}, "max_uncertainty_px"),
+        ({"max_abs_correction_px": True}, "max_abs_correction_px"),
+        ({"noise_inflation_factor": True}, "noise_inflation_factor"),
+        ({"noise_inflation_factor": "2.0"}, "noise_inflation_factor"),
+        ({"uncertainty_inflation_scale": True}, "uncertainty_inflation_scale"),
+    ],
+)
+def test_registration_quality_config_rejects_coerced_values(kwargs, message):
+    config = RegistrationQualityGateConfig(**kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        config.validate()
+
+
+def test_registration_quality_rejects_string_enabled_before_disabled_short_circuit():
+    estimate = PhaseEstimate(phase_px=0.0, frame_index=0.0, predicted_phase_px=0.0)
+    residual = make_residual(estimate)
+
+    with pytest.raises(ValueError, match="enabled"):
+        evaluate_registration_quality(
+            residual,
+            frame_index=0,
+            image="frame.png",
+            config=RegistrationQualityGateConfig(enabled="false"),
+        )
+
+
 def test_registration_quality_inflates_low_quality_residual_noise():
     estimate = PhaseEstimate(
         phase_px=0.0,
@@ -111,6 +146,51 @@ def test_registration_quality_inflates_low_quality_residual_noise():
     assert row["inflation_factor"] == 4.0
     np.testing.assert_allclose(inflated.local_noise, 4.0 * residual.local_noise)
     np.testing.assert_allclose(inflated.normalized, residual.normalized / 4.0)
+
+
+@pytest.mark.parametrize("factor", [float("nan"), float("inf"), True, "2.0", 0.5])
+def test_residual_with_inflated_noise_rejects_invalid_factor(factor):
+    estimate = PhaseEstimate(phase_px=0.0, frame_index=0.0, predicted_phase_px=0.0)
+    residual = make_residual(estimate)
+
+    with pytest.raises(ValueError, match="factor"):
+        residual_with_inflated_noise(residual, factor)
+
+
+def test_residual_with_inflated_noise_rejects_shape_mismatch():
+    estimate = PhaseEstimate(phase_px=0.0, frame_index=0.0, predicted_phase_px=0.0)
+    residual = make_residual(estimate)
+    mismatched = ResidualImage(
+        raw=residual.raw,
+        local_noise=np.ones((2, 3), dtype=float),
+        normalized=residual.normalized,
+        mask=residual.mask,
+        expected_background=residual.expected_background,
+        clean_render=residual.clean_render,
+    )
+
+    with pytest.raises(ValueError, match="matching shapes"):
+        residual_with_inflated_noise(mismatched, 2.0)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        RegistrationQualityGateConfig(noise_inflation_factor=True),
+        RegistrationQualityGateConfig(uncertainty_inflation_scale=True),
+    ],
+)
+def test_registration_quality_inflation_factor_rejects_coerced_config(config):
+    estimate = PhaseEstimate(
+        phase_px=0.0,
+        frame_index=0.0,
+        predicted_phase_px=0.0,
+        uncertainty_px=4.0,
+        method="registration",
+    )
+
+    with pytest.raises(ValueError):
+        registration_quality_inflation_factor(estimate, config=config)
 
 
 def test_registration_quality_skip_marks_frame_without_changing_residual():
