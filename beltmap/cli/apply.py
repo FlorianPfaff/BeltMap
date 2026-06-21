@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from beltmap._driver_map import validate_map_particle_mask_mode
 from beltmap.detection import normalize_detection_mode
 
 try:  # Python 3.11+
@@ -26,12 +27,13 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("reuse_static_background_path", "REUSE_STATIC_BACKGROUND_PATH", "path", (("reuse_static_background_path",), ("reuse", "static_background_path")), "Optional existing static_background.npy additive residual map to subtract during detection.", "NPY"),
     ("reuse_recurrent_artifact_map_path", "REUSE_RECURRENT_ARTIFACT_MAP_PATH", "path", (("reuse_recurrent_artifact_map_path",), ("reuse", "recurrent_artifact_map_path")), "Optional existing recurrent_artifact_map.npy to reuse for recurrent artifact filtering.", "NPY"),
     ("reuse_map_support_path", "REUSE_MAP_SUPPORT_PATH", "path", (("reuse_map_support_path",), ("reuse", "map_support_path")), "Optional existing belt_map_support.npy to reuse with a reused belt map for map-risk diagnostics.", "NPY"),
+    ("map_exclusion_mask_path", "MAP_EXCLUSION_MASK_PATH", "path", (("map_exclusion_mask_path",), ("map", "exclusion_mask_path"), ("ghost_repair", "defect_mask_path")), "Optional belt-coordinate bool mask whose pixels are excluded from belt-map accumulation.", "NPY"),
     ("belt_region", "BELT_REGION", "region", (("belt_region",), ("belt", "region")), "Belt crop as top,left,height,width. Omit to use the full frame.", "TOP,LEFT,HEIGHT,WIDTH"),
     ("belt_velocity_px_per_frame", "BELT_VELOCITY_PX_PER_FRAME", "velocity", (("belt_velocity_px_per_frame",), ("belt", "velocity_px_per_frame")), "Signed belt image velocity, or 'auto'. Numeric values use --belt-velocity-frame-unit when frames are strided.", "PX_PER_FRAME|auto"),
     ("belt_velocity_frame_unit", "BELT_VELOCITY_FRAME_UNIT", "path", (("belt_velocity_frame_unit",), ("belt", "velocity_frame_unit")), "Frame unit for a supplied belt velocity: selected_frame or source_frame.", "UNIT"),
     ("belt_period_px", "BELT_PERIOD_PX", "int", (("belt_period_px",), ("belt", "period_px")), "Optional belt circumference/period in pixels.", "PX"),
-    ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for bright particles.", "Z"),
-    ("detection_mode", "DETECTION_MODE", "path", (("detection_mode",), ("detection", "mode"), ("detection", "method")), "Detection residual polarity: positive, negative, or absolute. Legacy detector method aliases threshold, hysteresis, and hysteresis_abs are also accepted in config files.", "MODE"),
+    ("detection_threshold", "DETECTION_THRESHOLD", "float", (("detection_threshold",), ("detection", "threshold")), "Threshold on normalized residuals for the selected particle polarity.", "Z"),
+    ("detection_mode", "DETECTION_MODE", "path", (("detection_mode",), ("detection", "mode"), ("detection", "method")), "Detection residual polarity: positive/bright, negative/dark, or absolute/signed. Legacy detector method aliases threshold, hysteresis, and hysteresis_abs are also accepted in config files.", "MODE"),
     ("detection_low_threshold", "DETECTION_LOW_THRESHOLD", "float", (("detection_low_threshold",), ("detection", "low_threshold"), ("detection", "grow_threshold")), "Optional lower hysteresis threshold for final detection. Use 0 to disable.", "Z"),
     ("min_area_px", "MIN_AREA_PX", "int", (("min_area_px",), ("detection", "min_area_px")), "Minimum connected-component area for detections.", "PX"),
     ("detection_max_area_px", "DETECTION_MAX_AREA_PX", "int", (("detection_max_area_px",), ("detection", "max_area_px")), "Optional maximum connected-component area for detections. Use 0 to disable.", "PX"),
@@ -83,7 +85,7 @@ OPTION_SPECS: tuple[tuple[str, str, str, tuple[tuple[str, ...], ...], str, str |
     ("map_local_illumination_tile_px", "MAP_LOCAL_ILLUMINATION_TILE_PX", "int", (("map_local_illumination_tile_px",), ("map", "local_illumination_tile_px")), "Tile size used for local residual-median illumination correction.", "PX"),
     ("map_mask_iterations", "MAP_MASK_ITERATIONS", "int", (("map_mask_iterations",), ("map", "mask_iterations")), "Particle-mask refinement iterations while building the belt map.", "N"),
     ("map_particle_mask_threshold", "MAP_PARTICLE_MASK_THRESHOLD", "float", (("map_particle_mask_threshold",), ("map", "particle_mask_threshold"), ("map_particle_mask", "threshold")), "Strong threshold used for particle masking during map building.", "Z"),
-    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode"), ("map_particle_mask", "mode"), ("map_particle_mask", "method")), "Map-building particle mask mode: positive, negative, absolute, or hysteresis_abs.", "MODE"),
+    ("map_particle_mask_mode", "MAP_PARTICLE_MASK_MODE", "path", (("map_particle_mask_mode",), ("map", "particle_mask_mode"), ("map_particle_mask", "mode"), ("map_particle_mask", "method")), "Map-building particle mask mode: positive/bright, negative/dark, absolute/signed, or hysteresis_abs.", "MODE"),
     ("map_particle_mask_grow_threshold", "MAP_PARTICLE_MASK_GROW_THRESHOLD", "float", (("map_particle_mask_grow_threshold",), ("map", "particle_mask_grow_threshold"), ("map_particle_mask", "grow_threshold"), ("map_particle_mask", "low_threshold")), "Lower absolute-residual threshold used to grow hysteresis map masks.", "Z"),
     ("map_particle_mask_dilation_px", "MAP_PARTICLE_MASK_DILATION_PX", "int", (("map_particle_mask_dilation_px",), ("map", "particle_mask_dilation_px"), ("map_particle_mask", "dilation_px")), "Morphological dilation radius for map-building particle masks.", "PX"),
     ("map_particle_mask_margin_px", "MAP_PARTICLE_MASK_MARGIN_PX", "int", (("map_particle_mask_margin_px",), ("map", "particle_mask_margin_px"), ("map_particle_mask", "margin_px")), "Safety margin around detected particle boxes during map building.", "PX"),
@@ -221,6 +223,9 @@ velocity_px_per_frame = "auto"
 
 [detection]
 threshold = 5.0
+# Use "positive"/"bright" for bright particles on a darker belt,
+# "negative"/"dark" for dark particles on a brighter belt, or
+# "absolute"/"signed" for both polarities.
 mode = "positive"
 low_threshold = 0.0
 min_area_px = 4
@@ -278,6 +283,9 @@ fractional_splat = true
 frame_median_offset_correction = false
 local_illumination_correction = false
 local_illumination_tile_px = 64
+# Optional GhostRepair mask in belt coordinates. Masked map pixels are excluded
+# from raw-frame map accumulation during belt_map.npy reconstruction.
+# exclusion_mask_path = "outputs/brick20g_ghost_repair/ghost_defect_mask.npy"
 mask_iterations = 1
 # aggregation accepts "mean", "huber", "trimmed_mean", or "winsorized_mean".
 aggregation = "mean"
@@ -289,6 +297,8 @@ robust_min_scale = 1.0
 # Used only while learning belt_map.npy and auxiliary maps. Keep this gate
 # independent from [detection].min_area_px so small fragments can be excluded
 # from the learned background even when final detections use a larger area gate.
+# Use "positive"/"bright" for bright particles, "negative"/"dark" for dark
+# particles, and "absolute"/"signed" or "hysteresis_abs" for two-sided masks.
 mode = "positive"
 threshold = 5.0
 grow_threshold = 2.0
@@ -469,6 +479,8 @@ def normalize_value(name: str, value: Any) -> str | None:
         return format_region(value, name)
     if name == "detection_mode":
         return normalize_detection_mode(str(value))
+    if name in {"map_particle_mask_mode", "detection_local_illumination_mask_mode"}:
+        return validate_map_particle_mask_mode(str(value))
     return str(value)
 
 

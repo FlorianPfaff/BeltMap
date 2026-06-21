@@ -934,19 +934,19 @@ def extract_particle_velocities_vs_belt(
 
 
 def _validate_component_config(config: ParticleComponentConfig) -> None:
-    min_area_px = _finite_config_value(config.min_area_px, "min_area_px")
+    min_area_px = _integer_config_value(config.min_area_px, "min_area_px")
     if min_area_px < 1:
         raise ValueError("min_area_px must be positive")
-    max_area_px = _optional_finite_config_value(config.max_area_px, "max_area_px")
+    max_area_px = _optional_integer_config_value(config.max_area_px, "max_area_px")
     if max_area_px is not None and max_area_px < min_area_px:
         raise ValueError("max_area_px must be greater than or equal to min_area_px")
-    min_bbox_width_px = _optional_finite_config_value(
+    min_bbox_width_px = _optional_integer_config_value(
         config.min_bbox_width_px,
         "min_bbox_width_px",
     )
     if min_bbox_width_px is not None and min_bbox_width_px < 1:
         raise ValueError("min_bbox_width_px must be positive when set")
-    min_bbox_height_px = _optional_finite_config_value(
+    min_bbox_height_px = _optional_integer_config_value(
         config.min_bbox_height_px,
         "min_bbox_height_px",
     )
@@ -969,13 +969,13 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
     if config.connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
-    split_min_projection_gap_px = _finite_config_value(
+    split_min_projection_gap_px = _integer_config_value(
         config.split_min_projection_gap_px,
         "split_min_projection_gap_px",
     )
     if split_min_projection_gap_px < 1:
         raise ValueError("split_min_projection_gap_px must be positive")
-    split_min_component_area_px = _optional_finite_config_value(
+    split_min_component_area_px = _optional_integer_config_value(
         config.split_min_component_area_px,
         "split_min_component_area_px",
     )
@@ -997,6 +997,19 @@ def _optional_finite_config_value(value: float | None, name: str) -> float | Non
     if value is None:
         return None
     return _finite_config_value(value, name)
+
+
+def _integer_config_value(value: float, name: str) -> int:
+    parsed = _finite_config_value(value, name)
+    if not parsed.is_integer():
+        raise ValueError(f"{name} must be an integer")
+    return int(parsed)
+
+
+def _optional_integer_config_value(value: float | None, name: str) -> int | None:
+    if value is None:
+        return None
+    return _integer_config_value(value, name)
 
 
 def _validate_velocity_fit_method(method: str) -> str:

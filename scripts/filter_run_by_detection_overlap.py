@@ -20,7 +20,6 @@ from beltmap.tracking import (
     track_particle_detections,
 )
 
-
 DETECTION_FIELDS = [
     "frame_index",
     "image",
@@ -131,7 +130,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-track-rescue", action="store_true")
     parser.add_argument("--track-rescue-min-detections", type=int, default=3)
     parser.add_argument("--track-rescue-min-confirmed", type=int, default=2)
-    parser.add_argument("--track-rescue-min-confirmed-fraction", type=float, default=0.3)
+    parser.add_argument(
+        "--track-rescue-min-confirmed-fraction", type=float, default=0.3
+    )
     parser.add_argument(
         "--track-rescue-max-frame-distance",
         type=float,
@@ -180,11 +181,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--belt-velocity-px-per-frame", type=float, default=None)
     parser.add_argument("--min-track-length", type=int, default=2)
     parser.add_argument("--tracking-max-frame-gap", type=float, default=2.0)
-    parser.add_argument("--velocity-fit-method", choices=("linear", "theil_sen"), default="theil_sen")
+    parser.add_argument(
+        "--velocity-fit-method", choices=("linear", "theil_sen"), default="theil_sen"
+    )
     parser.add_argument("--track-filter-min-length", type=int, default=5)
     parser.add_argument("--track-filter-min-velocity-ratio-y", type=float, default=0.0)
     parser.add_argument("--track-filter-max-velocity-ratio-y", type=float, default=1.1)
-    parser.add_argument("--track-filter-max-abs-x-velocity-px-per-frame", type=float, default=None)
+    parser.add_argument(
+        "--track-filter-max-abs-x-velocity-px-per-frame", type=float, default=None
+    )
     parser.add_argument(
         "--track-filter-min-confirmed-detections",
         type=int,
@@ -204,16 +209,50 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if not 0.0 <= args.min_iou <= 1.0:
         raise ValueError("--min-iou must be in [0, 1]")
-    for name in ("max_center_distance_px", "candidate_margin_px", "confirming_margin_px"):
+    for name in (
+        "max_center_distance_px",
+        "candidate_margin_px",
+        "confirming_margin_px",
+    ):
         value = getattr(args, name)
         if value < 0 or not math.isfinite(value):
-            raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
+            raise ValueError(
+                f"--{name.replace('_', '-')} must be finite and non-negative"
+            )
     if args.max_match_center_distance_px is not None and (
-        args.max_match_center_distance_px < 0 or not math.isfinite(args.max_match_center_distance_px)
+        args.max_match_center_distance_px < 0
+        or not math.isfinite(args.max_match_center_distance_px)
     ):
-        raise ValueError("--max-match-center-distance-px must be finite and non-negative")
+        raise ValueError(
+            "--max-match-center-distance-px must be finite and non-negative"
+        )
     if args.min_track_length < 1 or args.track_filter_min_length < 1:
         raise ValueError("track length thresholds must be positive")
+    if (
+        not math.isfinite(args.tracking_max_frame_gap)
+        or args.tracking_max_frame_gap <= 0
+    ):
+        raise ValueError("--tracking-max-frame-gap must be finite and positive")
+    if args.belt_velocity_px_per_frame is not None and not math.isfinite(
+        args.belt_velocity_px_per_frame
+    ):
+        raise ValueError("--belt-velocity-px-per-frame must be finite")
+    if not math.isfinite(args.track_filter_min_velocity_ratio_y) or not math.isfinite(
+        args.track_filter_max_velocity_ratio_y
+    ):
+        raise ValueError("track filter velocity ratio bounds must be finite")
+    if args.track_filter_min_velocity_ratio_y > args.track_filter_max_velocity_ratio_y:
+        raise ValueError("track filter minimum velocity ratio cannot exceed maximum")
+    if (
+        args.track_filter_max_abs_x_velocity_px_per_frame is not None
+        and args.track_filter_max_abs_x_velocity_px_per_frame < 0
+    ) or (
+        args.track_filter_max_abs_x_velocity_px_per_frame is not None
+        and not math.isfinite(args.track_filter_max_abs_x_velocity_px_per_frame)
+    ):
+        raise ValueError(
+            "--track-filter-max-abs-x-velocity-px-per-frame must be finite and non-negative"
+        )
     if args.track_filter_min_confirmed_detections < 0:
         raise ValueError("--track-filter-min-confirmed-detections must be non-negative")
     if not 0.0 <= args.track_filter_min_confirmed_fraction <= 1.0:
@@ -223,13 +262,18 @@ def validate_args(args: argparse.Namespace) -> None:
     if not 0.0 <= args.track_rescue_min_confirmed_fraction <= 1.0:
         raise ValueError("--track-rescue-min-confirmed-fraction must be in [0, 1]")
     if args.track_rescue_max_frame_distance is not None and (
-        args.track_rescue_max_frame_distance < 0 or not math.isfinite(args.track_rescue_max_frame_distance)
+        args.track_rescue_max_frame_distance < 0
+        or not math.isfinite(args.track_rescue_max_frame_distance)
     ):
-        raise ValueError("--track-rescue-max-frame-distance must be finite and non-negative")
+        raise ValueError(
+            "--track-rescue-max-frame-distance must be finite and non-negative"
+        )
     for name in ("rescued_min_area_px", "rescued_min_peak_signal"):
         value = getattr(args, name)
         if value < 0 or not math.isfinite(value):
-            raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
+            raise ValueError(
+                f"--{name.replace('_', '-')} must be finite and non-negative"
+            )
     for name in ("dedupe_iou_threshold", "dedupe_containment_threshold"):
         value = getattr(args, name)
         if not 0.0 <= value <= 1.0:
@@ -237,7 +281,9 @@ def validate_args(args: argparse.Namespace) -> None:
     for name in ("dedupe_center_distance_px", "dedupe_margin_px"):
         value = getattr(args, name)
         if value < 0 or not math.isfinite(value):
-            raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
+            raise ValueError(
+                f"--{name.replace('_', '-')} must be finite and non-negative"
+            )
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -271,7 +317,22 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
 
 def optional_float(row: dict[str, str], field: str) -> float | None:
     value = row.get(field, "")
-    return None if value == "" or value is None else float(value)
+    if value == "" or value is None:
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field} must be finite")
+    return parsed
+
+
+def finite_float_value(value: Any, field: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be finite") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field} must be finite")
+    return parsed
 
 
 def integer_value(value: Any, field: str) -> int:
@@ -286,26 +347,69 @@ def integer_value(value: Any, field: str) -> int:
     return int(parsed)
 
 
+def nonnegative_integer_value(value: Any, field: str) -> int:
+    parsed = integer_value(value, field)
+    if parsed < 0:
+        raise ValueError(f"{field} must be non-negative")
+    return parsed
+
+
+def positive_integer_value(value: Any, field: str) -> int:
+    parsed = integer_value(value, field)
+    if parsed < 1:
+        raise ValueError(f"{field} must be positive")
+    return parsed
+
+
+def detection_bbox_from_row(
+    row: dict[str, Any],
+    *,
+    margin: float = 0.0,
+) -> tuple[float, float, float, float]:
+    top = finite_float_value(row["bbox_top"], "bbox_top")
+    left = finite_float_value(row["bbox_left"], "bbox_left")
+    bottom = finite_float_value(row["bbox_bottom"], "bbox_bottom")
+    right = finite_float_value(row["bbox_right"], "bbox_right")
+    if bottom <= top or right <= left:
+        raise ValueError("detection bbox must have positive half-open area")
+    if margin == 0.0:
+        return top, left, bottom, right
+    return top - margin, left - margin, bottom + margin, right + margin
+
+
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
+    top, left, bottom, right = detection_bbox_from_row(row)
     return ParticleDetection(
-        frame_index=float(integer_value(row["frame_index"], "frame_index")),
-        label=integer_value(row["label"], "label"),
-        y=float(row["y"]),
-        x=float(row["x"]),
-        area_px=integer_value(row["area_px"], "area_px"),
-        bbox_top=int(float(row["bbox_top"])),
-        bbox_left=int(float(row["bbox_left"])),
-        bbox_bottom=int(float(row["bbox_bottom"])),
-        bbox_right=int(float(row["bbox_right"])),
+        frame_index=float(nonnegative_integer_value(row["frame_index"], "frame_index")),
+        label=positive_integer_value(row["label"], "label"),
+        y=finite_float_value(row["y"], "y"),
+        x=finite_float_value(row["x"], "x"),
+        area_px=positive_integer_value(row["area_px"], "area_px"),
+        bbox_top=math.floor(top),
+        bbox_left=math.floor(left),
+        bbox_bottom=math.ceil(bottom),
+        bbox_right=math.ceil(right),
         mean_signal=optional_float(row, "mean_signal"),
         peak_signal=optional_float(row, "peak_signal"),
-        recurrent_artifact_overlap_fraction=optional_float(row, "recurrent_artifact_overlap_fraction"),
-        recurrent_artifact_probability=optional_float(row, "recurrent_artifact_probability"),
-        recurrent_artifact_required_peak_signal=optional_float(row, "recurrent_artifact_required_peak_signal"),
+        recurrent_artifact_overlap_fraction=optional_float(
+            row, "recurrent_artifact_overlap_fraction"
+        ),
+        recurrent_artifact_probability=optional_float(
+            row, "recurrent_artifact_probability"
+        ),
+        recurrent_artifact_required_peak_signal=optional_float(
+            row, "recurrent_artifact_required_peak_signal"
+        ),
     )
 
 
-def detection_row(detection: ParticleDetection, *, image: str, track_id: int | None = None, track_detection_index: int | None = None) -> dict[str, Any]:
+def detection_row(
+    detection: ParticleDetection,
+    *,
+    image: str,
+    track_id: int | None = None,
+    track_detection_index: int | None = None,
+) -> dict[str, Any]:
     row: dict[str, Any] = {
         "frame_index": int(detection.frame_index),
         "image": image,
@@ -320,10 +424,14 @@ def detection_row(detection: ParticleDetection, *, image: str, track_id: int | N
         "mean_signal": "" if detection.mean_signal is None else detection.mean_signal,
         "peak_signal": "" if detection.peak_signal is None else detection.peak_signal,
         "recurrent_artifact_overlap_fraction": (
-            "" if detection.recurrent_artifact_overlap_fraction is None else detection.recurrent_artifact_overlap_fraction
+            ""
+            if detection.recurrent_artifact_overlap_fraction is None
+            else detection.recurrent_artifact_overlap_fraction
         ),
         "recurrent_artifact_probability": (
-            "" if detection.recurrent_artifact_probability is None else detection.recurrent_artifact_probability
+            ""
+            if detection.recurrent_artifact_probability is None
+            else detection.recurrent_artifact_probability
         ),
         "recurrent_artifact_required_peak_signal": (
             ""
@@ -341,17 +449,23 @@ def detection_row(detection: ParticleDetection, *, image: str, track_id: int | N
 def group_by_frame(rows: list[dict[str, str]]) -> dict[int, list[dict[str, str]]]:
     grouped: dict[int, list[dict[str, str]]] = {}
     for row in rows:
-        grouped.setdefault(integer_value(row["frame_index"], "frame_index"), []).append(row)
+        grouped.setdefault(
+            nonnegative_integer_value(row["frame_index"], "frame_index"), []
+        ).append(row)
     return grouped
 
 
 def detection_key(row: dict[str, Any]) -> tuple[int, int]:
     """Return a stable per-frame detection key used by detections.csv and tracks.csv."""
 
-    return integer_value(row["frame_index"], "frame_index"), integer_value(row["label"], "label")
+    return nonnegative_integer_value(
+        row["frame_index"], "frame_index"
+    ), positive_integer_value(row["label"], "label")
 
 
-def track_memberships(candidate_run: Path) -> tuple[dict[tuple[int, int], int], dict[int, set[tuple[int, int]]]]:
+def track_memberships(
+    candidate_run: Path,
+) -> tuple[dict[tuple[int, int], int], dict[int, set[tuple[int, int]]]]:
     path = candidate_run / "tracks.csv"
     if not path.is_file():
         return {}, {}
@@ -359,7 +473,7 @@ def track_memberships(candidate_run: Path) -> tuple[dict[tuple[int, int], int], 
     key_to_track: dict[tuple[int, int], int] = {}
     track_to_keys: dict[int, set[tuple[int, int]]] = {}
     for row in rows:
-        track_id = integer_value(row["track_id"], "track_id")
+        track_id = nonnegative_integer_value(row["track_id"], "track_id")
         key = detection_key(row)
         key_to_track[key] = track_id
         track_to_keys.setdefault(track_id, set()).add(key)
@@ -394,21 +508,23 @@ def rescued_detection_keys(
             key
             for key in keys
             if key_to_track.get(key) == track_id
-            and any(abs(key[0] - frame_index) <= max_frame_distance for frame_index in confirmed_frames)
+            and any(
+                abs(key[0] - frame_index) <= max_frame_distance
+                for frame_index in confirmed_frames
+            )
         )
     return rescued
 
 
-def expanded_bbox(row: dict[str, str], *, margin: float) -> tuple[float, float, float, float]:
-    return (
-        float(row["bbox_top"]) - margin,
-        float(row["bbox_left"]) - margin,
-        float(row["bbox_bottom"]) + margin,
-        float(row["bbox_right"]) + margin,
-    )
+def expanded_bbox(
+    row: dict[str, str], *, margin: float
+) -> tuple[float, float, float, float]:
+    return tuple(float(value) for value in detection_bbox_from_row(row, margin=margin))
 
 
-def bbox_iou(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> float:
+def bbox_iou(
+    first: tuple[float, float, float, float], second: tuple[float, float, float, float]
+) -> float:
     top = max(first[0], second[0])
     left = max(first[1], second[1])
     bottom = min(first[2], second[2])
@@ -435,7 +551,9 @@ def bbox_intersection_area(
     return max(0.0, bottom - top) * max(0.0, right - left)
 
 
-def bbox_containment(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> float:
+def bbox_containment(
+    first: tuple[float, float, float, float], second: tuple[float, float, float, float]
+) -> float:
     smaller_area = min(bbox_area(first), bbox_area(second))
     if smaller_area <= 0.0:
         return 0.0
@@ -445,8 +563,8 @@ def bbox_containment(first: tuple[float, float, float, float], second: tuple[flo
 def center_distance(first: dict[str, Any], second: dict[str, Any]) -> float:
     return float(
         np.hypot(
-            float(first["y"]) - float(second["y"]),
-            float(first["x"]) - float(second["x"]),
+            finite_float_value(first["y"], "y") - finite_float_value(second["y"], "y"),
+            finite_float_value(first["x"], "x") - finite_float_value(second["x"], "x"),
         )
     )
 
@@ -469,22 +587,35 @@ def row_bool(row: dict[str, Any], field: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def rescued_row_passes_quality_gates(row: dict[str, Any], args: argparse.Namespace) -> bool:
-    if args.rescued_min_area_px > 0.0 and row_float(row, "area_px") < args.rescued_min_area_px:
+def rescued_row_passes_quality_gates(
+    row: dict[str, Any], args: argparse.Namespace
+) -> bool:
+    if (
+        args.rescued_min_area_px > 0.0
+        and row_float(row, "area_px") < args.rescued_min_area_px
+    ):
         return False
-    if args.rescued_min_peak_signal > 0.0 and row_float(row, "peak_signal") < args.rescued_min_peak_signal:
+    if (
+        args.rescued_min_peak_signal > 0.0
+        and row_float(row, "peak_signal") < args.rescued_min_peak_signal
+    ):
         return False
     return True
 
 
 def row_is_directly_confirmed(row: dict[str, Any]) -> bool:
-    return not row_bool(row, "confirmation_rescued_by_track") and str(row.get("confirmation_label", "")) != ""
+    return (
+        not row_bool(row, "confirmation_rescued_by_track")
+        and str(row.get("confirmation_label", "")) != ""
+    )
 
 
-def track_confirmation_summaries(track_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+def track_confirmation_summaries(
+    track_rows: list[dict[str, Any]],
+) -> dict[int, dict[str, Any]]:
     summaries: dict[int, dict[str, Any]] = {}
     for row in track_rows:
-        track_id = integer_value(row["track_id"], "track_id")
+        track_id = nonnegative_integer_value(row["track_id"], "track_id")
         summary = summaries.setdefault(
             track_id,
             {
@@ -499,7 +630,9 @@ def track_confirmation_summaries(track_rows: list[dict[str, Any]]) -> dict[int, 
     for summary in summaries.values():
         n_detections = summary["n_detections"]
         summary["direct_confirmed_fraction"] = (
-            0.0 if n_detections == 0 else summary["direct_confirmed_detections"] / n_detections
+            0.0
+            if n_detections == 0
+            else summary["direct_confirmed_detections"] / n_detections
         )
     return summaries
 
@@ -536,7 +669,9 @@ def dedupe_enabled(args: argparse.Namespace) -> bool:
     )
 
 
-def rows_are_duplicates(first: dict[str, Any], second: dict[str, Any], args: argparse.Namespace) -> bool:
+def rows_are_duplicates(
+    first: dict[str, Any], second: dict[str, Any], args: argparse.Namespace
+) -> bool:
     if (
         args.dedupe_center_distance_px > 0.0
         and center_distance(first, second) <= args.dedupe_center_distance_px
@@ -544,11 +679,15 @@ def rows_are_duplicates(first: dict[str, Any], second: dict[str, Any], args: arg
         return True
     first_bbox = expanded_bbox(first, margin=args.dedupe_margin_px)
     second_bbox = expanded_bbox(second, margin=args.dedupe_margin_px)
-    if args.dedupe_iou_threshold > 0.0 and bbox_iou(first_bbox, second_bbox) >= args.dedupe_iou_threshold:
+    if (
+        args.dedupe_iou_threshold > 0.0
+        and bbox_iou(first_bbox, second_bbox) >= args.dedupe_iou_threshold
+    ):
         return True
     if (
         args.dedupe_containment_threshold > 0.0
-        and bbox_containment(first_bbox, second_bbox) >= args.dedupe_containment_threshold
+        and bbox_containment(first_bbox, second_bbox)
+        >= args.dedupe_containment_threshold
     ):
         return True
     return False
@@ -566,15 +705,23 @@ def suppress_duplicate_rows(
 
     by_frame: dict[int, list[tuple[int, dict[str, Any]]]] = {}
     for index, row in enumerate(rows):
-        by_frame.setdefault(integer_value(row["frame_index"], "frame_index"), []).append((index, row))
+        by_frame.setdefault(
+            nonnegative_integer_value(row["frame_index"], "frame_index"), []
+        ).append((index, row))
 
     kept_indices: set[int] = set()
     suppressed_indices: set[int] = set()
     for frame_rows in by_frame.values():
         frame_kept: list[tuple[int, dict[str, Any]]] = []
-        for index, row in sorted(frame_rows, key=lambda item: duplicate_priority(item[1]), reverse=True):
+        for index, row in sorted(
+            frame_rows, key=lambda item: duplicate_priority(item[1]), reverse=True
+        ):
             duplicate_of = next(
-                (kept_row for _kept_index, kept_row in frame_kept if rows_are_duplicates(row, kept_row, args)),
+                (
+                    kept_row
+                    for _kept_index, kept_row in frame_kept
+                    if rows_are_duplicates(row, kept_row, args)
+                ),
                 None,
             )
             if duplicate_of is None:
@@ -586,7 +733,9 @@ def suppress_duplicate_rows(
                 suppressed_indices.add(index)
 
     kept_rows = [row for index, row in enumerate(rows) if index in kept_indices]
-    suppressed_rows = [row for index, row in enumerate(rows) if index in suppressed_indices]
+    suppressed_rows = [
+        row for index, row in enumerate(rows) if index in suppressed_indices
+    ]
     return kept_rows, suppressed_rows
 
 
@@ -605,7 +754,9 @@ def best_confirmation(
     best_iou = 0.0
     best_distance = math.inf
     for confirmer in confirmers:
-        iou = bbox_iou(candidate_bbox, expanded_bbox(confirmer, margin=confirming_margin_px))
+        iou = bbox_iou(
+            candidate_bbox, expanded_bbox(confirmer, margin=confirming_margin_px)
+        )
         distance = center_distance(candidate, confirmer)
         if iou > best_iou or (iou == best_iou and distance < best_distance):
             best_row = confirmer
@@ -613,7 +764,10 @@ def best_confirmation(
             best_distance = distance
     if best_row is None:
         return None, 0.0, math.inf
-    if max_match_center_distance_px is not None and best_distance > max_match_center_distance_px:
+    if (
+        max_match_center_distance_px is not None
+        and best_distance > max_match_center_distance_px
+    ):
         return None, best_iou, best_distance
     if best_iou >= min_iou or best_distance <= max_center_distance_px:
         return best_row, best_iou, best_distance
@@ -638,30 +792,56 @@ def confirmation_matches(
     for candidate_index, candidate in enumerate(candidates):
         candidate_bbox = expanded_bbox(candidate, margin=candidate_margin_px)
         for confirmer_index, confirmer in enumerate(confirmers):
-            iou = bbox_iou(candidate_bbox, expanded_bbox(confirmer, margin=confirming_margin_px))
+            iou = bbox_iou(
+                candidate_bbox, expanded_bbox(confirmer, margin=confirming_margin_px)
+            )
             distance = center_distance(candidate, confirmer)
-            if max_match_center_distance_px is not None and distance > max_match_center_distance_px:
+            if (
+                max_match_center_distance_px is not None
+                and distance > max_match_center_distance_px
+            ):
                 continue
             is_match = iou >= min_iou or distance <= max_center_distance_px
             if not is_match:
                 continue
             # IoU dominates the match score; distance breaks ties and handles
             # center-distance-only matches.
-            score = iou if iou > 0 else max(0.0, 1.0 - distance / max(max_center_distance_px, 1.0)) * 1e-3
-            pairs.append((score, -distance, candidate_index, confirmer_index, iou, distance))
+            score = (
+                iou
+                if iou > 0
+                else max(0.0, 1.0 - distance / max(max_center_distance_px, 1.0)) * 1e-3
+            )
+            pairs.append(
+                (score, -distance, candidate_index, confirmer_index, iou, distance)
+            )
             current = best_by_candidate.get(candidate_index)
-            if current is None or iou > current[1] or (iou == current[1] and distance < current[2]):
+            if (
+                current is None
+                or iou > current[1]
+                or (iou == current[1] and distance < current[2])
+            ):
                 best_by_candidate[candidate_index] = (confirmer_index, iou, distance)
 
     if not one_to_one:
         return {
             candidate_index: (confirmers[confirmer_index], iou, distance)
-            for candidate_index, (confirmer_index, iou, distance) in best_by_candidate.items()
+            for candidate_index, (
+                confirmer_index,
+                iou,
+                distance,
+            ) in best_by_candidate.items()
         }
 
     matches: dict[int, tuple[dict[str, str], float, float]] = {}
     used_confirmers: set[int] = set()
-    for _score, _negative_distance, candidate_index, confirmer_index, iou, distance in sorted(pairs, reverse=True):
+    for (
+        _score,
+        _negative_distance,
+        candidate_index,
+        confirmer_index,
+        iou,
+        distance,
+    ) in sorted(pairs, reverse=True):
         if candidate_index in matches or confirmer_index in used_confirmers:
             continue
         matches[candidate_index] = (confirmers[confirmer_index], iou, distance)
@@ -672,21 +852,39 @@ def confirmation_matches(
 def infer_n_images(candidate_run: Path, candidate_rows: list[dict[str, str]]) -> int:
     metadata = read_json(candidate_run / "metadata.json")
     n_images = metadata.get("n_images")
-    if isinstance(n_images, int) and n_images >= 0:
-        return n_images
+    if n_images is not None:
+        return nonnegative_integer_value(n_images, "n_images")
     per_frame = read_csv_rows(candidate_run / "detections_per_frame.csv")
     if per_frame:
-        return max(integer_value(row["frame_index"], "frame_index") for row in per_frame) + 1
+        return (
+            max(
+                nonnegative_integer_value(row["frame_index"], "frame_index")
+                for row in per_frame
+            )
+            + 1
+        )
     if candidate_rows:
-        return max(integer_value(row["frame_index"], "frame_index") for row in candidate_rows) + 1
+        return (
+            max(
+                nonnegative_integer_value(row["frame_index"], "frame_index")
+                for row in candidate_rows
+            )
+            + 1
+        )
     return 0
 
 
 def infer_belt_velocity(args: argparse.Namespace, metadata: dict[str, Any]) -> float:
     if args.belt_velocity_px_per_frame is not None:
-        return float(args.belt_velocity_px_per_frame)
+        return finite_float_value(
+            args.belt_velocity_px_per_frame, "belt_velocity_px_per_frame"
+        )
     value = metadata.get("belt_velocity_px_per_frame")
-    return 0.0 if value is None else float(value)
+    return (
+        0.0
+        if value is None
+        else finite_float_value(value, "belt_velocity_px_per_frame")
+    )
 
 
 def copy_previews(candidate_run: Path, output_dir: Path) -> None:
@@ -698,7 +896,11 @@ def copy_previews(candidate_run: Path, output_dir: Path) -> None:
 def filter_run(args: argparse.Namespace) -> dict[str, Any]:
     validate_args(args)
     candidate_rows = read_csv_rows(args.candidate_run / "detections.csv")
-    confirming_rows = read_csv_rows(confirming_detections_path(args.confirming_run, args.confirming_detections_source))
+    confirming_rows = read_csv_rows(
+        confirming_detections_path(
+            args.confirming_run, args.confirming_detections_source
+        )
+    )
     confirming_by_frame = group_by_frame(confirming_rows)
     key_to_track, track_to_keys = track_memberships(args.candidate_run)
     output_dir = args.output_dir
@@ -730,8 +932,12 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         distance = math.inf if match_tuple is None else match_tuple[2]
         annotated = dict(row)
         annotated["confirmation_iou"] = iou
-        annotated["confirmation_center_distance_px"] = "" if not math.isfinite(distance) else distance
-        annotated["confirmation_label"] = "" if match is None else match.get("label", "")
+        annotated["confirmation_center_distance_px"] = (
+            "" if not math.isfinite(distance) else distance
+        )
+        annotated["confirmation_label"] = (
+            "" if match is None else match.get("label", "")
+        )
         annotated["confirmation_track_id"] = key_to_track.get(detection_key(row), "")
         annotated["confirmation_rescued_by_track"] = False
         annotated["confirmation_duplicate_suppressed"] = False
@@ -775,12 +981,14 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
 
     n_images = infer_n_images(args.candidate_run, candidate_rows)
     image_by_frame = {
-        integer_value(row["frame_index"], "frame_index"): row.get("image", "")
+        nonnegative_integer_value(row["frame_index"], "frame_index"): row.get(
+            "image", ""
+        )
         for row in candidate_rows
     }
     detections_by_frame: list[list[ParticleDetection]] = [[] for _ in range(n_images)]
     for row in kept_rows:
-        frame_index = integer_value(row["frame_index"], "frame_index")
+        frame_index = nonnegative_integer_value(row["frame_index"], "frame_index")
         if 0 <= frame_index < n_images:
             detections_by_frame[frame_index].append(parse_detection(row))
 
@@ -826,7 +1034,9 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
                 track_id=track.track_id,
                 track_detection_index=detection_index,
             ),
-            **kept_annotation_by_key.get((int(detection.frame_index), int(detection.label)), {}),
+            **kept_annotation_by_key.get(
+                (int(detection.frame_index), int(detection.label)), {}
+            ),
         }
         for track in tracks
         for detection_index, detection in enumerate(track.detections)
@@ -860,16 +1070,22 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             row["accepted"] = False
         track_score_rows.append(row)
 
-    filtered_track_rows = [row for row in track_rows if row["track_id"] in accepted_track_ids]
+    filtered_track_rows = [
+        row for row in track_rows if row["track_id"] in accepted_track_ids
+    ]
     filtered_velocity_rows = [
         asdict(velocity)
         for velocity in velocity_objects
         if velocity.track_id in accepted_track_ids
     ]
 
-    detection_fieldnames = list(dict.fromkeys([*DETECTION_FIELDS, *CONFIRMATION_FIELDS]))
+    detection_fieldnames = list(
+        dict.fromkeys([*DETECTION_FIELDS, *CONFIRMATION_FIELDS])
+    )
     write_csv(output_dir / "detections.csv", kept_rows, detection_fieldnames)
-    write_csv(output_dir / "rejected_detections.csv", rejected_rows, detection_fieldnames)
+    write_csv(
+        output_dir / "rejected_detections.csv", rejected_rows, detection_fieldnames
+    )
     write_csv(
         output_dir / "detections_per_frame.csv",
         [
@@ -879,13 +1095,24 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
         ["frame_index", "n_detections"],
     )
     write_csv(output_dir / "tracks.csv", track_rows, TRACK_DETECTION_FIELDS)
-    write_csv(output_dir / "velocities.csv", [asdict(velocity) for velocity in velocity_objects], VELOCITY_FIELDS)
+    write_csv(
+        output_dir / "velocities.csv",
+        [asdict(velocity) for velocity in velocity_objects],
+        VELOCITY_FIELDS,
+    )
     write_csv(output_dir / "track_scores.csv", track_score_rows, TRACK_SCORE_FIELDS)
-    write_csv(output_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
-    write_csv(output_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
+    write_csv(
+        output_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS
+    )
+    write_csv(
+        output_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS
+    )
     copy_previews(args.candidate_run, output_dir)
 
-    areas = np.asarray([float(row["area_px"]) for row in kept_rows], dtype=np.float64)
+    areas = np.asarray(
+        [positive_integer_value(row["area_px"], "area_px") for row in kept_rows],
+        dtype=np.float64,
+    )
     metadata = {
         **candidate_metadata,
         "method": args.label,
@@ -908,7 +1135,9 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "rescued_min_area_px": args.rescued_min_area_px,
             "rescued_min_peak_signal": args.rescued_min_peak_signal,
             "rescued_quality_rejected_detections": rescued_quality_rejected_count,
-            "track_rescued_detections": sum(1 for row in kept_rows if row["confirmation_rescued_by_track"]),
+            "track_rescued_detections": sum(
+                1 for row in kept_rows if row["confirmation_rescued_by_track"]
+            ),
             "dedupe_iou_threshold": args.dedupe_iou_threshold,
             "dedupe_containment_threshold": args.dedupe_containment_threshold,
             "dedupe_center_distance_px": args.dedupe_center_distance_px,
@@ -916,22 +1145,32 @@ def filter_run(args: argparse.Namespace) -> dict[str, Any]:
             "confirmed_or_rescued_detections": confirmed_or_rescued_count,
             "duplicate_suppressed_detections": len(duplicate_rows),
             "rejected_detections": len(rejected_rows),
-            "kept_fraction": None if not candidate_rows else len(kept_rows) / len(candidate_rows),
+            "kept_fraction": (
+                None if not candidate_rows else len(kept_rows) / len(candidate_rows)
+            ),
         },
         "n_images": n_images,
         "n_detections": len(kept_rows),
         "n_tracks": len(tracks),
         "n_velocity_estimates": len(velocity_objects),
-        "n_velocity_accepted_before_confirmation_filter": len(velocity_accepted_track_ids),
-        "n_confirmation_filtered_velocity_estimates": len(velocity_accepted_track_ids - accepted_track_ids),
+        "n_velocity_accepted_before_confirmation_filter": len(
+            velocity_accepted_track_ids
+        ),
+        "n_confirmation_filtered_velocity_estimates": len(
+            velocity_accepted_track_ids - accepted_track_ids
+        ),
         "n_filtered_velocity_estimates": len(filtered_velocity_rows),
         "track_filter_min_confirmed_detections": args.track_filter_min_confirmed_detections,
         "track_filter_min_confirmed_fraction": args.track_filter_min_confirmed_fraction,
         "belt_velocity_px_per_frame": belt_velocity,
-        "detection_area_median_px": None if areas.size == 0 else float(np.median(areas)),
+        "detection_area_median_px": (
+            None if areas.size == 0 else float(np.median(areas))
+        ),
         "detections_per_frame": None if n_images == 0 else len(kept_rows) / n_images,
     }
-    (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (output_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
     return metadata
 
 

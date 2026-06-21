@@ -502,7 +502,16 @@ def test_normalize_value_accepts_expected_shapes_and_rejects_bad_values():
     assert cli.normalize_value("belt_region", "1, 2, 3, 4") == "1,2,3,4"
     assert cli.normalize_value("belt_velocity_px_per_frame", "auto") == "auto"
     assert cli.normalize_value("belt_velocity_px_per_frame", 2.0) == "2"
+    assert cli.normalize_value("detection_mode", "dark") == "negative"
+    assert cli.normalize_value("detection_mode", "signed") == "absolute"
     assert cli.normalize_value("map_particle_mask_mode", "hysteresis_abs") == "hysteresis_abs"
+    assert cli.normalize_value("map_particle_mask_mode", "bright") == "positive"
+    assert cli.normalize_value("map_particle_mask_mode", "dark") == "negative"
+    assert cli.normalize_value("map_particle_mask_mode", "two-sided") == "absolute"
+    assert (
+        cli.normalize_value("detection_local_illumination_mask_mode", "dark-on-light")
+        == "negative"
+    )
     assert cli.normalize_value("allow_full_frame_auto_velocity", "yes") == "1"
     assert cli.normalize_value("allow_full_frame_auto_velocity", "no") == "0"
 
