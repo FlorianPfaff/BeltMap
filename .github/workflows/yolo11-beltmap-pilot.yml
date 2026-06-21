@@ -68,6 +68,11 @@ on:
         required: true
         type: boolean
         default: true
+      include_recurrence_filter:
+        description: "Also evaluate raw YOLO detections with a BeltMap belt-coordinate recurrence post-filter."
+        required: true
+        type: boolean
+        default: false
       beltmap_output_dir:
         description: "BeltMap output directory containing belt_map.npy and phase_estimates.csv for residual crops. It is also included as a comparison run when detections.csv exists."
         required: false
@@ -199,7 +204,7 @@ jobs:
           test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
 
       - name: Build default Brick 20g BeltMap residual source if missing
-        if: ${{ inputs.include_residual && inputs.build_beltmap_if_missing && !inputs.smoke_only }}
+        if: ${{ (inputs.include_residual || inputs.include_recurrence_filter) && inputs.build_beltmap_if_missing && !inputs.smoke_only }}
         env:
           BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
           DATASET_NAME: ${{ inputs.dataset_name }}
@@ -366,7 +371,7 @@ jobs:
           test -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv"
 
       - name: Upload BeltMap residual source artifact
-        if: ${{ inputs.include_residual && !inputs.smoke_only }}
+        if: ${{ (inputs.include_residual || inputs.include_recurrence_filter) && !inputs.smoke_only }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.beltmap_artifact_name }}
@@ -801,6 +806,30 @@ jobs:
             --bootstrap-samples "$BOOTSTRAP_SAMPLES" \
             --bootstrap-block-length-frames "$BOOTSTRAP_BLOCK_LENGTH_FRAMES"
 
+      - name: Score raw YOLO detections with BeltMap recurrence post-filter
+        if: ${{ !inputs.smoke_only && inputs.epochs != '0' && inputs.include_recurrence_filter }}
+        env:
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+          BOOTSTRAP_SAMPLES: ${{ inputs.compare_bootstrap_samples }}
+          BOOTSTRAP_BLOCK_LENGTH_FRAMES: ${{ inputs.compare_bootstrap_block_length_frames }}
+        run: |
+          set -euo pipefail
+          test -f outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_raw_test/detections.csv
+          test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
+          test -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv"
+          poetry run beltmap-yolo-recurrence-filter \
+            --yolo-run-dir outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_raw_test \
+            --beltmap-reference-dir "$BELTMAP_OUTPUT_DIR" \
+            --source-image-dir data/images \
+            --truth-path outputs/yolo11_beltmap_pilot/test_truth.json \
+            --output-dir outputs/yolo11_beltmap_pilot/yolo_recurrence \
+            --frame-count "$MAX_FRAMES" \
+            --belt-region "$BELT_REGION" \
+            --bootstrap-samples "$BOOTSTRAP_SAMPLES" \
+            --bootstrap-block-length-frames "$BOOTSTRAP_BLOCK_LENGTH_FRAMES"
+
       - name: Train and validate YOLO11 on BeltMap residual crops
         if: ${{ !inputs.smoke_only && inputs.epochs != '0' && inputs.include_residual }}
         env:
@@ -896,6 +925,7 @@ jobs:
           - `test_truth.json`, the reviewed truth restricted to the YOLO test split.
           - `yolo_runs/raw_train`, `raw_test`, `raw_predict`, and optionally residual counterparts.
           - `beltmap_runs/yolo11_raw_test` and optionally `beltmap_runs/yolo11_residual_test`.
+          - `yolo_recurrence/` and `beltmap_runs/yolo11_raw_recurrence_*_test` when recurrence filtering is enabled.
           - `yolo_compare/raw_test/summary.csv` and optionally residual comparison outputs.
           - `dataset_summary.json` and `dataset_manifest.csv`.
 
@@ -906,6 +936,10 @@ jobs:
           if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv ]; then
             printf "\nRaw YOLO exported comparison summary:\n"
             cat outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv
+          fi
+          if [ -f outputs/yolo11_beltmap_pilot/yolo_recurrence/compare/summary.csv ]; then
+            echo "\nRaw YOLO recurrence post-filter comparison summary:"
+            cat outputs/yolo11_beltmap_pilot/yolo_recurrence/compare/summary.csv
           fi
           if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/residual_test/summary.csv ]; then
             printf "\nResidual YOLO exported comparison summary:\n"

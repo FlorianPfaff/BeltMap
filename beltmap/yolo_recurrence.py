@@ -3,780 +3,1015 @@ from __future__ import annotations
 import csv
 import json
 import math
-import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
+from numpy.typing import NDArray
 from PIL import Image, ImageDraw
 
-from .yolo_export import DETECTION_FIELDS, natural_key
+from beltmap.compare_runs import (
+    generate_comparison_report,
+    load_labeled_detection_truth,
+    parse_run_spec,
+)
+from beltmap.phase import BeltMotionModel, render_belt_view
+from beltmap.recurrent_artifacts import belt_revolution_indices
+from beltmap.rendering import BeltRegion
+from beltmap.yolo_export import IMAGE_EXTENSIONS, infer_frame_index, natural_key
 
-IMAGE_EXTENSIONS = {".bmp", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-RECURRENCE_FEATURE_FIELDS = [
+
+DEFAULT_HARD_RATIO_THRESHOLD = 0.40
+DEFAULT_HARD_MIN_REVISITS = 2
+DEFAULT_PATCH_MARGIN_PX = 4
+DEFAULT_MIN_PATCH_SIZE_PX = 9
+DEFAULT_EXCESS_FLOOR = 1.0
+FEATURE_FIELDNAMES = [
     "frame_index",
     "label",
     "source",
-    "x",
     "y",
+    "x",
     "bbox_top",
     "bbox_left",
     "bbox_bottom",
     "bbox_right",
-    "score_original",
-    "confidence_original",
-    "belt_y_px",
-    "belt_x_px",
-    "original_local_max",
-    "original_bg99",
+    "confidence",
+    "score",
+    "belt_y",
+    "patch_top",
+    "patch_left",
+    "patch_bottom",
+    "patch_right",
     "original_excess",
-    "revisit_count",
-    "recurrent_revisit_count",
+    "revisit_frame_prev",
+    "revisit_y_prev",
+    "revisit_excess_prev",
+    "recurrence_ratio_prev",
+    "patch_correlation_prev",
+    "revisit_frame_next",
+    "revisit_y_next",
+    "revisit_excess_next",
+    "recurrence_ratio_next",
+    "patch_correlation_next",
     "max_recurrence_ratio",
-    "mean_recurrence_ratio",
     "belt_fixedness_score",
     "transient_score",
-    "adjusted_score",
+    "valid_revisits",
+    "high_recurrence_revisits",
     "hard_reject",
-    "causal_read",
-    "revisit_frames_json",
-    "revisit_excess_json",
-    "revisit_ratio_json",
-    "revisit_patch_correlation_json",
+    "raw_match_role",
+    "error_taxonomy",
+]
+RUN_EXTRA_FIELDS = [
+    "mean_signal",
+    "peak_signal",
+    "yolo_confidence_original",
+    "adjusted_score",
+    "belt_fixedness_score",
+    "transient_score",
+    "max_recurrence_ratio",
+    "high_recurrence_revisits",
+    "hard_reject",
 ]
 
 
 @dataclass(frozen=True)
-class CropRegion:
-    """Crop in source-image coordinates."""
-
+class PatchBox:
     top: int
     left: int
-    height: int
-    width: int
+    bottom: int
+    right: int
 
-    @classmethod
-    def parse(cls, text: str) -> "CropRegion":
-        parts = [int(float(part.strip())) for part in text.split(",")]
-        if len(parts) != 4:
-            raise ValueError("crop region must be top,left,height,width")
-        top, left, height, width = parts
-        if height <= 0 or width <= 0:
-            raise ValueError("crop height/width must be positive")
-        return cls(top=top, left=left, height=height, width=width)
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top
+
+    @property
+    def width(self) -> int:
+        return self.right - self.left
 
 
 @dataclass(frozen=True)
-class RecurrenceConfig:
-    """Settings for belt-coordinate recurrence scoring of frame detections."""
-
-    crop_region: CropRegion = CropRegion(0, 0, 0, 0)
-    map_height_px: float = 0.0
-    belt_velocity_px_per_frame: float | None = None
-    phase_offset_px: float = 0.0
-    max_revolutions: int = 1
-    revisit_search_window_frames: int = 2
-    recurrence_threshold: float = 0.5
-    min_recurrent_revisits: int = 1
-    min_original_excess: float = 1.0
-    signal_margin_px: int = 2
-    background_margin_px: int = 12
-    patch_correlation_margin_px: int = 4
-    source: str = "yolo_recurrence"
+class PatchEvidence:
+    frame_index: int
+    center_y: float
+    raw_patch: NDArray[np.floating]
+    background_patch: NDArray[np.floating]
+    residual_patch: NDArray[np.floating]
+    excess: float
 
 
 @dataclass(frozen=True)
-class PatchStats:
-    local_max: float | None
-    bg99: float | None
-    excess: float | None
-    patch: np.ndarray | None
+class YoloRecurrenceConfig:
+    frame_count: int = 500
+    belt_region: BeltRegion = BeltRegion(0, 220, 1330, 1800)
+    hard_ratio_threshold: float = DEFAULT_HARD_RATIO_THRESHOLD
+    hard_min_revisits: int = DEFAULT_HARD_MIN_REVISITS
+    patch_margin_px: int = DEFAULT_PATCH_MARGIN_PX
+    min_patch_size_px: int = DEFAULT_MIN_PATCH_SIZE_PX
+    excess_floor: float = DEFAULT_EXCESS_FLOOR
+    froc_max_thresholds: int = 250
+    bootstrap_samples: int = 0
+    bootstrap_block_length_frames: int = 5
 
 
 @dataclass(frozen=True)
-class RecurrenceSummary:
+class YoloRecurrenceSummary:
     output_dir: Path
-    n_input_detections: int
-    n_hard_kept: int
+    features_csv: Path
+    hard_run_dir: Path
+    rerank_run_dir: Path
+    report_md: Path
+    contact_sheet_png: Path
+    compare_summary_csv: Path | None
+    n_detections: int
     n_hard_rejected: int
-    n_rerank_detections: int
-    n_frames: int
-    feature_csv: Path
+    n_raw_false_positives_removed: int
+    n_raw_true_positives_removed: int
 
 
-def read_csv(path: Path) -> list[dict[str, str]]:
-    if not path.is_file():
-        return []
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+def run_yolo_recurrence_filter(
+    *,
+    yolo_run_dir: Path,
+    beltmap_reference_dir: Path,
+    source_image_dir: Path,
+    output_dir: Path,
+    truth_path: Path | None,
+    config: YoloRecurrenceConfig,
+) -> YoloRecurrenceSummary:
+    """Compute belt-coordinate recurrence features and exported YOLO post-filter runs."""
 
+    yolo_run_dir = yolo_run_dir.resolve()
+    beltmap_reference_dir = beltmap_reference_dir.resolve()
+    source_image_dir = source_image_dir.resolve()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-def write_csv(
-    path: Path,
-    rows: Sequence[Mapping[str, Any]],
-    fieldnames: Sequence[str],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(fieldnames), extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    detection_rows, detection_fieldnames = read_csv_rows_with_fieldnames(
+        yolo_run_dir / "detections.csv"
+    )
+    per_frame_rows = read_csv_rows(yolo_run_dir / "detections_per_frame.csv")
+    metadata = read_json(beltmap_reference_dir / "metadata.json")
+    belt_map = np.load(beltmap_reference_dir / "belt_map.npy")
+    if belt_map.ndim != 2:
+        raise ValueError("belt_map.npy must contain a 2-D map")
+    phase_by_frame = load_phase_px_by_frame(
+        beltmap_reference_dir / "phase_estimates.csv",
+        frame_count=config.frame_count,
+    )
+    source_images = find_source_images(source_image_dir)
 
-
-def finite_float(value: Any, *, default: float | None = None) -> float | None:
-    if value is None or str(value).strip() == "":
-        return default
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if math.isfinite(parsed) else default
-
-
-def finite_int(value: Any, *, default: int | None = None) -> int | None:
-    parsed = finite_float(value)
-    if parsed is None:
-        return default
-    return int(round(parsed))
-
-
-def infer_frame_index_from_name(name: str, *, pattern: str = r"(\d+)") -> int:
-    matches = list(re.finditer(pattern, name))
-    if not matches:
-        raise ValueError(f"could not infer frame index from {name!r}")
-    match = matches[-1]
-    value = match.group(1) if match.groups() else match.group(0)
-    return int(value)
-
-
-class ImageSequence:
-    """Lazy loader for source images addressed by frame index."""
-
-    def __init__(
-        self,
-        root: Path,
-        *,
-        crop_region: CropRegion,
-        frame_index_pattern: str = r"(\d+)",
-    ) -> None:
-        if not root.is_dir():
-            raise FileNotFoundError(root)
-        self.root = root
-        self.crop_region = crop_region
-        self._paths = sorted(
-            (path for path in root.rglob("*") if path.suffix.lower() in IMAGE_EXTENSIONS),
-            key=natural_key,
+    if config.belt_region.width != belt_map.shape[1]:
+        raise ValueError(
+            "belt_region width must match belt_map width: "
+            f"{config.belt_region.width} != {belt_map.shape[1]}"
         )
-        if not self._paths:
-            raise ValueError(f"no supported images found below {root}")
-        self._by_frame: dict[int, Path] = {}
-        for path in self._paths:
-            try:
-                frame_index = infer_frame_index_from_name(
-                    path.stem,
-                    pattern=frame_index_pattern,
-                )
-            except ValueError:
-                continue
-            self._by_frame.setdefault(frame_index, path)
-        self._cache: dict[int, np.ndarray] = {}
-
-    def has_frame(self, frame_index: int) -> bool:
-        if frame_index in self._by_frame:
-            return True
-        return 0 <= frame_index < len(self._paths)
-
-    def path_for_frame(self, frame_index: int) -> Path:
-        if frame_index in self._by_frame:
-            return self._by_frame[frame_index]
-        if 0 <= frame_index < len(self._paths):
-            return self._paths[frame_index]
-        raise KeyError(frame_index)
-
-    def crop_for_frame(self, frame_index: int) -> np.ndarray:
-        if frame_index in self._cache:
-            return self._cache[frame_index]
-        path = self.path_for_frame(frame_index)
-        with Image.open(path) as image:
-            gray = image.convert("L")
-            if self.crop_region.height > 0 and self.crop_region.width > 0:
-                if gray.size != (self.crop_region.width, self.crop_region.height):
-                    gray = gray.crop(
-                        (
-                            self.crop_region.left,
-                            self.crop_region.top,
-                            self.crop_region.left + self.crop_region.width,
-                            self.crop_region.top + self.crop_region.height,
-                        )
-                    )
-            arr = np.asarray(gray, dtype=np.float64)
-        self._cache[frame_index] = arr
-        return arr
-
-
-def load_phase_estimates(path: Path) -> dict[int, float]:
-    rows = read_csv(path)
-    result: dict[int, float] = {}
-    for row in rows:
-        frame_text = row.get("frame_index") or row.get("source_frame_index") or row.get("image_index")
-        phase_text = row.get("phase_px") or row.get("smoothed_phase_px") or row.get("refined_phase_px")
-        if frame_text in (None, "") or phase_text in (None, ""):
-            continue
-        frame_index = int(float(frame_text))
-        result[frame_index] = float(phase_text)
-    return result
-
-
-def infer_map_height(
-    *,
-    map_height_px: float | None,
-    belt_map_path: Path | None,
-) -> float:
-    if map_height_px is not None and map_height_px > 0:
-        return float(map_height_px)
-    if belt_map_path is not None and belt_map_path.is_file():
-        arr = np.load(belt_map_path, mmap_mode="r")
-        return float(arr.shape[0])
-    raise ValueError("map height must be supplied via --map-height-px or --belt-map-path")
-
-
-def estimate_belt_velocity_from_phase(phase_by_frame: Mapping[int, float], map_height_px: float) -> float | None:
-    if len(phase_by_frame) < 2:
-        return None
-    deltas: list[float] = []
-    for a, b in zip(sorted(phase_by_frame)[:-1], sorted(phase_by_frame)[1:]):
-        if b != a + 1:
-            continue
-        delta = (phase_by_frame[b] - phase_by_frame[a]) % map_height_px
-        if 0 < delta < 0.5 * map_height_px:
-            deltas.append(float(delta))
-    if not deltas:
-        return None
-    return float(np.median(deltas))
-
-
-def phase_for_frame(
-    frame_index: int,
-    *,
-    phase_by_frame: Mapping[int, float],
-    config: RecurrenceConfig,
-) -> float | None:
-    if frame_index in phase_by_frame:
-        return float(phase_by_frame[frame_index])
-    if config.belt_velocity_px_per_frame is None:
-        return None
-    return float((config.phase_offset_px + frame_index * config.belt_velocity_px_per_frame) % config.map_height_px)
-
-
-def detection_center(row: Mapping[str, Any]) -> tuple[float, float]:
-    y = finite_float(row.get("y"))
-    x = finite_float(row.get("x"))
-    if y is not None and x is not None:
-        return y, x
-    top = finite_float(row.get("bbox_top"))
-    left = finite_float(row.get("bbox_left"))
-    bottom = finite_float(row.get("bbox_bottom"))
-    right = finite_float(row.get("bbox_right"))
-    if None in (top, left, bottom, right):
-        raise ValueError(f"row has neither y/x nor bbox center fields: {row}")
-    assert top is not None and left is not None and bottom is not None and right is not None
-    return 0.5 * (top + bottom), 0.5 * (left + right)
-
-
-def detection_half_size(row: Mapping[str, Any]) -> tuple[float, float]:
-    top = finite_float(row.get("bbox_top"))
-    left = finite_float(row.get("bbox_left"))
-    bottom = finite_float(row.get("bbox_bottom"))
-    right = finite_float(row.get("bbox_right"))
-    if None in (top, left, bottom, right):
-        return 8.0, 8.0
-    assert top is not None and left is not None and bottom is not None and right is not None
-    return max(1.0, 0.5 * (bottom - top)), max(1.0, 0.5 * (right - left))
-
-
-def _clip_box(
-    *,
-    center_y: float,
-    center_x: float,
-    half_y: float,
-    half_x: float,
-    height: int,
-    width: int,
-) -> tuple[int, int, int, int] | None:
-    top = max(0, int(math.floor(center_y - half_y)))
-    bottom = min(height, int(math.ceil(center_y + half_y)))
-    left = max(0, int(math.floor(center_x - half_x)))
-    right = min(width, int(math.ceil(center_x + half_x)))
-    if bottom <= top or right <= left:
-        return None
-    return top, left, bottom, right
-
-
-def patch_stats(
-    image: np.ndarray,
-    *,
-    center_y: float,
-    center_x: float,
-    half_y: float,
-    half_x: float,
-    signal_margin_px: int,
-    background_margin_px: int,
-    patch_correlation_margin_px: int,
-) -> PatchStats:
-    height, width = image.shape[:2]
-    signal = _clip_box(
-        center_y=center_y,
-        center_x=center_x,
-        half_y=half_y + signal_margin_px,
-        half_x=half_x + signal_margin_px,
-        height=height,
-        width=width,
+    belt_velocity = metadata_float(metadata, "belt_velocity_px_per_frame")
+    period_px = metadata_float(
+        metadata,
+        "belt_period_px_input",
+        default=metadata_float(metadata, "belt_map_height_px", default=float(belt_map.shape[0])),
     )
-    if signal is None:
-        return PatchStats(None, None, None, None)
-    top, left, bottom, right = signal
-    signal_patch = image[top:bottom, left:right]
-    local_max = float(np.max(signal_patch)) if signal_patch.size else None
-
-    outer = _clip_box(
-        center_y=center_y,
-        center_x=center_x,
-        half_y=half_y + background_margin_px,
-        half_x=half_x + background_margin_px,
-        height=height,
-        width=width,
+    reference_phase_px = metadata_float(metadata, "reference_phase_px", default=0.0)
+    revolution_by_frame = belt_revolution_indices(
+        config.frame_count,
+        BeltMotionModel(
+            image_velocity_px_per_frame=belt_velocity,
+            period_px=period_px,
+            reference_phase_px=reference_phase_px,
+        ),
     )
-    bg99 = None
-    if outer is not None:
-        ot, ol, ob, oright = outer
-        outer_patch = image[ot:ob, ol:oright]
-        mask = np.ones(outer_patch.shape, dtype=bool)
-        inner_top = max(0, top - ot)
-        inner_bottom = min(mask.shape[0], bottom - ot)
-        inner_left = max(0, left - ol)
-        inner_right = min(mask.shape[1], right - ol)
-        mask[inner_top:inner_bottom, inner_left:inner_right] = False
-        annulus = outer_patch[mask]
-        if annulus.size:
-            bg99 = float(np.percentile(annulus, 99.0))
-    if bg99 is None:
-        bg99 = float(np.percentile(image, 99.0)) if image.size else None
-
-    patch = None
-    patch_box = _clip_box(
-        center_y=center_y,
-        center_x=center_x,
-        half_y=half_y + patch_correlation_margin_px,
-        half_x=half_x + patch_correlation_margin_px,
-        height=height,
-        width=width,
+    raw_match_roles = (
+        match_detection_roles(detection_rows, truth_path=truth_path)
+        if truth_path is not None
+        else {}
     )
-    if patch_box is not None:
-        pt, pl, pb, pr = patch_box
-        patch = image[pt:pb, pl:pr].copy()
-    excess = None if local_max is None or bg99 is None else float(local_max - bg99)
-    return PatchStats(local_max=local_max, bg99=bg99, excess=excess, patch=patch)
 
+    crop_cache: dict[int, NDArray[np.floating]] = {}
+    feature_rows: list[dict[str, Any]] = []
+    feature_by_key: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in detection_rows:
+        feature = score_detection_recurrence(
+            row,
+            belt_map=belt_map,
+            phase_by_frame=phase_by_frame,
+            revolution_by_frame=revolution_by_frame,
+            source_images=source_images,
+            crop_cache=crop_cache,
+            config=config,
+        )
+        key = row_key(row)
+        role = raw_match_roles.get(key, "unscored")
+        feature["raw_match_role"] = role
+        feature["error_taxonomy"] = error_taxonomy(feature, role=role)
+        feature_rows.append(feature)
+        feature_by_key[key] = feature
 
-def patch_correlation(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
-    if a is None or b is None or a.shape != b.shape or a.size < 4:
-        return None
-    av = a.astype(np.float64).ravel()
-    bv = b.astype(np.float64).ravel()
-    av = av - float(np.mean(av))
-    bv = bv - float(np.mean(bv))
-    denom = float(np.linalg.norm(av) * np.linalg.norm(bv))
-    if denom <= 0:
-        return None
-    return float(np.dot(av, bv) / denom)
+    write_csv(output_dir / "yolo_recurrence_features.csv", feature_rows, FEATURE_FIELDNAMES)
+    hard_run_dir = output_dir.parent / "beltmap_runs" / "yolo11_raw_recurrence_hard_test"
+    rerank_run_dir = output_dir.parent / "beltmap_runs" / "yolo11_raw_recurrence_rerank_test"
+    hard_rows = [
+        enrich_detection_row(
+            row,
+            feature_by_key[row_key(row)],
+            rerank=False,
+        )
+        for row in detection_rows
+        if not bool_value(feature_by_key[row_key(row)]["hard_reject"])
+    ]
+    rerank_rows = [
+        enrich_detection_row(
+            row,
+            feature_by_key[row_key(row)],
+            rerank=True,
+        )
+        for row in detection_rows
+    ]
+    write_beltmap_run(
+        hard_run_dir,
+        rows=hard_rows,
+        per_frame_rows=per_frame_rows,
+        source_run=yolo_run_dir,
+        mode="yolo11_raw_recurrence_hard_test",
+        config=config,
+        source_fieldnames=detection_fieldnames,
+    )
+    write_beltmap_run(
+        rerank_run_dir,
+        rows=rerank_rows,
+        per_frame_rows=per_frame_rows,
+        source_run=yolo_run_dir,
+        mode="yolo11_raw_recurrence_rerank_test",
+        config=config,
+        source_fieldnames=detection_fieldnames,
+    )
 
+    contact_sheet_path = output_dir / "yolo_fp_fn_recurrence_contact_sheet.png"
+    write_contact_sheet(
+        contact_sheet_path,
+        feature_rows,
+        source_images=source_images,
+        config=config,
+        crop_cache=crop_cache,
+    )
+    compare_summary_csv = None
+    if truth_path is not None:
+        compare_dir = output_dir / "compare"
+        specs = [
+            parse_run_spec(f"yolo11_raw={yolo_run_dir}"),
+            parse_run_spec(f"yolo11_raw_recurrence_hard={hard_run_dir}"),
+            parse_run_spec(f"yolo11_raw_recurrence_rerank={rerank_run_dir}"),
+        ]
+        if (beltmap_reference_dir / "detections.csv").is_file():
+            specs.append(parse_run_spec(f"beltmap_reference={beltmap_reference_dir}"))
+        artifacts = generate_comparison_report(
+            specs,
+            report_dir=compare_dir,
+            truth_path=truth_path,
+            truth_iou_threshold=0.25,
+            froc_max_thresholds=config.froc_max_thresholds,
+            bootstrap_samples=config.bootstrap_samples,
+            bootstrap_block_length_frames=config.bootstrap_block_length_frames,
+            make_metric_plots=False,
+            make_contact_sheets=False,
+        )
+        compare_summary_csv = artifacts.summary_csv
 
-def projected_image_y(
-    belt_y: float,
-    *,
-    phase_px: float,
-    map_height_px: float,
-) -> float:
-    return float((belt_y - phase_px) % map_height_px)
-
-
-def candidate_revisit_frames(
-    frame_index: int,
-    *,
-    config: RecurrenceConfig,
-    phase_by_frame: Mapping[int, float],
-    images: ImageSequence,
-) -> list[int]:
-    velocity = config.belt_velocity_px_per_frame
-    if velocity is None:
-        velocity = estimate_belt_velocity_from_phase(phase_by_frame, config.map_height_px)
-    if velocity is None or velocity <= 0:
-        return []
-    period_frames = config.map_height_px / velocity
-    candidates: list[int] = []
-    for revolution_offset in range(-config.max_revolutions, config.max_revolutions + 1):
-        if revolution_offset == 0:
-            continue
-        center = frame_index + revolution_offset * period_frames
-        for delta in range(-config.revisit_search_window_frames, config.revisit_search_window_frames + 1):
-            revisit = int(round(center + delta))
-            if revisit == frame_index or revisit < 0 or not images.has_frame(revisit):
-                continue
-            if revisit not in candidates:
-                candidates.append(revisit)
-    return sorted(candidates, key=lambda value: abs(value - frame_index))
+    n_hard_rejected = sum(bool_value(row["hard_reject"]) for row in feature_rows)
+    n_fp_removed = sum(
+        bool_value(row["hard_reject"]) and row.get("raw_match_role") == "FP"
+        for row in feature_rows
+    )
+    n_tp_removed = sum(
+        bool_value(row["hard_reject"]) and row.get("raw_match_role") == "TP"
+        for row in feature_rows
+    )
+    report_path = output_dir / "yolo_recurrence_report.md"
+    write_recurrence_report(
+        report_path,
+        feature_rows,
+        truth_path=truth_path,
+        compare_summary_csv=compare_summary_csv,
+        hard_run_dir=hard_run_dir,
+        rerank_run_dir=rerank_run_dir,
+    )
+    return YoloRecurrenceSummary(
+        output_dir=output_dir,
+        features_csv=output_dir / "yolo_recurrence_features.csv",
+        hard_run_dir=hard_run_dir,
+        rerank_run_dir=rerank_run_dir,
+        report_md=report_path,
+        contact_sheet_png=contact_sheet_path,
+        compare_summary_csv=compare_summary_csv,
+        n_detections=len(detection_rows),
+        n_hard_rejected=n_hard_rejected,
+        n_raw_false_positives_removed=n_fp_removed,
+        n_raw_true_positives_removed=n_tp_removed,
+    )
 
 
 def score_detection_recurrence(
-    row: Mapping[str, str],
+    row: Mapping[str, Any],
     *,
-    images: ImageSequence,
-    phase_by_frame: Mapping[int, float],
-    config: RecurrenceConfig,
-) -> tuple[dict[str, Any], dict[str, str], dict[str, str] | None]:
-    frame_index = int(float(row["frame_index"]))
-    label = str(row.get("label", ""))
-    y, x = detection_center(row)
-    half_y, half_x = detection_half_size(row)
-    phase = phase_for_frame(frame_index, phase_by_frame=phase_by_frame, config=config)
-    if phase is None:
-        feature = _empty_feature_row(row, reason="missing phase for detection frame")
-        return feature, _rerank_row(row, adjusted_score=finite_float(row.get("score"), default=1.0) or 1.0), dict(row)
-
-    belt_y = float((y + phase) % config.map_height_px)
-    original = patch_stats(
-        images.crop_for_frame(frame_index),
-        center_y=y,
-        center_x=x,
-        half_y=half_y,
-        half_x=half_x,
-        signal_margin_px=config.signal_margin_px,
-        background_margin_px=config.background_margin_px,
-        patch_correlation_margin_px=config.patch_correlation_margin_px,
+    belt_map: NDArray[np.floating],
+    phase_by_frame: Sequence[float],
+    revolution_by_frame: Sequence[int],
+    source_images: Mapping[int, Path],
+    crop_cache: dict[int, NDArray[np.floating]],
+    config: YoloRecurrenceConfig,
+) -> dict[str, Any]:
+    frame_index = int_value(row["frame_index"], name="frame_index")
+    label = int_value(row["label"], name="label")
+    y = float_value(row["y"], name="y")
+    x = float_value(row["x"], name="x")
+    bbox = bbox_from_row(row)
+    patch = detection_patch_box(
+        bbox,
+        image_shape=config.belt_region.shape,
+        margin_px=config.patch_margin_px,
+        min_size_px=config.min_patch_size_px,
     )
-    original_excess = original.excess
-    revisit_frames: list[int] = []
-    revisit_excesses: list[float | None] = []
-    revisit_ratios: list[float] = []
-    revisit_correlations: list[float | None] = []
-
-    for revisit_frame in candidate_revisit_frames(
+    phase = phase_by_frame[frame_index]
+    belt_y = (y + phase) % belt_map.shape[0]
+    original = patch_evidence(
         frame_index,
-        config=config,
+        center_y=0.5 * (patch.top + patch.bottom),
+        patch=patch,
+        belt_map=belt_map,
         phase_by_frame=phase_by_frame,
-        images=images,
-    ):
-        revisit_phase = phase_for_frame(revisit_frame, phase_by_frame=phase_by_frame, config=config)
-        if revisit_phase is None:
-            continue
-        revisit_y = projected_image_y(
-            belt_y,
-            phase_px=revisit_phase,
-            map_height_px=config.map_height_px,
+        source_images=source_images,
+        crop_cache=crop_cache,
+        config=config,
+    )
+    revisit_features: dict[str, Any] = {}
+    recurrence_scores: list[float] = []
+    ratios: list[float] = []
+    valid_revisits = 0
+    high_revisits = 0
+    for suffix, offset in (("prev", -1), ("next", 1)):
+        revisit = find_revisit(
+            frame_index=frame_index,
+            belt_y=belt_y,
+            x=x,
+            patch_shape=(patch.height, patch.width),
+            revolution_offset=offset,
+            phase_by_frame=phase_by_frame,
+            revolution_by_frame=revolution_by_frame,
+            source_images=source_images,
+            image_shape=config.belt_region.shape,
+            map_height=belt_map.shape[0],
         )
-        if not 0.0 <= revisit_y < images.crop_region.height:
+        if revisit is None:
+            revisit_features.update(
+                {
+                    f"revisit_frame_{suffix}": "",
+                    f"revisit_y_{suffix}": "",
+                    f"revisit_excess_{suffix}": "",
+                    f"recurrence_ratio_{suffix}": "",
+                    f"patch_correlation_{suffix}": "",
+                }
+            )
             continue
-        revisit = patch_stats(
-            images.crop_for_frame(revisit_frame),
+        revisit_frame, revisit_y, revisit_patch = revisit
+        evidence = patch_evidence(
+            revisit_frame,
             center_y=revisit_y,
-            center_x=x,
-            half_y=half_y,
-            half_x=half_x,
-            signal_margin_px=config.signal_margin_px,
-            background_margin_px=config.background_margin_px,
-            patch_correlation_margin_px=config.patch_correlation_margin_px,
+            patch=revisit_patch,
+            belt_map=belt_map,
+            phase_by_frame=phase_by_frame,
+            source_images=source_images,
+            crop_cache=crop_cache,
+            config=config,
         )
-        revisit_frames.append(revisit_frame)
-        revisit_excesses.append(revisit.excess)
-        denom = max(float(original_excess or 0.0), config.min_original_excess)
-        ratio = 0.0 if revisit.excess is None else float(max(0.0, revisit.excess) / denom)
-        revisit_ratios.append(ratio)
-        revisit_correlations.append(patch_correlation(original.patch, revisit.patch))
-
-    recurrent_revisit_count = sum(1 for ratio in revisit_ratios if ratio >= config.recurrence_threshold)
-    max_ratio = max(revisit_ratios, default=0.0)
-    mean_ratio = float(np.mean(revisit_ratios)) if revisit_ratios else 0.0
-    if not revisit_ratios:
-        belt_fixedness = 0.0
-        read = "no usable revisit frames"
-    else:
-        support_factor = min(1.0, recurrent_revisit_count / max(1, config.min_recurrent_revisits))
-        belt_fixedness = min(1.0, max_ratio * support_factor)
-        read = (
-            "belt-coordinate recurrence above threshold"
-            if recurrent_revisit_count >= config.min_recurrent_revisits
-            else "no strong belt-coordinate recurrence"
+        ratio = recurrence_ratio(evidence.excess, original.excess, floor=config.excess_floor)
+        corr = patch_correlation(original.residual_patch, evidence.residual_patch)
+        recurrent_strength = max(0.0, min(1.0, ratio)) * max(0.0, corr)
+        recurrence_scores.append(recurrent_strength)
+        ratios.append(ratio)
+        valid_revisits += 1
+        if ratio >= config.hard_ratio_threshold:
+            high_revisits += 1
+        revisit_features.update(
+            {
+                f"revisit_frame_{suffix}": revisit_frame,
+                f"revisit_y_{suffix}": revisit_y,
+                f"revisit_excess_{suffix}": evidence.excess,
+                f"recurrence_ratio_{suffix}": ratio,
+                f"patch_correlation_{suffix}": corr,
+            }
         )
-    transient_score = float(max(0.0, min(1.0, 1.0 - belt_fixedness)))
-    original_score = finite_float(row.get("score"), default=finite_float(row.get("confidence"), default=1.0))
-    if original_score is None:
-        original_score = 1.0
-    adjusted_score = float(original_score * transient_score)
-    hard_reject = recurrent_revisit_count >= config.min_recurrent_revisits
 
-    feature = {
+    max_ratio = max(ratios) if ratios else 0.0
+    belt_fixedness = second_largest(recurrence_scores) if len(recurrence_scores) >= 2 else 0.0
+    transient = float(np.clip(1.0 - belt_fixedness, 0.05, 1.0))
+    hard_reject = high_revisits >= config.hard_min_revisits
+    result: dict[str, Any] = {
         "frame_index": frame_index,
         "label": label,
         "source": row.get("source", ""),
-        "x": x,
         "y": y,
-        "bbox_top": row.get("bbox_top", ""),
-        "bbox_left": row.get("bbox_left", ""),
-        "bbox_bottom": row.get("bbox_bottom", ""),
-        "bbox_right": row.get("bbox_right", ""),
-        "score_original": original_score,
-        "confidence_original": finite_float(row.get("confidence"), default=original_score),
-        "belt_y_px": belt_y,
-        "belt_x_px": x,
-        "original_local_max": original.local_max,
-        "original_bg99": original.bg99,
-        "original_excess": original_excess,
-        "revisit_count": len(revisit_frames),
-        "recurrent_revisit_count": recurrent_revisit_count,
+        "x": x,
+        "bbox_top": bbox.top,
+        "bbox_left": bbox.left,
+        "bbox_bottom": bbox.bottom,
+        "bbox_right": bbox.right,
+        "confidence": row.get("confidence", row.get("score", "")),
+        "score": row.get("score", row.get("confidence", "")),
+        "belt_y": belt_y,
+        "patch_top": patch.top,
+        "patch_left": patch.left,
+        "patch_bottom": patch.bottom,
+        "patch_right": patch.right,
+        "original_excess": original.excess,
         "max_recurrence_ratio": max_ratio,
-        "mean_recurrence_ratio": mean_ratio,
         "belt_fixedness_score": belt_fixedness,
-        "transient_score": transient_score,
-        "adjusted_score": adjusted_score,
+        "transient_score": transient,
+        "valid_revisits": valid_revisits,
+        "high_recurrence_revisits": high_revisits,
         "hard_reject": hard_reject,
-        "causal_read": read,
-        "revisit_frames_json": json.dumps(revisit_frames),
-        "revisit_excess_json": json.dumps(revisit_excesses),
-        "revisit_ratio_json": json.dumps(revisit_ratios),
-        "revisit_patch_correlation_json": json.dumps(revisit_correlations),
     }
-    rerank = _rerank_row(row, adjusted_score=adjusted_score)
-    hard = None if hard_reject else dict(row)
-    return feature, rerank, hard
+    result.update(revisit_features)
+    return result
 
 
-def _empty_feature_row(row: Mapping[str, str], *, reason: str) -> dict[str, Any]:
-    y, x = detection_center(row)
-    score = finite_float(row.get("score"), default=finite_float(row.get("confidence"), default=1.0)) or 1.0
-    return {
-        "frame_index": int(float(row["frame_index"])),
-        "label": row.get("label", ""),
-        "source": row.get("source", ""),
-        "x": x,
-        "y": y,
-        "bbox_top": row.get("bbox_top", ""),
-        "bbox_left": row.get("bbox_left", ""),
-        "bbox_bottom": row.get("bbox_bottom", ""),
-        "bbox_right": row.get("bbox_right", ""),
-        "score_original": score,
-        "confidence_original": finite_float(row.get("confidence"), default=score),
-        "belt_y_px": "",
-        "belt_x_px": x,
-        "original_local_max": "",
-        "original_bg99": "",
-        "original_excess": "",
-        "revisit_count": 0,
-        "recurrent_revisit_count": 0,
-        "max_recurrence_ratio": 0.0,
-        "mean_recurrence_ratio": 0.0,
-        "belt_fixedness_score": 0.0,
-        "transient_score": 1.0,
-        "adjusted_score": score,
-        "hard_reject": False,
-        "causal_read": reason,
-        "revisit_frames_json": "[]",
-        "revisit_excess_json": "[]",
-        "revisit_ratio_json": "[]",
-        "revisit_patch_correlation_json": "[]",
-    }
+def find_revisit(
+    *,
+    frame_index: int,
+    belt_y: float,
+    x: float,
+    patch_shape: tuple[int, int],
+    revolution_offset: int,
+    phase_by_frame: Sequence[float],
+    revolution_by_frame: Sequence[int],
+    source_images: Mapping[int, Path],
+    image_shape: tuple[int, int],
+    map_height: int,
+) -> tuple[int, float, PatchBox] | None:
+    source_revolution = int(revolution_by_frame[frame_index])
+    target_revolution = source_revolution + revolution_offset
+    candidates: list[tuple[float, int, float, PatchBox]] = []
+    for candidate_frame, phase in enumerate(phase_by_frame):
+        if candidate_frame == frame_index:
+            continue
+        if candidate_frame not in source_images:
+            continue
+        if int(revolution_by_frame[candidate_frame]) != target_revolution:
+            continue
+        projected_y = (belt_y - phase) % map_height
+        if projected_y < 0.0 or projected_y >= image_shape[0]:
+            continue
+        patch = centered_patch_box(
+            y=projected_y,
+            x=x,
+            height=patch_shape[0],
+            width=patch_shape[1],
+            image_shape=image_shape,
+        )
+        if patch is None:
+            continue
+        candidates.append((abs(projected_y - image_shape[0] / 2.0), candidate_frame, projected_y, patch))
+    if not candidates:
+        return None
+    _distance, selected_frame, projected_y, selected_patch = min(
+        candidates,
+        key=lambda item: (abs(item[2] - image_shape[0] / 2.0), abs(item[1] - frame_index)),
+    )
+    return selected_frame, projected_y, selected_patch
 
 
-def _rerank_row(row: Mapping[str, str], *, adjusted_score: float) -> dict[str, str]:
-    payload = dict(row)
-    original_score = payload.get("score", payload.get("confidence", ""))
-    payload.setdefault("original_score", original_score)
-    payload["score"] = f"{adjusted_score:.8f}"
-    payload["confidence"] = f"{adjusted_score:.8f}"
-    return payload
+def patch_evidence(
+    frame_index: int,
+    *,
+    center_y: float,
+    patch: PatchBox,
+    belt_map: NDArray[np.floating],
+    phase_by_frame: Sequence[float],
+    source_images: Mapping[int, Path],
+    crop_cache: dict[int, NDArray[np.floating]],
+    config: YoloRecurrenceConfig,
+) -> PatchEvidence:
+    crop = load_crop(frame_index, source_images=source_images, crop_cache=crop_cache, region=config.belt_region)
+    raw_patch = crop[patch.top : patch.bottom, patch.left : patch.right]
+    background_patch = render_belt_view(
+        belt_map,
+        phase_by_frame[frame_index] + patch.top,
+        patch.height,
+        x_slice=slice(patch.left, patch.right),
+        periodic=True,
+    )
+    residual = raw_patch - background_patch
+    excess = patch_excess(raw_patch, background_patch)
+    return PatchEvidence(
+        frame_index=frame_index,
+        center_y=center_y,
+        raw_patch=raw_patch,
+        background_patch=background_patch,
+        residual_patch=residual,
+        excess=excess,
+    )
+
+
+def detection_patch_box(
+    bbox: PatchBox,
+    *,
+    image_shape: tuple[int, int],
+    margin_px: int,
+    min_size_px: int,
+) -> PatchBox:
+    center_y = 0.5 * (bbox.top + bbox.bottom)
+    center_x = 0.5 * (bbox.left + bbox.right)
+    height = max(min_size_px, bbox.height + 2 * margin_px)
+    width = max(min_size_px, bbox.width + 2 * margin_px)
+    patch = centered_patch_box(
+        y=center_y,
+        x=center_x,
+        height=height,
+        width=width,
+        image_shape=image_shape,
+    )
+    if patch is None:
+        return clipped_patch_box(
+            top=bbox.top - margin_px,
+            left=bbox.left - margin_px,
+            bottom=bbox.bottom + margin_px,
+            right=bbox.right + margin_px,
+            image_shape=image_shape,
+        )
+    return patch
+
+
+def centered_patch_box(
+    *,
+    y: float,
+    x: float,
+    height: int,
+    width: int,
+    image_shape: tuple[int, int],
+) -> PatchBox | None:
+    height = max(1, int(height))
+    width = max(1, int(width))
+    top = int(round(y - 0.5 * height))
+    left = int(round(x - 0.5 * width))
+    bottom = top + height
+    right = left + width
+    if top < 0 or left < 0 or bottom > image_shape[0] or right > image_shape[1]:
+        return None
+    return PatchBox(top=top, left=left, bottom=bottom, right=right)
+
+
+def clipped_patch_box(
+    *,
+    top: int,
+    left: int,
+    bottom: int,
+    right: int,
+    image_shape: tuple[int, int],
+) -> PatchBox:
+    clipped = PatchBox(
+        top=max(0, int(top)),
+        left=max(0, int(left)),
+        bottom=min(image_shape[0], int(bottom)),
+        right=min(image_shape[1], int(right)),
+    )
+    if clipped.bottom <= clipped.top or clipped.right <= clipped.left:
+        raise ValueError("detection patch clips to an empty region")
+    return clipped
+
+
+def patch_excess(raw_patch: NDArray[np.floating], background_patch: NDArray[np.floating]) -> float:
+    finite_raw = np.asarray(raw_patch, dtype=np.float64)
+    finite_bg = np.asarray(background_patch, dtype=np.float64)
+    mask = np.isfinite(finite_raw) & np.isfinite(finite_bg)
+    if not mask.any():
+        return 0.0
+    return float(np.max(finite_raw[mask]) - np.percentile(finite_bg[mask], 99))
+
+
+def recurrence_ratio(revisit_excess: float, original_excess: float, *, floor: float) -> float:
+    denominator = max(float(original_excess), float(floor))
+    if denominator <= 0 or not np.isfinite(denominator):
+        denominator = float(floor)
+    value = max(0.0, float(revisit_excess)) / denominator
+    return 0.0 if not np.isfinite(value) else float(value)
+
+
+def patch_correlation(
+    a: NDArray[np.floating],
+    b: NDArray[np.floating],
+) -> float:
+    if a.shape != b.shape:
+        return 0.0
+    arr_a = np.asarray(a, dtype=np.float64)
+    arr_b = np.asarray(b, dtype=np.float64)
+    mask = np.isfinite(arr_a) & np.isfinite(arr_b)
+    if int(np.count_nonzero(mask)) < 4:
+        return 0.0
+    va = arr_a[mask] - np.median(arr_a[mask])
+    vb = arr_b[mask] - np.median(arr_b[mask])
+    denom = math.sqrt(float(np.sum(va * va) * np.sum(vb * vb)))
+    if denom <= 1e-12 or not np.isfinite(denom):
+        return 0.0
+    corr = float(np.sum(va * vb) / denom)
+    return float(np.clip(corr, -1.0, 1.0))
+
+
+def second_largest(values: Sequence[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    return float(sorted(values)[-2])
+
+
+def load_crop(
+    frame_index: int,
+    *,
+    source_images: Mapping[int, Path],
+    crop_cache: dict[int, NDArray[np.floating]],
+    region: BeltRegion,
+) -> NDArray[np.floating]:
+    cached = crop_cache.get(frame_index)
+    if cached is not None:
+        return cached
+    path = source_images.get(frame_index)
+    if path is None:
+        raise ValueError(f"source image is missing frame {frame_index}")
+    with Image.open(path) as image:
+        gray = image.convert("L")
+        crop = gray.crop((region.left, region.top, region.left + region.width, region.top + region.height))
+    arr = np.asarray(crop, dtype=np.float64)
+    crop_cache[frame_index] = arr
+    return arr
+
+
+def enrich_detection_row(
+    row: Mapping[str, Any],
+    feature: Mapping[str, Any],
+    *,
+    rerank: bool,
+) -> dict[str, Any]:
+    enriched = dict(row)
+    original_score = float_value(row.get("confidence", row.get("score", 1.0)), name="confidence")
+    adjusted = original_score * float(feature["transient_score"])
+    enriched["mean_signal"] = f"{adjusted:.8f}" if rerank else row.get("mean_signal", row.get("score", ""))
+    enriched["peak_signal"] = f"{adjusted:.8f}" if rerank else row.get("peak_signal", row.get("score", ""))
+    enriched["score"] = f"{adjusted:.8f}" if rerank else row.get("score", row.get("confidence", ""))
+    enriched["confidence"] = f"{adjusted:.8f}" if rerank else row.get("confidence", row.get("score", ""))
+    enriched["yolo_confidence_original"] = f"{original_score:.8f}"
+    enriched["adjusted_score"] = f"{adjusted:.8f}"
+    enriched["belt_fixedness_score"] = format_float(feature["belt_fixedness_score"])
+    enriched["transient_score"] = format_float(feature["transient_score"])
+    enriched["max_recurrence_ratio"] = format_float(feature["max_recurrence_ratio"])
+    enriched["high_recurrence_revisits"] = feature["high_recurrence_revisits"]
+    enriched["hard_reject"] = feature["hard_reject"]
+    enriched["source"] = (
+        "yolo11_raw_recurrence_rerank" if rerank else "yolo11_raw_recurrence_hard"
+    )
+    return enriched
 
 
 def write_beltmap_run(
     output_dir: Path,
-    detections: Sequence[Mapping[str, str]],
     *,
-    frames: Sequence[int],
-    metadata: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    per_frame_rows: Sequence[Mapping[str, Any]],
+    source_run: Path,
+    mode: str,
+    config: YoloRecurrenceConfig,
+    source_fieldnames: Sequence[str],
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    detections_sorted = sorted(
-        (dict(row) for row in detections),
-        key=lambda row: (int(float(row["frame_index"])), int(float(row.get("label", 0) or 0))),
-    )
-    fields = list(DETECTION_FIELDS)
-    for optional in ("original_score",):
-        if any(optional in row for row in detections_sorted) and optional not in fields:
-            fields.append(optional)
-    write_csv(output_dir / "detections.csv", detections_sorted, fields)
-    counts = {int(frame): 0 for frame in frames}
-    for row in detections_sorted:
-        frame = int(float(row["frame_index"]))
-        counts[frame] = counts.get(frame, 0) + 1
-    write_csv(
-        output_dir / "detections_per_frame.csv",
-        [
-            {"frame_index": frame, "n_detections": counts.get(frame, 0)}
-            for frame in sorted(counts)
-        ],
-        ["frame_index", "n_detections"],
-    )
-    (output_dir / "metadata.json").write_text(json.dumps(dict(metadata), indent=2) + "\n", encoding="utf-8")
-    (output_dir / "config_resolved.json").write_text(
-        json.dumps({"mode": "yolo_recurrence", "detection": {"score_field": "score"}}, indent=2)
-        + "\n",
-        encoding="utf-8",
-    )
-
-
-def write_report(path: Path, *, summary: RecurrenceSummary, config: RecurrenceConfig) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "# YOLO Belt-Coordinate Recurrence Scoring",
-                "",
-                "This report scores frame-based YOLO detections with belt-coordinate history.",
-                "High recurrence means the same belt coordinate remains bright in another belt revolution,",
-                "which is evidence for belt-fixed dirt/artifact behavior rather than a transient particle.",
-                "",
-                "## Summary",
-                "",
-                f"- Input detections: {summary.n_input_detections}",
-                f"- Hard-filter kept: {summary.n_hard_kept}",
-                f"- Hard-filter rejected: {summary.n_hard_rejected}",
-                f"- Rerank detections: {summary.n_rerank_detections}",
-                f"- Frames represented: {summary.n_frames}",
-                f"- Features CSV: `{summary.feature_csv}`",
-                "",
-                "## Configuration",
-                "",
-                f"- Max revolutions checked: {config.max_revolutions}",
-                f"- Revisit search window: +/- {config.revisit_search_window_frames} frames",
-                f"- Recurrence ratio threshold: {config.recurrence_threshold}",
-                f"- Minimum recurrent revisits for hard rejection: {config.min_recurrent_revisits}",
-                f"- Signal margin: {config.signal_margin_px} px",
-                f"- Background margin: {config.background_margin_px} px",
-                "",
-                "## Outputs",
-                "",
-                "- `features.csv`: recurrence features per input detection.",
-                "- `hard_filter/`: BeltMap-style run after removing recurrent detections.",
-                "- `rerank/`: BeltMap-style run with score = YOLO confidence x transient score.",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def score_yolo_recurrence(
-    *,
-    detections_csv: Path,
-    images_dir: Path,
-    output_dir: Path,
-    phase_estimates_csv: Path | None = None,
-    belt_map_path: Path | None = None,
-    map_height_px: float | None = None,
-    belt_velocity_px_per_frame: float | None = None,
-    phase_offset_px: float = 0.0,
-    crop_region: CropRegion = CropRegion(0, 0, 0, 0),
-    frame_index_pattern: str = r"(\d+)",
-    max_revolutions: int = 1,
-    revisit_search_window_frames: int = 2,
-    recurrence_threshold: float = 0.5,
-    min_recurrent_revisits: int = 1,
-    min_original_excess: float = 1.0,
-    signal_margin_px: int = 2,
-    background_margin_px: int = 12,
-    patch_correlation_margin_px: int = 4,
-) -> RecurrenceSummary:
-    detections = read_csv(detections_csv)
-    if not detections:
-        raise ValueError(f"no detections found in {detections_csv}")
-    map_height = infer_map_height(map_height_px=map_height_px, belt_map_path=belt_map_path)
-    phase_by_frame = load_phase_estimates(phase_estimates_csv) if phase_estimates_csv else {}
-    velocity = belt_velocity_px_per_frame
-    if velocity is None:
-        velocity = estimate_belt_velocity_from_phase(phase_by_frame, map_height)
-    config = RecurrenceConfig(
-        crop_region=crop_region,
-        map_height_px=map_height,
-        belt_velocity_px_per_frame=velocity,
-        phase_offset_px=phase_offset_px,
-        max_revolutions=max_revolutions,
-        revisit_search_window_frames=revisit_search_window_frames,
-        recurrence_threshold=recurrence_threshold,
-        min_recurrent_revisits=min_recurrent_revisits,
-        min_original_excess=min_original_excess,
-        signal_margin_px=signal_margin_px,
-        background_margin_px=background_margin_px,
-        patch_correlation_margin_px=patch_correlation_margin_px,
-    )
-    if config.map_height_px <= 0:
-        raise ValueError("map height must be positive")
-    if velocity is None or velocity <= 0:
-        raise ValueError("belt velocity must be supplied or inferred from phase_estimates.csv")
-    if config.max_revolutions < 1:
-        raise ValueError("max_revolutions must be positive")
-    if config.revisit_search_window_frames < 0:
-        raise ValueError("revisit_search_window_frames must be non-negative")
-    if not 0 <= config.recurrence_threshold:
-        raise ValueError("recurrence_threshold must be non-negative")
-    if config.min_recurrent_revisits < 1:
-        raise ValueError("min_recurrent_revisits must be positive")
-
-    images = ImageSequence(images_dir, crop_region=crop_region, frame_index_pattern=frame_index_pattern)
-    features: list[dict[str, Any]] = []
-    hard: list[dict[str, str]] = []
-    rerank: list[dict[str, str]] = []
-    for row in detections:
-        feature, rerank_row, hard_row = score_detection_recurrence(
-            row,
-            images=images,
-            phase_by_frame=phase_by_frame,
-            config=config,
-        )
-        features.append(feature)
-        rerank.append(rerank_row)
-        if hard_row is not None:
-            hard.append(hard_row)
-
-    frames = sorted({int(float(row["frame_index"])) for row in detections})
-    output_dir.mkdir(parents=True, exist_ok=True)
-    feature_csv = output_dir / "features.csv"
-    write_csv(feature_csv, features, RECURRENCE_FEATURE_FIELDS)
+    fields = list(source_fieldnames)
+    for field in RUN_EXTRA_FIELDS:
+        if field not in fields:
+            fields.append(field)
+    write_csv(output_dir / "detections.csv", rows, fields)
+    counts: dict[int, int] = {}
+    for row in rows:
+        counts[int_value(row["frame_index"], name="frame_index")] = counts.get(
+            int_value(row["frame_index"], name="frame_index"),
+            0,
+        ) + 1
+    per_frame = [
+        {
+            "frame_index": int_value(row["frame_index"], name="frame_index"),
+            "n_detections": counts.get(int_value(row["frame_index"], name="frame_index"), 0),
+        }
+        for row in per_frame_rows
+    ]
+    write_csv(output_dir / "detections_per_frame.csv", per_frame, ["frame_index", "n_detections"])
     metadata = {
-        "mode": "yolo_recurrence",
-        "source_detections_csv": str(detections_csv),
-        "images_dir": str(images_dir),
-        "phase_estimates_csv": None if phase_estimates_csv is None else str(phase_estimates_csv),
-        "belt_map_path": None if belt_map_path is None else str(belt_map_path),
-        "map_height_px": map_height,
-        "belt_velocity_px_per_frame": velocity,
-        "config": asdict(config),
-        "n_input_detections": len(detections),
-        "n_hard_kept": len(hard),
-        "n_hard_rejected": len(detections) - len(hard),
-        "n_rerank_detections": len(rerank),
+        "mode": mode,
+        "source_run": str(source_run),
+        "n_images": len(per_frame_rows),
+        "n_detections": len(rows),
+        "hard_ratio_threshold": config.hard_ratio_threshold,
+        "hard_min_revisits": config.hard_min_revisits,
+        "patch_margin_px": config.patch_margin_px,
+        "min_patch_size_px": config.min_patch_size_px,
     }
-    write_beltmap_run(output_dir / "hard_filter", hard, frames=frames, metadata=metadata)
-    write_beltmap_run(output_dir / "rerank", rerank, frames=frames, metadata=metadata)
-    summary = RecurrenceSummary(
-        output_dir=output_dir,
-        n_input_detections=len(detections),
-        n_hard_kept=len(hard),
-        n_hard_rejected=len(detections) - len(hard),
-        n_rerank_detections=len(rerank),
-        n_frames=len(frames),
-        feature_csv=feature_csv,
-    )
-    (output_dir / "summary.json").write_text(
-        json.dumps({**metadata, "summary": asdict(summary)}, indent=2, default=str) + "\n",
+    (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    (output_dir / "config_resolved.json").write_text(
+        json.dumps({"mode": mode, "detection": {"score_field": "score"}}, indent=2) + "\n",
         encoding="utf-8",
     )
-    write_report(output_dir / "report.md", summary=summary, config=config)
-    return summary
+
+
+def match_detection_roles(
+    detection_rows: Sequence[Mapping[str, Any]],
+    *,
+    truth_path: Path,
+    iou_threshold: float = 0.25,
+) -> dict[tuple[int, int], str]:
+    truth = load_labeled_detection_truth(truth_path)
+    roles = {row_key(row): "FP" for row in detection_rows}
+    for frame in sorted({int_value(row["frame_index"], name="frame_index") for row in detection_rows}):
+        frame_detections = [
+            row for row in detection_rows if int_value(row["frame_index"], name="frame_index") == frame
+        ]
+        frame_truth = [
+            row for row in truth.get("particles", []) if int(row["frame_index"]) == frame
+        ]
+        pairs: list[tuple[float, int, int]] = []
+        for det_index, det in enumerate(frame_detections):
+            det_box = bbox_from_row(det)
+            for truth_index, truth_row in enumerate(frame_truth):
+                score = iou(
+                    det_box,
+                    PatchBox(
+                        top=int(math.floor(float(truth_row["top"]))),
+                        left=int(math.floor(float(truth_row["left"]))),
+                        bottom=int(math.ceil(float(truth_row["bottom"]))),
+                        right=int(math.ceil(float(truth_row["right"]))),
+                    ),
+                )
+                if score >= iou_threshold:
+                    pairs.append((score, det_index, truth_index))
+        matched_detections: set[int] = set()
+        matched_truth: set[int] = set()
+        for _score, det_index, truth_index in sorted(pairs, reverse=True):
+            if det_index in matched_detections or truth_index in matched_truth:
+                continue
+            matched_detections.add(det_index)
+            matched_truth.add(truth_index)
+            roles[row_key(frame_detections[det_index])] = "TP"
+    return roles
+
+
+def iou(a: PatchBox, b: PatchBox) -> float:
+    top = max(a.top, b.top)
+    left = max(a.left, b.left)
+    bottom = min(a.bottom, b.bottom)
+    right = min(a.right, b.right)
+    if bottom <= top or right <= left:
+        return 0.0
+    intersection = float((bottom - top) * (right - left))
+    union = float(a.height * a.width + b.height * b.width) - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
+    valid = int_value(feature["valid_revisits"], name="valid_revisits")
+    hard_reject = bool_value(feature["hard_reject"])
+    max_ratio = float(feature["max_recurrence_ratio"])
+    if valid == 0:
+        return f"{role.lower()}_no_valid_revisits"
+    if role == "FP" and hard_reject:
+        return "fp_recurrent_removed"
+    if role == "FP" and max_ratio < DEFAULT_HARD_RATIO_THRESHOLD:
+        return "fp_low_recurrence_evidence"
+    if role == "TP" and hard_reject:
+        return "tp_high_recurrence_accidentally_removed"
+    if max_ratio >= DEFAULT_HARD_RATIO_THRESHOLD:
+        return f"{role.lower()}_recurrent_but_not_hard_rejected"
+    return f"{role.lower()}_inconclusive_low_recurrence"
+
+
+def write_recurrence_report(
+    path: Path,
+    feature_rows: Sequence[Mapping[str, Any]],
+    *,
+    truth_path: Path | None,
+    compare_summary_csv: Path | None,
+    hard_run_dir: Path,
+    rerank_run_dir: Path,
+) -> None:
+    taxonomy_counts: dict[str, int] = {}
+    for row in feature_rows:
+        taxonomy = str(row.get("error_taxonomy", "unknown"))
+        taxonomy_counts[taxonomy] = taxonomy_counts.get(taxonomy, 0) + 1
+    n_rejected = sum(bool_value(row["hard_reject"]) for row in feature_rows)
+    n_fp_removed = sum(
+        bool_value(row["hard_reject"]) and row.get("raw_match_role") == "FP"
+        for row in feature_rows
+    )
+    n_tp_removed = sum(
+        bool_value(row["hard_reject"]) and row.get("raw_match_role") == "TP"
+        for row in feature_rows
+    )
+    lines = [
+        "# YOLO11 + BeltMap recurrence post-filter",
+        "",
+        f"Truth path: `{truth_path}`" if truth_path is not None else "Truth path: n/a",
+        f"Detections scored: {len(feature_rows)}",
+        f"Hard-filter rejected detections: {n_rejected}",
+        f"YOLO false positives removed: {n_fp_removed}",
+        f"YOLO true positives accidentally removed: {n_tp_removed}",
+        f"Hard-filter run: `{hard_run_dir}`",
+        f"Rerank run: `{rerank_run_dir}`",
+        f"Compare summary: `{compare_summary_csv}`" if compare_summary_csv else "Compare summary: n/a",
+        "",
+        "## Error taxonomy",
+        "",
+        "| category | count |",
+        "| --- | ---: |",
+    ]
+    for key, count in sorted(taxonomy_counts.items()):
+        lines.append(f"| {key} | {count} |")
+    if compare_summary_csv and compare_summary_csv.is_file():
+        lines.extend(["", "## Comparison summary", ""])
+        lines.extend(compare_summary_csv.read_text(encoding="utf-8").splitlines())
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_contact_sheet(
+    path: Path,
+    feature_rows: Sequence[Mapping[str, Any]],
+    *,
+    source_images: Mapping[int, Path],
+    config: YoloRecurrenceConfig,
+    crop_cache: dict[int, NDArray[np.floating]],
+) -> None:
+    selected = select_contact_rows(feature_rows)
+    tile_w, tile_h = 220, 190
+    columns = ["original", "previous", "next"]
+    image = Image.new("RGB", (tile_w * len(columns), tile_h * max(1, len(selected))), "white")
+    draw = ImageDraw.Draw(image)
+    for row_index, row in enumerate(selected):
+        for col_index, column in enumerate(columns):
+            frame_value = row["frame_index"] if column == "original" else row.get(f"revisit_frame_{'prev' if column == 'previous' else 'next'}", "")
+            if frame_value == "":
+                tile = Image.new("RGB", (tile_w, tile_h), (245, 245, 245))
+            else:
+                frame = int_value(frame_value, name="frame_index")
+                crop = load_crop(frame, source_images=source_images, crop_cache=crop_cache, region=config.belt_region)
+                tile = crop_thumbnail(crop, tile_w, tile_h)
+            x0 = col_index * tile_w
+            y0 = row_index * tile_h
+            image.paste(tile, (x0, y0))
+            draw.rectangle((x0, y0, x0 + tile_w - 1, y0 + tile_h - 1), outline=(40, 40, 40))
+            label = (
+                f"{column} f{frame_value}\n"
+                f"det {row['frame_index']}:{row['label']} {row.get('raw_match_role', '')}\n"
+                f"ratio {row.get('max_recurrence_ratio', '')} hard {row.get('hard_reject', '')}"
+            )
+            draw.multiline_text((x0 + 4, y0 + 4), label, fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+
+
+def select_contact_rows(feature_rows: Sequence[Mapping[str, Any]], *, limit: int = 8) -> list[Mapping[str, Any]]:
+    rejected = [row for row in feature_rows if bool_value(row.get("hard_reject"))]
+    false_positives = [row for row in feature_rows if row.get("raw_match_role") == "FP"]
+    true_positive_high = [
+        row
+        for row in feature_rows
+        if row.get("raw_match_role") == "TP" and float(row.get("max_recurrence_ratio") or 0.0) >= DEFAULT_HARD_RATIO_THRESHOLD
+    ]
+    chosen: list[Mapping[str, Any]] = []
+    for pool in (rejected, false_positives, true_positive_high, list(feature_rows)):
+        for row in sorted(pool, key=lambda item: float(item.get("max_recurrence_ratio") or 0.0), reverse=True):
+            if row not in chosen:
+                chosen.append(row)
+            if len(chosen) >= limit:
+                return chosen
+    return chosen
+
+
+def crop_thumbnail(crop: NDArray[np.floating], width: int, height: int) -> Image.Image:
+    arr = np.asarray(crop, dtype=np.float64)
+    low, high = np.percentile(arr[np.isfinite(arr)], [1, 99]) if np.isfinite(arr).any() else (0.0, 1.0)
+    if high <= low:
+        high = low + 1.0
+    scaled = np.clip((arr - low) / (high - low) * 255.0, 0, 255).astype(np.uint8)
+    return Image.fromarray(scaled, mode="L").convert("RGB").resize((width, height))
+
+
+def bbox_from_row(row: Mapping[str, Any]) -> PatchBox:
+    return PatchBox(
+        top=int_value(row["bbox_top"], name="bbox_top"),
+        left=int_value(row["bbox_left"], name="bbox_left"),
+        bottom=int_value(row["bbox_bottom"], name="bbox_bottom"),
+        right=int_value(row["bbox_right"], name="bbox_right"),
+    )
+
+
+def row_key(row: Mapping[str, Any]) -> tuple[int, int]:
+    return (
+        int_value(row["frame_index"], name="frame_index"),
+        int_value(row["label"], name="label"),
+    )
+
+
+def load_phase_px_by_frame(path: Path, *, frame_count: int) -> list[float]:
+    phases: list[float | None] = [None for _ in range(frame_count)]
+    for row in read_csv_rows(path):
+        frame = int_value(row.get("frame_index"), name="frame_index")
+        if 0 <= frame < frame_count:
+            phases[frame] = float_value(row.get("phase_px"), name="phase_px")
+    missing = [index for index, value in enumerate(phases) if value is None]
+    if missing:
+        preview = ", ".join(str(index) for index in missing[:8])
+        raise ValueError(f"phase_estimates.csv is missing {len(missing)} frame(s); first: {preview}")
+    return [float(value) for value in phases]
+
+
+def find_source_images(source_image_dir: Path) -> dict[int, Path]:
+    if not source_image_dir.is_dir():
+        raise FileNotFoundError(source_image_dir)
+    result: dict[int, Path] = {}
+    for path in sorted(source_image_dir.rglob("*"), key=natural_key):
+        if path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        frame = infer_frame_index(path.stem)
+        if frame in result:
+            raise ValueError(f"duplicate source image frame index {frame}: {result[frame]} and {path}")
+        result[frame] = path
+    if not result:
+        raise ValueError(f"no source images found below {source_image_dir}")
+    return result
+
+
+def parse_belt_region(value: str) -> BeltRegion:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError("belt region must be top,left,height,width")
+    top, left, height, width = [int(float(part)) for part in parts]
+    return BeltRegion(top=top, left=left, height=height, width=width)
+
+
+def metadata_float(metadata: Mapping[str, Any], key: str, *, default: float | None = None) -> float:
+    value = metadata.get(key, default)
+    if value is None:
+        raise ValueError(f"metadata.json is missing required field {key!r}")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"metadata field {key!r} must be finite")
+    return parsed
+
+
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    rows, _fieldnames = read_csv_rows_with_fieldnames(path)
+    return rows
+
+
+def read_csv_rows_with_fieldnames(path: Path) -> tuple[list[dict[str, str]], list[str]]:
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return list(reader), list(reader.fieldnames or [])
+
+
+def write_csv(path: Path, rows: Sequence[Mapping[str, Any]], fieldnames: Sequence[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(fieldnames), extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def float_value(value: Any, *, name: str) -> float:
+    if value in (None, ""):
+        raise ValueError(f"{name} is required")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def int_value(value: Any, *, name: str) -> int:
+    parsed = float_value(value, name=name)
+    if not parsed.is_integer():
+        raise ValueError(f"{name} must be integer-valued")
+    return int(parsed)
+
+
+def bool_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+def format_float(value: Any) -> str:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        return ""
+    return f"{parsed:.8f}"
