@@ -8,7 +8,6 @@ from typing import Any, Iterable
 
 import numpy as np
 
-
 SUMMARY_FIELDS = [
     "run",
     "output_dir",
@@ -61,7 +60,10 @@ class EvaluationArtifacts:
 def read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -112,6 +114,13 @@ def finite_values(rows: Iterable[dict[str, Any]], field: str) -> list[float]:
     return values
 
 
+def finite_nonnegative_values(
+    rows: Iterable[dict[str, Any]], field: str
+) -> list[float]:
+    values = finite_values(rows, field)
+    return [value for value in values if value >= 0.0]
+
+
 def scalar_from_sources(
     metadata: dict[str, Any],
     *keys: str,
@@ -120,27 +129,35 @@ def scalar_from_sources(
     """Return an integer metadata count, falling back when metadata is malformed."""
 
     for key in keys:
+        raw_value = metadata.get(key)
+        if isinstance(raw_value, bool):
+            continue
         value = finite_float(metadata.get(key))
         if value is None:
             continue
-        if float(value).is_integer():
+        if float(value).is_integer() and value >= 0:
             return int(value)
     return fallback
 
 
 def row_count_if_present(path: Path, rows: list[Any]) -> int | None:
-    return len(rows) if path.exists() else None
+    return len(rows) if path.is_file() else None
 
 
 def percentile(values: Iterable[float], q: float) -> float | None:
+    q_value = finite_float(q)
+    if q_value is None or not 0.0 <= q_value <= 100.0:
+        raise ValueError("percentile q must be finite and in [0, 100]")
     arr = np.asarray(list(values), dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
     if arr.size == 0:
         return None
-    return float(np.percentile(arr, q))
+    return float(np.percentile(arr, q_value))
 
 
 def mean(values: Iterable[float]) -> float | None:
     arr = np.asarray(list(values), dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
     if arr.size == 0:
         return None
     return float(np.mean(arr))
@@ -149,7 +166,7 @@ def mean(values: Iterable[float]) -> float | None:
 def fraction(numerator: Any, denominator: Any) -> float | None:
     num = finite_float(numerator)
     den = finite_float(denominator)
-    if num is None or den is None or den <= 0:
+    if num is None or den is None or den <= 0 or num < 0 or num > den:
         return None
     return float(num / den)
 
@@ -166,6 +183,8 @@ def format_markdown_value(value: Any, *, digits: int = 4) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, float):
+        if not np.isfinite(value):
+            return "n/a"
         if abs(value) >= 1000 or (0 < abs(value) < 1e-3):
             return f"{value:.{digits}g}"
         return f"{value:.{digits}f}".rstrip("0").rstrip(".")
@@ -173,7 +192,19 @@ def format_markdown_value(value: Any, *, digits: int = 4) -> str:
 
 
 def missing_standard_files(output_dir: Path) -> list[str]:
-    return [name for name in STANDARD_OUTPUT_FILES if not (output_dir / name).exists()]
+    return [name for name in STANDARD_OUTPUT_FILES if not (output_dir / name).is_file()]
+
+
+def summary_value(value: Any) -> Any:
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    if isinstance(value, np.generic):
+        return summary_value(value.item())
+    return value
+
+
+def summary_row(summary: dict[str, Any]) -> dict[str, Any]:
+    return {field: summary_value(summary.get(field)) for field in SUMMARY_FIELDS}
 
 
 def summarize_output_dir(run: RunSpec) -> dict[str, Any]:
@@ -194,7 +225,7 @@ def summarize_output_dir(run: RunSpec) -> dict[str, Any]:
     corrections = finite_values(phase_rows, "correction_px")
     abs_corrections = [abs(value) for value in corrections]
     scores = finite_values(phase_rows, "score")
-    detections_per_frame = finite_values(detection_rows, "n_detections")
+    detections_per_frame = finite_nonnegative_values(detection_rows, "n_detections")
     velocity_ratios = finite_values(velocity_rows, "velocity_ratio_y")
 
     belt_progress = final_stage_progress(progress_rows, "belt_map")
@@ -205,7 +236,9 @@ def summarize_output_dir(run: RunSpec) -> dict[str, Any]:
 
     q25_ratio = percentile(velocity_ratios, 25)
     q75_ratio = percentile(velocity_ratios, 75)
-    ratio_iqr = None if q25_ratio is None or q75_ratio is None else q75_ratio - q25_ratio
+    ratio_iqr = (
+        None if q25_ratio is None or q75_ratio is None else q75_ratio - q25_ratio
+    )
     if velocity_ratios:
         ratio_arr = np.asarray(velocity_ratios, dtype=np.float64)
         ratio_outlier_fraction = float(np.mean((ratio_arr < -0.1) | (ratio_arr > 1.1)))
@@ -263,18 +296,20 @@ def write_json(path: Path, summaries: list[dict[str, Any]]) -> None:
     payload = {
         "schema_version": 1,
         "summary_fields": SUMMARY_FIELDS,
-        "runs": summaries,
+        "runs": [summary_row(summary) for summary in summaries],
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
 
 
 def write_csv(path: Path, summaries: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle, fieldnames=SUMMARY_FIELDS, extrasaction="ignore"
+        )
         writer.writeheader()
         for summary in summaries:
-            writer.writerow({field: summary.get(field) for field in SUMMARY_FIELDS})
+            writer.writerow(summary_row(summary))
 
 
 def build_markdown(summaries: list[dict[str, Any]]) -> str:
@@ -297,7 +332,9 @@ def build_markdown(summaries: list[dict[str, Any]]) -> str:
                     format_markdown_value(summary.get("n_images")),
                     format_markdown_value(summary.get("n_detections")),
                     format_markdown_value(summary.get("n_tracks")),
-                    format_markdown_value(summary.get("phase_correction_abs_median_px")),
+                    format_markdown_value(
+                        summary.get("phase_correction_abs_median_px")
+                    ),
                     format_markdown_value(summary.get("registration_score_median")),
                     format_markdown_value(summary.get("detections_per_frame_mean")),
                     format_markdown_value(summary.get("velocity_ratio_y_median")),
