@@ -1,6 +1,18 @@
 import pytest
+import numpy as np
 
-from beltmap.bootstrap_ci import aggregate_labeled_outcomes, labeled_frame_outcomes
+from beltmap.bootstrap_ci import (
+    LabeledFrameOutcome,
+    aggregate_labeled_outcomes,
+    bootstrap_labeled_metrics,
+    bootstrap_numeric_metrics,
+    bootstrap_run_summary,
+    ci_summary,
+    count_ge,
+    labeled_frame_outcomes,
+    mean_value,
+    resample_indices,
+)
 
 
 def test_labeled_frame_outcomes_restricts_truth_to_scored_frames():
@@ -44,3 +56,108 @@ def test_labeled_frame_outcomes_restricts_truth_to_scored_frames():
     assert metrics["labeled_predicted_boxes"] == 1
     assert metrics["labeled_false_negatives"] == 0
     assert metrics["labeled_recall"] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"n_units": 2.5}, "n_units"),
+        ({"n_units": 2, "block_length": 1.5}, "block_length"),
+    ],
+)
+def test_resample_indices_rejects_fractional_integer_config(kwargs, message):
+    rng = np.random.default_rng(0)
+
+    with pytest.raises(ValueError, match=message):
+        resample_indices(rng=rng, **kwargs)
+
+
+@pytest.mark.parametrize("confidence_level", [0.0, 1.0, float("nan")])
+def test_ci_summary_rejects_invalid_confidence_level(confidence_level):
+    with pytest.raises(ValueError, match="confidence_level"):
+        ci_summary([1.0, 2.0], confidence_level=confidence_level)
+
+
+def test_bootstrap_numeric_metrics_rejects_invalid_sampling_config():
+    rng = np.random.default_rng(0)
+
+    with pytest.raises(ValueError, match="samples"):
+        bootstrap_numeric_metrics(
+            [1.0, 2.0],
+            {"mean": mean_value},
+            samples=-1,
+            confidence_level=0.95,
+            rng=rng,
+        )
+
+
+def test_count_ge_rejects_nonfinite_threshold():
+    with pytest.raises(ValueError, match="threshold"):
+        count_ge(float("nan"))
+
+
+def test_labeled_frame_outcomes_rejects_invalid_iou_threshold():
+    with pytest.raises(ValueError, match="iou_threshold"):
+        labeled_frame_outcomes(
+            [], {"particles": []}, scored_frames={0}, iou_threshold=float("nan")
+        )
+
+
+def test_labeled_frame_outcomes_rejects_fractional_scored_frame():
+    with pytest.raises(ValueError, match="scored_frames"):
+        labeled_frame_outcomes(
+            [], {"particles": []}, scored_frames={0.5}, iou_threshold=0.5
+        )
+
+
+def test_aggregate_labeled_outcomes_rejects_inconsistent_counts():
+    with pytest.raises(ValueError, match="false_positives"):
+        aggregate_labeled_outcomes(
+            [
+                LabeledFrameOutcome(
+                    frame_index=0,
+                    truth_boxes=1,
+                    predicted_boxes=1,
+                    true_positives=1,
+                    false_positives=1,
+                    false_negatives=0,
+                )
+            ]
+        )
+
+
+def test_bootstrap_labeled_metrics_rejects_fractional_block_length():
+    rng = np.random.default_rng(0)
+
+    with pytest.raises(ValueError, match="block_length_frames"):
+        bootstrap_labeled_metrics(
+            [],
+            samples=1,
+            confidence_level=0.95,
+            rng=rng,
+            block_length_frames=1.5,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"samples": 1.5}, "samples"),
+        ({"truth_iou_threshold": 0.0}, "iou_threshold"),
+        ({"block_length_frames": 1.5}, "block_length_frames"),
+    ],
+)
+def test_bootstrap_run_summary_rejects_invalid_config(kwargs, message):
+    base_kwargs = {
+        "detections_per_frame": [],
+        "detections": [],
+        "velocities": [],
+        "filtered_velocities": [],
+        "samples": 1,
+        "confidence_level": 0.95,
+        "block_length_frames": 1,
+    }
+    base_kwargs.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        bootstrap_run_summary(**base_kwargs)

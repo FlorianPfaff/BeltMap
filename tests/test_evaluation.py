@@ -4,7 +4,22 @@ import csv
 import json
 from pathlib import Path
 
-from beltmap.evaluation import RunSpec, summarize_output_dir, write_evaluation
+import pytest
+
+from beltmap.evaluation import (
+    RunSpec,
+    format_markdown_value,
+    fraction,
+    missing_standard_files,
+    percentile,
+    read_json,
+    row_count_if_present,
+    scalar_from_sources,
+    summarize_output_dir,
+    write_csv as write_eval_csv,
+    write_evaluation,
+    write_json as write_eval_json,
+)
 from beltmap.cli.evaluate import main as evaluate_main
 
 
@@ -121,7 +136,9 @@ def test_summarize_output_dir_reports_zero_for_present_empty_csv_fallbacks(
     assert "metadata.json" in summary["missing_files"]
 
 
-def test_summarize_output_dir_ignores_fractional_metadata_counts(tmp_path: Path) -> None:
+def test_summarize_output_dir_ignores_fractional_metadata_counts(
+    tmp_path: Path,
+) -> None:
     output_dir = tmp_path / "fractional"
     write_run(output_dir)
     metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
@@ -133,6 +150,115 @@ def test_summarize_output_dir_ignores_fractional_metadata_counts(tmp_path: Path)
 
     assert summary["n_detections"] == 4
     assert summary["n_tracks"] is None
+
+
+def test_evaluation_rejects_non_object_json(tmp_path: Path) -> None:
+    path = tmp_path / "metadata.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="JSON object"):
+        read_json(path)
+
+
+def test_scalar_from_sources_ignores_negative_and_boolean_counts() -> None:
+    assert scalar_from_sources({"n_images": -1}, "n_images", fallback=3) == 3
+    assert scalar_from_sources({"n_images": True}, "n_images", fallback=3) == 3
+
+
+@pytest.mark.parametrize("q", [-1, 101, float("nan")])
+def test_percentile_rejects_invalid_q(q) -> None:
+    with pytest.raises(ValueError, match="percentile"):
+        percentile([1.0, 2.0], q)
+
+
+def test_fraction_rejects_negative_or_overfull_pixel_counts() -> None:
+    assert fraction(-1, 10) is None
+    assert fraction(11, 10) is None
+
+
+def test_format_markdown_value_hides_nonfinite_floats() -> None:
+    assert format_markdown_value(float("nan")) == "n/a"
+
+
+def test_summarize_output_dir_ignores_negative_detection_counts(tmp_path: Path) -> None:
+    output_dir = tmp_path / "negative_counts"
+    write_run(output_dir)
+    write_csv(
+        output_dir / "detections_per_frame.csv",
+        [
+            {"frame_index": 0, "n_detections": -100},
+            {"frame_index": 1, "n_detections": 2},
+        ],
+    )
+
+    summary = summarize_output_dir(
+        RunSpec(name="negative_counts", output_dir=output_dir)
+    )
+
+    assert summary["detections_per_frame_mean"] == 2.0
+    assert summary["detections_per_frame_max"] == 2.0
+
+
+def test_summarize_output_dir_rejects_overfull_map_fractions(tmp_path: Path) -> None:
+    output_dir = tmp_path / "overfull"
+    write_run(output_dir)
+    (output_dir / "progress.jsonl").write_text(
+        json.dumps(
+            {
+                "stage": "belt_map",
+                "observed_pixels": 120,
+                "total_pixels": 100,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = summarize_output_dir(RunSpec(name="overfull", output_dir=output_dir))
+
+    assert summary["belt_map_observed_fraction"] is None
+
+
+def test_row_count_if_present_requires_regular_file(tmp_path: Path) -> None:
+    csv_dir = tmp_path / "detections.csv"
+    csv_dir.mkdir()
+
+    assert row_count_if_present(csv_dir, [{"frame": 0}]) is None
+
+
+def test_missing_standard_files_requires_regular_files(tmp_path: Path) -> None:
+    metadata_dir = tmp_path / "metadata.json"
+    metadata_dir.mkdir()
+
+    missing = missing_standard_files(tmp_path)
+
+    assert "metadata.json" in missing
+
+
+def test_evaluation_writers_sanitize_nonfinite_summary_values(
+    tmp_path: Path,
+) -> None:
+    summaries = [
+        {
+            "run": "bad",
+            "output_dir": "out",
+            "n_images": float("nan"),
+        }
+    ]
+    json_path = tmp_path / "summary.json"
+    csv_path = tmp_path / "summary.csv"
+
+    write_eval_json(json_path, summaries)
+    json_text = json_path.read_text(encoding="utf-8")
+    payload = json.loads(json_text)
+
+    assert payload["runs"][0]["n_images"] is None
+    assert "NaN" not in json_text
+
+    write_eval_csv(csv_path, summaries)
+    rows = list(csv.DictReader(csv_path.open(newline="", encoding="utf-8")))
+
+    assert rows[0]["n_images"] == ""
 
 
 def test_write_evaluation_writes_json_csv_and_markdown(tmp_path: Path) -> None:

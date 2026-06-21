@@ -12,10 +12,15 @@ from beltmap.benchmark import (
     detection_metrics,
     event_metrics,
     finite_int,
+    format_value,
     generate_benchmark_report,
+    map_metrics,
+    runtime_metrics,
     source_frame_index,
+    summary_errors,
     track_metrics,
     velocity_metrics,
+    write_benchmark_artifacts,
 )
 
 
@@ -231,6 +236,93 @@ def test_source_frame_index_ignores_crop_coordinate_suffixes():
     )
 
 
+def test_source_frame_index_rejects_negative_explicit_frame_index():
+    assert source_frame_index({"frame_index": "-1"}) is None
+    assert source_frame_index({"frame_index": True}) is None
+
+
+def test_circular_signed_error_rejects_nonfinite_inputs():
+    with pytest.raises(ValueError, match="finite"):
+        circular_signed_error_px(float("nan"), 0.0, 10.0)
+
+
+def test_summary_errors_filters_nonfinite_values():
+    summary = summary_errors([1.0, float("nan"), float("inf"), -1.0], unit="px")
+
+    assert summary["count"] == 2
+    assert summary["mean_error_px"] == pytest.approx(0.0)
+    assert summary["rmse_px"] == pytest.approx(1.0)
+
+
+def test_map_metrics_ignore_nonfinite_paired_pixels(tmp_path: Path):
+    truth_dir = tmp_path / "truth"
+    output_dir = tmp_path / "output"
+    truth_dir.mkdir()
+    output_dir.mkdir()
+    target = np.array([[0.0, 1.0], [np.nan, 3.0], [4.0, 5.0]])
+    reconstructed = target.copy()
+    np.save(truth_dir / "true_belt_map.npy", target)
+    np.save(output_dir / "belt_map.npy", reconstructed)
+    truth = {"true_belt_map_npy": "true_belt_map.npy"}
+
+    metrics = map_metrics(output_dir, truth_dir / "synthetic_metadata.json", truth)
+
+    assert metrics["available"] is True
+    assert metrics["finite_pixels"] == 5
+    assert metrics["rmse_gray"] == pytest.approx(0.0)
+
+
+def test_map_metrics_reports_unavailable_when_no_finite_paired_pixels(tmp_path: Path):
+    truth_dir = tmp_path / "truth"
+    output_dir = tmp_path / "output"
+    truth_dir.mkdir()
+    output_dir.mkdir()
+    np.save(truth_dir / "true_belt_map.npy", np.full((2, 2), np.nan))
+    np.save(output_dir / "belt_map.npy", np.full((2, 2), np.nan))
+
+    metrics = map_metrics(
+        output_dir,
+        truth_dir / "synthetic_metadata.json",
+        {"true_belt_map_npy": "true_belt_map.npy"},
+    )
+
+    assert metrics["available"] is False
+    assert "finite" in metrics["reason"]
+
+
+@pytest.mark.parametrize("threshold", [0.0, float("nan"), 1.1])
+def test_detection_and_event_metrics_reject_invalid_iou_thresholds(threshold):
+    with pytest.raises(ValueError, match="iou_threshold"):
+        detection_metrics([], {"particles": []}, iou_threshold=threshold)
+    with pytest.raises(ValueError, match="iou_threshold"):
+        event_metrics([], {"particles": []}, iou_threshold=threshold)
+
+
+def test_runtime_metrics_ignores_negative_runtime_values(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "metadata.json").write_text(
+        json.dumps({"elapsed_s": -2.0, "n_images": -5}),
+        encoding="utf-8",
+    )
+    (output_dir / "progress.jsonl").write_text(
+        json.dumps({"rss_mb": -10.0}) + "\n" + json.dumps({"rss_mb": 25.0}) + "\n",
+        encoding="utf-8",
+    )
+
+    metrics = runtime_metrics(output_dir)
+
+    assert metrics["elapsed_s"] is None
+    assert metrics["frames"] is None
+    assert metrics["frames_per_second"] is None
+    assert metrics["peak_rss_mb"] == pytest.approx(25.0)
+
+
+def test_format_value_hides_nonfinite_floats():
+    assert format_value(float("nan")) == "n/a"
+    assert format_value(np.float64(float("inf"))) == "n/a"
+
+
 def test_detection_metrics_no_matches_report_zero_f1():
     truth = {
         "particles": [
@@ -260,6 +352,40 @@ def test_detection_metrics_no_matches_report_zero_f1():
     assert metrics["precision"] == 0.0
     assert metrics["recall"] == 0.0
     assert metrics["f1"] == 0.0
+
+
+def test_detection_metrics_rejects_truth_boxes_with_fractional_frame_index():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0.5,
+                "top": 0,
+                "left": 0,
+                "bottom": 10,
+                "right": 10,
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="finite integer frame_index"):
+        detection_metrics([], truth, iou_threshold=0.5)
+
+
+def test_detection_metrics_rejects_degenerate_truth_boxes():
+    truth = {
+        "particles": [
+            {
+                "frame_index": 0,
+                "top": 10,
+                "left": 0,
+                "bottom": 10,
+                "right": 10,
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="positive half-open area"):
+        detection_metrics([], truth, iou_threshold=0.5)
 
 
 def test_detection_metrics_scores_clean_reviewed_empty_frames():
@@ -381,10 +507,41 @@ def test_detection_metrics_accept_frame_box_truth_layout():
     assert events["matched_events"] == 1
 
 
+def test_detection_metrics_does_not_repair_explicit_negative_nested_truth_frame():
+    truth = {
+        "frames": [
+            {
+                "frame_index": 0,
+                "boxes": [
+                    {
+                        "frame_index": -1,
+                        "top": 0,
+                        "left": 0,
+                        "bottom": 10,
+                        "right": 10,
+                    }
+                ],
+            }
+        ]
+    }
+
+    metrics = detection_metrics([], truth, scored_frames={0}, iou_threshold=0.5)
+
+    assert metrics["truth_boxes"] == 0
+    assert metrics["false_negatives"] == 0
+
+
 def test_event_metrics_no_matches_report_zero_f1():
     truth = {
         "particles": [
-            {"event_id": "truth", "frame_index": 0, "top": 0, "left": 0, "bottom": 10, "right": 10}
+            {
+                "event_id": "truth",
+                "frame_index": 0,
+                "top": 0,
+                "left": 0,
+                "bottom": 10,
+                "right": 10,
+            }
         ]
     }
     detections = [
@@ -412,7 +569,9 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
 
     metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
 
-    assert metrics["phase"]["rmse_px"] == pytest.approx(np.sqrt((0.0**2 + 0.1**2 + 0.1**2) / 3))
+    assert metrics["phase"]["rmse_px"] == pytest.approx(
+        np.sqrt((0.0**2 + 0.1**2 + 0.1**2) / 3)
+    )
     assert metrics["case"]["frames"] == 3
     assert metrics["case"]["truth_boxes"] == 3
     assert metrics["belt_map"]["rmse_gray"] == pytest.approx(0.0)
@@ -439,18 +598,39 @@ def test_compute_benchmark_metrics_from_synthetic_truth(tmp_path):
     assert metrics["filtered_events"]["available"] is False
     assert metrics["filtered_events"]["prediction_source"] == "filtered_tracks.csv"
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(0.05)
-    assert metrics["velocity"]["velocity_y_mean_abs_error_px_per_frame"] == pytest.approx(0.05)
+    assert metrics["velocity"][
+        "velocity_y_mean_abs_error_px_per_frame"
+    ] == pytest.approx(0.05)
     assert metrics["velocity"]["velocity_y_bias_px_per_frame"] == pytest.approx(0.05)
-    assert metrics["velocity"]["velocity_y_error_std_px_per_frame"] == pytest.approx(0.0)
+    assert metrics["velocity"]["velocity_y_error_std_px_per_frame"] == pytest.approx(
+        0.0
+    )
     assert metrics["velocity"]["velocity_ratio_error"] == pytest.approx(0.025)
     assert metrics["velocity"]["prediction_source"] == "velocities.csv"
     assert metrics["velocity"]["truth_matched_track_id"] == 0
-    assert metrics["velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(0.05)
-    assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(0.025)
+    assert metrics["velocity"][
+        "truth_matched_velocity_y_error_px_per_frame"
+    ] == pytest.approx(0.05)
+    assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(
+        0.025
+    )
     assert metrics["filtered_velocity"]["available"] is False
-    assert metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
+    assert (
+        metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
+    )
     assert metrics["runtime"]["frames_per_second"] == pytest.approx(2.0)
     assert metrics["runtime"]["peak_rss_mb"] == pytest.approx(123.4)
+
+
+def test_compute_benchmark_metrics_rejects_negative_truth_frame_count(tmp_path):
+    output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    truth["frames"] = -3
+    truth_path.write_text(json.dumps(truth), encoding="utf-8")
+
+    metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
+
+    assert metrics["case"]["frames"] is None
 
 
 def test_compute_benchmark_metrics_scores_events_from_tracks_when_available(tmp_path):
@@ -473,7 +653,9 @@ def test_compute_benchmark_metrics_scores_events_from_tracks_when_available(tmp_
     assert metrics["events"]["f1"] == pytest.approx(2 / 3)
 
 
-def test_compute_benchmark_metrics_falls_back_to_detection_events_without_tracks(tmp_path):
+def test_compute_benchmark_metrics_falls_back_to_detection_events_without_tracks(
+    tmp_path,
+):
     output_dir, truth_path = make_synthetic_benchmark_case(tmp_path)
     (output_dir / "tracks.csv").unlink()
 
@@ -583,14 +765,22 @@ def test_compute_benchmark_metrics_reports_filtered_velocity_metrics(tmp_path):
     assert metrics["velocity"]["prediction_source"] == "velocities.csv"
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(0.05)
     assert metrics["filtered_velocity"]["available"] is True
-    assert metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
+    assert (
+        metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
+    )
     assert metrics["filtered_velocity"]["velocity_rows"] == 1
     assert metrics["filtered_velocity"]["representative_track_id"] == 7
-    assert metrics["filtered_velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(-0.1)
+    assert metrics["filtered_velocity"][
+        "velocity_y_error_px_per_frame"
+    ] == pytest.approx(-0.1)
     assert metrics["filtered_velocity"]["velocity_ratio_error"] == pytest.approx(-0.05)
     assert metrics["filtered_velocity"]["truth_matched_track_id"] == 7
-    assert metrics["filtered_velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(-0.1)
-    assert metrics["filtered_velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(-0.05)
+    assert metrics["filtered_velocity"][
+        "truth_matched_velocity_y_error_px_per_frame"
+    ] == pytest.approx(-0.1)
+    assert metrics["filtered_velocity"][
+        "truth_matched_velocity_ratio_error"
+    ] == pytest.approx(-0.05)
 
 
 def test_compute_benchmark_metrics_reports_empty_filtered_velocity_file(tmp_path):
@@ -604,7 +794,9 @@ def test_compute_benchmark_metrics_reports_empty_filtered_velocity_file(tmp_path
     metrics = compute_benchmark_metrics(output_dir=output_dir, truth_path=truth_path)
 
     assert metrics["filtered_velocity"]["available"] is False
-    assert metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
+    assert (
+        metrics["filtered_velocity"]["prediction_source"] == "filtered_velocities.csv"
+    )
     assert metrics["filtered_velocity"]["reason"] == "No velocity rows found"
     assert metrics["filtered_velocity"]["velocity_rows"] == 0
 
@@ -640,20 +832,40 @@ def test_compute_benchmark_metrics_reports_truth_matched_velocity(tmp_path):
 
     assert metrics["velocity"]["representative_track_id"] == 10
     assert metrics["velocity"]["velocity_y_error_px_per_frame"] == pytest.approx(-0.9)
-    assert metrics["velocity"]["velocity_y_mean_abs_error_px_per_frame"] == pytest.approx((0.9 + 0.01) / 2)
-    assert metrics["velocity"]["velocity_y_bias_px_per_frame"] == pytest.approx((-0.9 + 0.01) / 2)
-    assert metrics["velocity"]["velocity_y_error_std_px_per_frame"] == pytest.approx(np.std([-0.9, 0.01]))
+    assert metrics["velocity"][
+        "velocity_y_mean_abs_error_px_per_frame"
+    ] == pytest.approx((0.9 + 0.01) / 2)
+    assert metrics["velocity"]["velocity_y_bias_px_per_frame"] == pytest.approx(
+        (-0.9 + 0.01) / 2
+    )
+    assert metrics["velocity"]["velocity_y_error_std_px_per_frame"] == pytest.approx(
+        np.std([-0.9, 0.01])
+    )
     assert metrics["velocity"]["truth_matched_track_id"] == 11
-    assert metrics["velocity"]["truth_matched_velocity_y_error_px_per_frame"] == pytest.approx(0.01)
-    assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(0.005)
+    assert metrics["velocity"][
+        "truth_matched_velocity_y_error_px_per_frame"
+    ] == pytest.approx(0.01)
+    assert metrics["velocity"]["truth_matched_velocity_ratio_error"] == pytest.approx(
+        0.005
+    )
     assert metrics["filtered_velocity"]["representative_track_id"] == 10
     assert metrics["filtered_velocity"]["truth_matched_track_id"] == 11
 
 
 def test_velocity_metrics_ignores_rows_without_velocity_estimates():
     rows = [
-        {"track_id": 10, "n_detections": 100, "velocity_y_px_per_frame": "", "velocity_ratio_y": ""},
-        {"track_id": 11, "n_detections": 2, "velocity_y_px_per_frame": 1.01, "velocity_ratio_y": 0.505},
+        {
+            "track_id": 10,
+            "n_detections": 100,
+            "velocity_y_px_per_frame": "",
+            "velocity_ratio_y": "",
+        },
+        {
+            "track_id": 11,
+            "n_detections": 2,
+            "velocity_y_px_per_frame": 1.01,
+            "velocity_ratio_y": 0.505,
+        },
     ]
     truth = {
         "true_particle_velocity_y_px_per_frame": 1.0,
@@ -671,7 +883,14 @@ def test_velocity_metrics_ignores_rows_without_velocity_estimates():
 
 def test_velocity_metrics_counts_rows_without_velocity_estimates():
     metrics = velocity_metrics(
-        [{"track_id": 10, "n_detections": 5, "velocity_y_px_per_frame": "", "velocity_ratio_y": ""}],
+        [
+            {
+                "track_id": 10,
+                "n_detections": 5,
+                "velocity_y_px_per_frame": "",
+                "velocity_ratio_y": "",
+            }
+        ],
         {"true_particle_velocity_y_px_per_frame": 1.0},
     )
 
@@ -680,13 +899,62 @@ def test_velocity_metrics_counts_rows_without_velocity_estimates():
     assert metrics["velocity_y_rows_with_estimate"] == 0
 
 
+def test_velocity_metrics_reports_negative_track_count_as_missing():
+    metrics = velocity_metrics(
+        [
+            {
+                "track_id": 10,
+                "n_detections": -5,
+                "velocity_y_px_per_frame": 1.0,
+                "velocity_ratio_y": 0.5,
+            }
+        ],
+        {
+            "true_particle_velocity_y_px_per_frame": 1.0,
+            "true_belt_velocity_y_px_per_frame": 2.0,
+        },
+    )
+
+    assert metrics["available"] is True
+    assert metrics["representative_track_detections"] is None
+    assert metrics["truth_matched_track_detections"] is None
+
+
 def test_event_metrics_distinguishes_frame_coverage_from_event_recall():
     truth = {
         "particles": [
-            {"event_id": "a", "frame_index": 0, "top": 1, "left": 1, "bottom": 3, "right": 3},
-            {"event_id": "a", "frame_index": 1, "top": 2, "left": 1, "bottom": 4, "right": 3},
-            {"event_id": "a", "frame_index": 2, "top": 3, "left": 1, "bottom": 5, "right": 3},
-            {"event_id": "b", "frame_index": 0, "top": 8, "left": 8, "bottom": 10, "right": 10},
+            {
+                "event_id": "a",
+                "frame_index": 0,
+                "top": 1,
+                "left": 1,
+                "bottom": 3,
+                "right": 3,
+            },
+            {
+                "event_id": "a",
+                "frame_index": 1,
+                "top": 2,
+                "left": 1,
+                "bottom": 4,
+                "right": 3,
+            },
+            {
+                "event_id": "a",
+                "frame_index": 2,
+                "top": 3,
+                "left": 1,
+                "bottom": 5,
+                "right": 3,
+            },
+            {
+                "event_id": "b",
+                "frame_index": 0,
+                "top": 8,
+                "left": 8,
+                "bottom": 10,
+                "right": 10,
+            },
         ]
     }
     detections = [
@@ -726,8 +994,22 @@ def test_event_metrics_distinguishes_frame_coverage_from_event_recall():
 def test_event_metrics_reports_track_fragmentation():
     truth = {
         "particles": [
-            {"event_id": "a", "frame_index": 0, "top": 1, "left": 1, "bottom": 3, "right": 3},
-            {"event_id": "a", "frame_index": 1, "top": 2, "left": 1, "bottom": 4, "right": 3},
+            {
+                "event_id": "a",
+                "frame_index": 0,
+                "top": 1,
+                "left": 1,
+                "bottom": 3,
+                "right": 3,
+            },
+            {
+                "event_id": "a",
+                "frame_index": 1,
+                "top": 2,
+                "left": 1,
+                "bottom": 4,
+                "right": 3,
+            },
         ]
     }
     detections = [
@@ -794,3 +1076,30 @@ def test_generate_benchmark_report_writes_json_and_markdown(tmp_path):
     report = artifacts.report.read_text(encoding="utf-8")
     assert "phase RMSE" in report
     assert "event F1" in report
+
+
+def test_write_benchmark_artifacts_sanitizes_nonfinite_json_values(tmp_path: Path):
+    metrics = {
+        "phase": {"rmse_px": float("nan")},
+        "belt_map": {},
+        "detections": {},
+        "events": {},
+        "velocity": {},
+        "runtime": {},
+        "benchmark": {"truth": "truth.json", "output_dir": "out"},
+        "case": {},
+        "run": {},
+    }
+    metrics_path = tmp_path / "metrics.json"
+    report_path = tmp_path / "report.md"
+
+    write_benchmark_artifacts(
+        metrics,
+        metrics_path=metrics_path,
+        report_path=report_path,
+    )
+    text = metrics_path.read_text(encoding="utf-8")
+    payload = json.loads(text)
+
+    assert payload["phase"]["rmse_px"] is None
+    assert "NaN" not in text
