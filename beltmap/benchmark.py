@@ -469,8 +469,6 @@ def truth_event_boxes(truth: dict[str, Any]) -> list[dict[str, Any]]:
     for particle in truth_particle_rows(truth):
         frame_index = finite_nonnegative_int(particle.get("frame_index"))
         if frame_index is None:
-            if truth_row_has_box_field(particle):
-                raise ValueError("truth boxes must contain a finite integer frame_index")
             continue
         try:
             box: dict[str, Any] = bbox_from_truth(particle)
@@ -892,8 +890,6 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
     for particle in truth_particle_rows(truth):
         frame_index = finite_nonnegative_int(particle.get("frame_index"))
         if frame_index is None:
-            if truth_row_has_box_field(particle):
-                raise ValueError("truth boxes must contain a finite integer frame_index")
             continue
         try:
             grouped.setdefault(frame_index, []).append(bbox_from_truth(particle))
