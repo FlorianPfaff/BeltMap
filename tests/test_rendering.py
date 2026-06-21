@@ -61,12 +61,30 @@ def test_render_expected_clean_belt_accepts_explicit_phase_estimate():
     assert render.phase_estimate is phase
 
 
+def test_render_expected_clean_belt_accepts_list_geometry_sequences():
+    belt = np.arange(30, dtype=float)[:, None] * np.ones((1, 4))
+    phase = PhaseEstimate(phase_px=4.5, frame_index=7, predicted_phase_px=4.5)
+
+    render = render_expected_clean_belt(
+        belt_map=belt,
+        frame_index=7,
+        phase_estimate=phase,
+        belt_region=[0, 0, 3, 4],
+        output_shape=[3, 4],
+    )
+
+    assert render.belt_region.shape == (3, 4)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
         ({"belt_region": (0.5, 0, 3, 4), "output_shape": (3, 4)}, "belt_region top"),
         ({"belt_region": (0, 0, 3, 4), "output_shape": (3.5, 4)}, "output_shape height"),
         ({"belt_region": BeltRegion(top=0, left=0, height=3.5, width=4), "output_shape": (4, 4)}, "belt_region height"),
+        ({"belt_region": (True, 0, 3, 4), "output_shape": (3, 4)}, "belt_region top"),
+        ({"belt_region": (0, 0, 3, 4), "output_shape": (True, 4)}, "output_shape height"),
+        ({"belt_region": "0,0,3,4", "output_shape": (3, 4)}, "belt_region"),
     ],
 )
 def test_render_expected_clean_belt_rejects_fractional_geometry(kwargs, message):
@@ -79,6 +97,52 @@ def test_render_expected_clean_belt_rejects_fractional_geometry(kwargs, message)
             frame_index=0,
             phase_estimate=phase,
             **kwargs,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"frame_index": True}, "frame_index"),
+        ({"periodic": "false"}, "periodic"),
+        ({"fill_value": True}, "fill_value"),
+        ({"fill_value": "nan"}, "fill_value"),
+        ({"fill_value": float("inf")}, "fill_value"),
+    ],
+)
+def test_render_expected_clean_belt_rejects_coerced_control_values(kwargs, message):
+    belt = np.zeros((8, 4), dtype=float)
+    phase = PhaseEstimate(phase_px=0.0, frame_index=0, predicted_phase_px=0.0)
+    options = {
+        "belt_map": belt,
+        "frame_index": 0,
+        "phase_estimate": phase,
+        "output_shape": (3, 4),
+    }
+    options.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        render_expected_clean_belt(**options)
+
+
+@pytest.mark.parametrize(
+    ("phase", "message"),
+    [
+        (PhaseEstimate(phase_px=True, frame_index=0, predicted_phase_px=0.0), "phase_px"),
+        (PhaseEstimate(phase_px=0.0, frame_index=True, predicted_phase_px=0.0), "frame_index"),
+        (PhaseEstimate(phase_px=0.0, frame_index=0, predicted_phase_px=True), "predicted_phase_px"),
+        (PhaseEstimate(phase_px=0.0, frame_index=0, predicted_phase_px=0.0, score=float("nan")), "score"),
+    ],
+)
+def test_render_expected_clean_belt_rejects_invalid_phase_estimate(phase, message):
+    belt = np.zeros((8, 4), dtype=float)
+
+    with pytest.raises(ValueError, match=message):
+        render_expected_clean_belt(
+            belt_map=belt,
+            frame_index=0,
+            phase_estimate=phase,
+            output_shape=(3, 4),
         )
 
 

@@ -32,6 +32,11 @@ def test_compute_belt_map_risk_maps_marks_interpolated_and_low_support_pixels():
     np.testing.assert_allclose(maps.risk, [[1.0, 0.5, 0.0]])
 
 
+def test_compute_belt_map_risk_maps_rejects_boolean_min_support():
+    with pytest.raises(ValueError, match="min_support must be finite"):
+        compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32), min_support=True)
+
+
 def test_score_map_risk_detections_adds_bbox_support_stats_and_rejects():
     support = np.full((4, 3), 2.0, dtype=np.float32)
     support[1, 1] = 0.0
@@ -70,7 +75,20 @@ def test_score_map_risk_detections_rejects_invalid_thresholds():
         )
 
 
-@pytest.mark.parametrize("frame_shape", [(1.5, 2), (1, float("nan")), (0, 2)])
+def test_score_map_risk_detections_rejects_boolean_thresholds():
+    maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
+
+    with pytest.raises(ValueError, match="reject_max_mean_risk"):
+        score_map_risk_detections(
+            [_detection(bbox_left=0, bbox_right=1)],
+            phase_px=0.0,
+            frame_shape=(1, 2),
+            maps=maps,
+            reject_max_mean_risk=True,
+        )
+
+
+@pytest.mark.parametrize("frame_shape", [(1.5, 2), (1, float("nan")), (0, 2), (True, 2)])
 def test_score_map_risk_detections_rejects_invalid_frame_shape(frame_shape):
     maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
 
@@ -79,5 +97,17 @@ def test_score_map_risk_detections_rejects_invalid_frame_shape(frame_shape):
             [_detection(bbox_left=0, bbox_right=1)],
             phase_px=0.0,
             frame_shape=frame_shape,
+            maps=maps,
+        )
+
+
+def test_score_map_risk_detections_rejects_fractional_bbox_coordinates():
+    maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
+
+    with pytest.raises(ValueError, match="bbox_top must be a finite integer"):
+        score_map_risk_detections(
+            [_detection(bbox_top=0.5, bbox_left=0, bbox_bottom=1, bbox_right=1)],
+            phase_px=0.0,
+            frame_shape=(1, 2),
             maps=maps,
         )

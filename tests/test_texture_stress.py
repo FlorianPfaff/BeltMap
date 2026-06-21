@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from beltmap import texture_stress
 from beltmap.cli import texture_stress as cli_texture_stress
 from beltmap.compare_runs import RunSpec
 from beltmap.texture_stress import generate_texture_stress_report
@@ -165,6 +166,27 @@ def test_generate_texture_stress_report_writes_subset_tables_and_plot(tmp_path):
     frame_rows = list(csv.DictReader(artifacts.frames_csv.open(newline="", encoding="utf-8")))
     assert frame_rows[0]["subset"] == "Q1"
     assert frame_rows[-1]["subset"] == "Q4"
+
+
+def test_texture_stress_plot_sort_preserves_zero_rank(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_draw_multiline_plot(path, **kwargs):
+        captured["series"] = kwargs["labeled_series"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"plot")
+
+    monkeypatch.setattr(texture_stress, "draw_multiline_plot", fake_draw_multiline_plot)
+
+    texture_stress.write_texture_stress_plots(
+        tmp_path,
+        [
+            {"run": "method", "stress_rank": 1, "detections_per_frame_mean": 10},
+            {"run": "method", "stress_rank": 0, "detections_per_frame_mean": 5},
+        ],
+    )
+
+    assert captured["series"] == [("method", [0.0, 1.0], [5.0, 10.0])]
 
 
 def test_texture_stress_report_can_score_sparse_labels_by_subset(tmp_path):

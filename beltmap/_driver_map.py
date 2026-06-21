@@ -19,6 +19,21 @@ from .residual import ResidualConfig, ResidualImage, generate_residual_image
 from .tracking import ParticleComponentConfig, extract_particle_detections
 
 MAP_PARTICLE_MASK_MODES = {"positive", "negative", "absolute", "hysteresis_abs"}
+MAP_PARTICLE_MASK_MODE_ALIASES = {
+    "bright": "positive",
+    "bright_particle": "positive",
+    "bright_particles": "positive",
+    "light": "positive",
+    "light_on_dark": "positive",
+    "dark": "negative",
+    "dark_particle": "negative",
+    "dark_particles": "negative",
+    "dark_on_light": "negative",
+    "both": "absolute",
+    "signed": "absolute",
+    "two_sided": "absolute",
+    "twosided": "absolute",
+}
 MAP_PER_PIXEL_ROBUST_AGGREGATIONS = {"trimmed_mean", "winsorized_mean"}
 MAP_AGGREGATION_METHODS = {"mean", "huber", *MAP_PER_PIXEL_ROBUST_AGGREGATIONS}
 MAP_SAMPLING_STRATEGIES = {"uniform", "adaptive_phase_coverage"}
@@ -127,10 +142,15 @@ def validate_map_sampling_strategy(strategy: str) -> str:
 
 
 def validate_map_particle_mask_mode(mode: str) -> str:
-    normalized = mode.strip().lower()
+    normalized = mode.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = MAP_PARTICLE_MASK_MODE_ALIASES.get(normalized, normalized)
     if normalized not in MAP_PARTICLE_MASK_MODES:
         choices = ", ".join(sorted(MAP_PARTICLE_MASK_MODES))
-        raise ValueError(f"MAP_PARTICLE_MASK_MODE must be one of {choices}, got {mode!r}")
+        aliases = ", ".join(sorted(MAP_PARTICLE_MASK_MODE_ALIASES))
+        raise ValueError(
+            f"MAP_PARTICLE_MASK_MODE must be one of {choices}; "
+            f"polarity aliases: {aliases}; got {mode!r}"
+        )
     return normalized
 
 
@@ -202,6 +222,7 @@ def build_belt_map(
     phase_feedback_config: PhaseFeedbackConfig | None = None,
     sample_indices_override: Sequence[int] | None = None,
     allowed_sample_frame_indices: Sequence[int] | None = None,
+    map_exclusion_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, float, int]:
     result = build_belt_map_result(
         paths=paths,
@@ -228,6 +249,7 @@ def build_belt_map(
         phase_feedback_config=phase_feedback_config,
         sample_indices_override=sample_indices_override,
         allowed_sample_frame_indices=allowed_sample_frame_indices,
+        map_exclusion_mask=map_exclusion_mask,
     )
     if result.phase_refinement_rows:
         rt.write_csv(rt.OUT / "phase_refinement.csv", result.phase_refinement_rows, PHASE_REFINEMENT_FIELDS)
@@ -266,6 +288,7 @@ def build_belt_map_result(
     phase_feedback_config: PhaseFeedbackConfig | None = None,
     sample_indices_override: Sequence[int] | None = None,
     allowed_sample_frame_indices: Sequence[int] | None = None,
+    map_exclusion_mask: np.ndarray | None = None,
 ) -> BeltMapBuildResult:
     if not paths:
         raise ValueError("paths must contain at least one image")
@@ -317,6 +340,13 @@ def build_belt_map_result(
     max_samples = env_int("MAP_SAMPLE_FRAMES", 120, minimum=1)
     map_adaptive_candidate_frames = env_int(MAP_ADAPTIVE_CANDIDATE_FRAMES_ENV, 0, minimum=0)
     map_height, reference_phase, model_period = map_geometry(len(paths), crop_height, velocity, supplied_period)
+    if map_exclusion_mask is not None:
+        map_exclusion_mask = np.asarray(map_exclusion_mask, dtype=bool)
+        if map_exclusion_mask.shape != (map_height, crop_width):
+            raise ValueError(
+                "map_exclusion_mask must have shape "
+                f"{(map_height, crop_width)}, got {map_exclusion_mask.shape}"
+            )
     if sample_indices_override is None:
         samples = select_map_sample_indices(
             frame_count=len(paths),
@@ -368,6 +398,9 @@ def build_belt_map_result(
         adaptive_candidate_frames=map_adaptive_candidate_frames,
         phase_refinement_iterations=cfg.iterations,
         phase_refinement_smoothing_window_frames=cfg.smoothing_window_frames,
+        map_exclusion_pixels=(
+            None if map_exclusion_mask is None else int(np.count_nonzero(map_exclusion_mask))
+        ),
     )
     belt_map, map_support, _coverage = accumulate_belt_map(
         paths=paths,
@@ -392,6 +425,7 @@ def build_belt_map_result(
         local_illumination_tile_px=local_illumination_tile_px,
         pass_label="initial",
         return_support=True,
+        map_exclusion_mask=map_exclusion_mask,
     )
     phase_by_frame: np.ndarray | None = None
     phase_rows: list[dict] = []
@@ -438,6 +472,7 @@ def build_belt_map_result(
                 pass_label=f"phase-refined-{iteration}",
                 phase_by_frame=phase_by_frame,
                 return_support=True,
+                map_exclusion_mask=map_exclusion_mask,
             )
             used = sum(1 for row in rows if row["used_for_refinement"])
             emit(
@@ -473,6 +508,7 @@ def build_belt_map_result(
             pass_label=f"masked-{iteration}",
             phase_by_frame=phase_by_frame,
             return_support=True,
+            map_exclusion_mask=map_exclusion_mask,
         )
         emit(
             "belt_map",
@@ -511,6 +547,7 @@ def build_belt_map_result(
                 robust_min_scale=robust_min_scale,
                 robust_pixel_estimator="mean",
                 return_support=True,
+                map_exclusion_mask=map_exclusion_mask,
             )
             emit(
                 "belt_map",
@@ -561,10 +598,12 @@ def accumulate_belt_map(
     robust_min_scale: float = 1.0,
     robust_pixel_estimator: str = "mean",
     return_support: bool = False,
+    map_exclusion_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, int]] | tuple[np.ndarray, np.ndarray, dict[str, int]]:
     _, _, crop_height, crop_width = region
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     use_particle_mask = previous_belt_map is not None
+    mask_mode = validate_map_particle_mask_mode(mask_mode)
     residual_config = ResidualConfig(
         noise_exclusion_mode=(
             "absolute" if mask_mode in {"absolute", "hysteresis_abs"} else mask_mode
@@ -599,6 +638,13 @@ def accumulate_belt_map(
             f"{MAP_RECONSTRUCTION_TRIM_FRACTION_ENV} must be positive for "
             f"robust_pixel_estimator={robust_pixel_estimator!r}"
         )
+    if map_exclusion_mask is not None:
+        map_exclusion_mask = np.asarray(map_exclusion_mask, dtype=bool)
+        if map_exclusion_mask.shape != (map_height, crop_width):
+            raise ValueError(
+                "map_exclusion_mask must have shape "
+                f"{(map_height, crop_width)}, got {map_exclusion_mask.shape}"
+            )
     use_per_pixel_robust_mean = (
         robust_pixel_estimator in MAP_PER_PIXEL_ROBUST_AGGREGATIONS
         and not use_huber_weights
@@ -630,6 +676,7 @@ def accumulate_belt_map(
     stacked_values: list[np.ndarray] = []
     stacked_weights: list[np.ndarray] = []
     masked_pixels = 0
+    map_excluded_pixels = 0
     contributed_pixels = 0
     offset_reference_map = previous_belt_map
     if offset_reference_map is None:
@@ -670,6 +717,16 @@ def accumulate_belt_map(
         )
         expected = None
         valid = np.ones(frame.shape, dtype=bool)
+        if map_exclusion_mask is not None:
+            excluded = render_belt_mask_view(
+                map_exclusion_mask,
+                phase,
+                crop_height,
+                fractional_splat=fractional_splat,
+                periodic=bool(model_period),
+            )
+            valid &= ~excluded
+            map_excluded_pixels += int(np.count_nonzero(excluded))
         particle_mask_applied = False
         if use_local_illumination_correction:
             expected = render_belt_view(offset_reference_map, phase, crop_height)
@@ -780,6 +837,7 @@ def accumulate_belt_map(
                 source_frame_index=index,
                 observed_pixels=int(np.count_nonzero(weights)),
                 masked_pixels=masked_pixels,
+                map_excluded_pixels=map_excluded_pixels,
             )
     known_pixels = weights > 0
     if not np.any(known_pixels):
@@ -826,6 +884,7 @@ def accumulate_belt_map(
             belt_map[:, col] = np.interp(x, known.astype(np.float64), values).astype(np.float32)
     stats = {
         "masked_pixels": masked_pixels,
+        "map_excluded_pixels": map_excluded_pixels,
         "contributed_pixels": contributed_pixels,
         "observed_pixels": int(np.count_nonzero(known_pixels)),
         "total_pixels": int(weights.size),
@@ -1070,6 +1129,39 @@ def _accumulate_frame_linear(
             weights[row1[y], target_cols] += weight1 * sample_weights
         contributed_pixels += int(np.count_nonzero(positive))
     return contributed_pixels
+
+
+def render_belt_mask_view(
+    mask: np.ndarray,
+    phase: float,
+    height: int,
+    *,
+    fractional_splat: bool,
+    periodic: bool,
+) -> np.ndarray:
+    """Render belt-coordinate exclusion pixels into crop coordinates."""
+
+    belt_mask = np.asarray(mask, dtype=bool)
+    if belt_mask.ndim != 2:
+        raise ValueError("mask must be a 2-D array")
+    if height <= 0:
+        raise ValueError("height must be positive")
+    map_height = belt_mask.shape[0]
+    rows = np.arange(height, dtype=np.float64) + float(phase)
+    if periodic:
+        rows = np.mod(rows, map_height)
+    else:
+        rows = np.clip(rows, 0.0, float(map_height - 1))
+    if fractional_splat:
+        row0 = np.floor(rows).astype(np.int64)
+        row1 = (row0 + 1) % map_height if periodic else np.minimum(row0 + 1, map_height - 1)
+        return belt_mask[row0] | belt_mask[row1]
+    target_rows = np.floor(rows + 0.5).astype(np.int64)
+    if periodic:
+        target_rows %= map_height
+    else:
+        target_rows = np.clip(target_rows, 0, map_height - 1)
+    return belt_mask[target_rows]
 
 
 def _accumulate_frame_nearest(

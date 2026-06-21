@@ -149,6 +149,16 @@ def row_frame_index(row: dict[str, Any]) -> int | None:
     return None
 
 
+def label_frame_index(row: dict[str, Any]) -> int | None:
+    """Infer a truth-label frame index, preferring explicit reviewed metadata."""
+
+    for key in FRAME_KEYS:
+        frame_index = tracklet_finite_int(nonempty_value(row, key))
+        if frame_index is not None:
+            return frame_index
+    return source_frame_index(row)
+
+
 def parse_frame_set(value: Any) -> set[int]:
     """Parse a scalar, comma-separated string, list, or frame-object list."""
 
@@ -164,7 +174,7 @@ def parse_frame_set(value: Any) -> set[int]:
     frames: set[int] = set()
     for item in items:
         if isinstance(item, dict):
-            frame_index = row_frame_index(item)
+            frame_index = label_frame_index(item)
         else:
             frame_index = tracklet_finite_int(item)
         if frame_index is not None:
@@ -234,8 +244,8 @@ def bbox_tuple_from_row(row: dict[str, Any]) -> tuple[float, float, float, float
     return None
 
 
-def row_declares_bbox(row: dict[str, Any]) -> bool:
-    """Return whether a row contains any supported bbox field."""
+def row_has_nonempty_box_field(row: dict[str, Any]) -> bool:
+    """Return true when a row appears to contain a bbox annotation."""
 
     return any(
         nonempty_value(row, field) is not None
@@ -250,13 +260,14 @@ def tracklet_box_from_row(
     default_tracklet_id: str | None = None,
     id_keys: tuple[str, ...] = TRACKLET_ID_KEYS,
     require_tracklet_id: bool = True,
+    frame_index_fn: Any = row_frame_index,
 ) -> TrackletBox | None:
     """Convert one annotation or PyRecEst track row to a ``TrackletBox``."""
 
     bbox = bbox_tuple_from_row(row)
     if bbox is None:
         return None
-    frame_index = row_frame_index(row)
+    frame_index = frame_index_fn(row)
     if frame_index is None:
         return None
     tracklet_id = tracklet_id_from_row(row, keys=id_keys) or default_tracklet_id
@@ -329,19 +340,24 @@ def rows_from_frame_container(items: Any) -> tuple[list[dict[str, Any]], set[int
     for frame in items:
         if not isinstance(frame, dict):
             continue
-        frame_index = row_frame_index(frame)
+        frame_index = label_frame_index(frame)
         if frame_index is not None:
             scored_frames.add(frame_index)
-        nested = frame.get("boxes") or frame.get("detections") or frame.get("tracklets")
+        nested = None
+        for key in ("boxes", "detections", "tracklets"):
+            candidate = frame.get(key)
+            if isinstance(candidate, list):
+                nested = candidate
+                break
         if isinstance(nested, list):
             for child in nested:
                 if not isinstance(child, dict):
                     continue
                 row = dict(child)
-                if frame_index is not None and row_frame_index(row) is None:
+                if frame_index is not None and label_frame_index(row) is None:
                     row["frame_index"] = frame_index
                 rows.append(row)
-        elif bbox_tuple_from_row(frame) is not None or row_declares_bbox(frame):
+        elif bbox_tuple_from_row(frame) is not None or row_has_nonempty_box_field(frame):
             rows.append(dict(frame))
     return rows, scored_frames
 
@@ -366,7 +382,7 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
     for key in TRACKLET_CONTAINER_KEYS:
         rows.extend(rows_from_tracklet_container(data.get(key)))
 
-    if not rows and (bbox_tuple_from_row(data) is not None or row_declares_bbox(data)):
+    if not rows and (bbox_tuple_from_row(data) is not None or row_has_nonempty_box_field(data)):
         rows.append(data)
     return rows, scored_frames
 
@@ -397,16 +413,30 @@ def load_tracklet_truth(path: Path) -> TrackletTruth:
     boxes: list[TrackletBox] = []
     skipped_rows = 0
     for row in rows:
-        frame_index = row_frame_index(row)
+        frame_index = label_frame_index(row)
         if frame_index is not None:
             scored_frames.add(frame_index)
         bbox = bbox_tuple_from_row(row)
         if bbox is None:
-            if row_declares_bbox(row):
-                raise ValueError("tracklet truth row contains an invalid bbox")
+            if row_has_nonempty_box_field(row):
+                raise ValueError(
+                    "tracklet truth row contains an invalid bbox; "
+                    "tracklet label boxes must contain a finite integer frame_index "
+                    "and positive half-open bbox coordinates"
+                )
             skipped_rows += 1
             continue
-        box = tracklet_box_from_row(row, require_tracklet_id=True)
+        if frame_index is None:
+            raise ValueError(
+                "tracklet truth row contains a bbox without a valid frame; "
+                "tracklet label boxes must contain a finite integer frame_index "
+                "and positive half-open bbox coordinates"
+            )
+        box = tracklet_box_from_row(
+            row,
+            require_tracklet_id=True,
+            frame_index_fn=label_frame_index,
+        )
         if box is None:
             raise ValueError("tracklet truth row contains a bbox without a valid frame")
         boxes.append(box)
@@ -434,7 +464,7 @@ def load_tracklet_predictions(path: Path) -> TrackletPredictions:
     boxes: list[TrackletBox] = []
     skipped_rows = 0
     for row in rows:
-        if bbox_tuple_from_row(row) is None and row_declares_bbox(row):
+        if bbox_tuple_from_row(row) is None and row_has_nonempty_box_field(row):
             raise ValueError("tracklet prediction row contains an invalid bbox")
         box = tracklet_box_from_row(
             row,
@@ -442,7 +472,7 @@ def load_tracklet_predictions(path: Path) -> TrackletPredictions:
             require_tracklet_id=True,
         )
         if box is None:
-            if row_declares_bbox(row):
+            if row_has_nonempty_box_field(row):
                 raise ValueError(
                     "tracklet prediction row contains a bbox without a valid frame"
                 )

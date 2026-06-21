@@ -2,6 +2,7 @@ import csv
 import json
 
 import numpy as np
+import pytest
 
 from beltmap import postrun_improvements as pri
 
@@ -19,10 +20,29 @@ def test_uncertainty_from_counts_marks_unobserved_rows():
     assert uncertainty[2] == 1.0
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"scale": float("nan")}, "scale"),
+        ({"min_count": float("nan")}, "min_count"),
+    ],
+)
+def test_uncertainty_from_counts_rejects_nonfinite_parameters(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        pri.uncertainty_from_counts(np.array([1, 2, 3]), **kwargs)
+
+
 def test_finite_int_rejects_fractional_values():
     assert pri.finite_int("7") == 7
     assert pri.finite_int("7.0") == 7
     assert pri.finite_int("7.5") is None
+
+
+def test_finite_numeric_parsers_reject_boolean_values():
+    assert pri.finite_float(True) is None
+    assert pri.finite_int(False) is None
+    assert pri.finite_float(np.bool_(True)) is None
+    assert pri.finite_int(np.bool_(False)) is None
 
 
 def test_detection_count_by_frame_ignores_fractional_frame_indices(tmp_path):
@@ -44,7 +64,9 @@ def test_map_uncertainty_creates_explicit_report_dir(tmp_path):
         json.dumps({"belt_map_height_px": 5, "belt_region": {"height": 3, "width": 2}}),
         encoding="utf-8",
     )
-    (out / "phase_estimates.csv").write_text("frame_index,phase_px\n0,0\n1,3\n", encoding="utf-8")
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,phase_px\n0,0\n1,3\n", encoding="utf-8"
+    )
 
     summary = pri.write_map_uncertainty_outputs(out, report_dir=report)
 
@@ -55,11 +77,22 @@ def test_map_uncertainty_creates_explicit_report_dir(tmp_path):
 def test_quality_contract_uses_standard_csvs(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
-    (out / "metadata.json").write_text(json.dumps({"registration_search_radius_px": 8.0, "n_detections": 2}), encoding="utf-8")
-    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,0.5,0.8\n1,1.0,0.9\n", encoding="utf-8")
-    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
-    (out / "velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
-    (out / "filtered_velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 8.0, "n_detections": 2}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,0.5,0.8\n1,1.0,0.9\n", encoding="utf-8"
+    )
+    (out / "detections.csv").write_text(
+        "frame_index,area_px\n0,10\n1,12\n", encoding="utf-8"
+    )
+    (out / "velocities.csv").write_text(
+        "track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8"
+    )
+    (out / "filtered_velocities.csv").write_text(
+        "track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8"
+    )
 
     results = pri.evaluate_quality_contract(out)
 
@@ -71,19 +104,88 @@ def test_quality_contract_uses_metadata_registration_search_radius(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "metadata.json").write_text(
-        json.dumps({"registration_search_radius_px": 4.0, "registration_search_step_px": 0.5}),
+        json.dumps(
+            {"registration_search_radius_px": 4.0, "registration_search_step_px": 0.5}
+        ),
         encoding="utf-8",
     )
-    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,4.0,0.8\n", encoding="utf-8")
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,4.0,0.8\n", encoding="utf-8"
+    )
     (out / "detections.csv").write_text("frame_index,area_px\n0,10\n", encoding="utf-8")
-    (out / "velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
-    (out / "filtered_velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
+    (out / "velocities.csv").write_text(
+        "track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8"
+    )
+    (out / "filtered_velocities.csv").write_text(
+        "track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8"
+    )
 
-    results = pri.evaluate_quality_contract(out, {"max_registration_boundary_share": 0.05})
+    results = pri.evaluate_quality_contract(
+        out, {"max_registration_boundary_share": 0.05}
+    )
 
     assert len(results) == 1
     assert not results[0].passed
     assert results[0].value == 1.0
+
+
+def test_quality_flags_ignore_invalid_registration_search_step_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps(
+            {"registration_search_radius_px": 4.0, "registration_search_step_px": -1.0}
+        ),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,4.25,0.8\n",
+        encoding="utf-8",
+    )
+
+    flags = pri.quality_flags_from_outputs(out)
+
+    assert any(flag.code == "registration_boundary" for flag in flags)
+
+
+def test_quality_contract_ignores_invalid_registration_search_step_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps(
+            {"registration_search_radius_px": 4.0, "registration_search_step_px": -1.0}
+        ),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,4.25,0.8\n",
+        encoding="utf-8",
+    )
+
+    results = pri.evaluate_quality_contract(
+        out, {"max_registration_boundary_share": 0.05}
+    )
+
+    assert len(results) == 1
+    assert not results[0].passed
+
+
+def test_quality_contract_rejects_invalid_velocity_ratio_range(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+
+    results = pri.evaluate_quality_contract(
+        out,
+        {
+            "velocity_ratio_y_range": [1.1, 0.0],
+            "min_velocity_ratio_in_range_share": 0.5,
+        },
+    )
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value is None
+    assert "invalid velocity ratio range" in results[0].description
 
 
 def test_postrun_quality_flags_preserve_zero_detection_metadata(tmp_path):
@@ -93,7 +195,9 @@ def test_postrun_quality_flags_preserve_zero_detection_metadata(tmp_path):
         json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
         encoding="utf-8",
     )
-    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
+    (out / "detections.csv").write_text(
+        "frame_index,area_px\n0,10\n1,12\n", encoding="utf-8"
+    )
 
     flags = pri.quality_flags_from_outputs(out)
 
@@ -108,7 +212,27 @@ def test_quality_contract_preserves_zero_detection_metadata(tmp_path):
         json.dumps({"n_recurrent_artifact_rejected": 5, "n_detections": 0}),
         encoding="utf-8",
     )
-    (out / "detections.csv").write_text("frame_index,area_px\n0,10\n1,12\n", encoding="utf-8")
+    (out / "detections.csv").write_text(
+        "frame_index,area_px\n0,10\n1,12\n", encoding="utf-8"
+    )
+
+    results = pri.evaluate_quality_contract(
+        out, {"max_recurrent_rejection_share": 0.75}
+    )
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value == 1.0
+
+
+def test_quality_contract_rejects_boolean_detection_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"n_recurrent_artifact_rejected": 1, "n_detections": True}),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text("frame_index,area_px\n", encoding="utf-8")
 
     results = pri.evaluate_quality_contract(out, {"max_recurrent_rejection_share": 0.75})
 
@@ -117,11 +241,35 @@ def test_quality_contract_preserves_zero_detection_metadata(tmp_path):
     assert results[0].value == 1.0
 
 
+def test_quality_contract_fails_invalid_boolean_velocity_range(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text("{}", encoding="utf-8")
+    (out / "velocities.csv").write_text("track_id,velocity_ratio_y\n0,0.5\n", encoding="utf-8")
+
+    results = pri.evaluate_quality_contract(
+        out,
+        {
+            "velocity_ratio_y_range": [True, True],
+            "min_velocity_ratio_in_range_share": 0.5,
+        },
+    )
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert results[0].value is None
+    assert "invalid velocity ratio range" in results[0].description
+
+
 def test_label_plan_combines_failure_buckets(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
-    (out / "detections_per_frame.csv").write_text("frame_index,n_detections\n0,0\n1,10\n2,5\n", encoding="utf-8")
-    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,0,0.9\n1,8,0.1\n2,1,0.8\n", encoding="utf-8")
+    (out / "detections_per_frame.csv").write_text(
+        "frame_index,n_detections\n0,0\n1,10\n2,5\n", encoding="utf-8"
+    )
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,0,0.9\n1,8,0.1\n2,1,0.8\n", encoding="utf-8"
+    )
 
     rows = pri.suggest_label_frames(out, frame_count=3)
 
@@ -135,12 +283,18 @@ def test_write_label_plan_can_write_box_template(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
     (out / "metadata.json").write_text(json.dumps({"n_images": 3}), encoding="utf-8")
-    (out / "detections_per_frame.csv").write_text("frame_index,n_detections\n0,0\n1,12\n2,3\n", encoding="utf-8")
-    (out / "phase_estimates.csv").write_text("frame_index,correction_px,score\n0,0,0.9\n1,8,0.1\n2,1,0.8\n", encoding="utf-8")
+    (out / "detections_per_frame.csv").write_text(
+        "frame_index,n_detections\n0,0\n1,12\n2,3\n", encoding="utf-8"
+    )
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,0,0.9\n1,8,0.1\n2,1,0.8\n", encoding="utf-8"
+    )
 
     plan_path = tmp_path / "label_plan.csv"
     template_path = tmp_path / "validation_boxes.csv"
-    plan_rows = pri.write_label_plan(out, output_path=plan_path, frame_count=3, empty_frame_count=1)
+    plan_rows = pri.write_label_plan(
+        out, output_path=plan_path, frame_count=3, empty_frame_count=1
+    )
     template_rows = pri.write_label_template(plan_rows, output_path=template_path)
 
     assert plan_path.is_file()
@@ -148,8 +302,72 @@ def test_write_label_plan_can_write_box_template(tmp_path):
     assert len(template_rows) == len(plan_rows)
     loaded = list(csv.DictReader(template_path.open(newline="", encoding="utf-8")))
     assert loaded
-    assert {"frame_index", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"}.issubset(loaded[0])
+    assert {
+        "frame_index",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+    }.issubset(loaded[0])
     assert any(row["annotation_role"] == "empty_check" for row in loaded)
+
+
+def test_flux_summary_rejects_nonfinite_frame_rate(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+
+    with pytest.raises(ValueError, match="frame_rate_hz"):
+        pri.flux_summary(out, frame_rate_hz=float("nan"))
+
+
+def test_detection_confidence_penalizes_invalid_bbox_extent(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,area_px,peak_signal,mean_signal,bbox_top,bbox_left,bbox_bottom,bbox_right\n"
+        "0,10,10,10,10,0,0,10\n",
+        encoding="utf-8",
+    )
+
+    rows = pri.detection_confidence_rows(out)
+
+    assert rows[0]["shape_score"] == 0.0
+    assert rows[0]["detection_confidence"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"frame_count": 2.5}, "frame_count"),
+        ({"top_n": 2.5}, "top_n"),
+    ],
+)
+def test_adaptive_map_frame_plan_rejects_fractional_integer_config(
+    tmp_path, kwargs, message
+):
+    out = tmp_path / "outputs"
+    out.mkdir()
+
+    with pytest.raises(ValueError, match=message):
+        pri.adaptive_map_frame_plan(out, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"frame_count": 2.5}, "frame_count"),
+        ({"frame_count": 2, "empty_frame_count": 0.5}, "empty_frame_count"),
+        ({"frame_count": 2, "min_gap_frames": 1.5}, "min_gap_frames"),
+    ],
+)
+def test_suggest_label_frames_rejects_fractional_integer_config(
+    tmp_path, kwargs, message
+):
+    out = tmp_path / "outputs"
+    out.mkdir()
+
+    with pytest.raises(ValueError, match=message):
+        pri.suggest_label_frames(out, **kwargs)
 
 
 def test_color_residual_score_returns_spatial_score():
@@ -176,6 +394,28 @@ def test_seam_discontinuity_window_changes_current_seam_score():
     wider = pri.seam_discontinuity_profile(belt, window_px=2)
 
     assert narrow["current_mean_abs_jump_gray"] != wider["current_mean_abs_jump_gray"]
+
+
+def test_seam_discontinuity_rejects_nonfinite_map():
+    belt = np.array([[0.0], [float("nan")]])
+
+    with pytest.raises(ValueError, match="finite"):
+        pri.seam_discontinuity_profile(belt, window_px=1)
+
+
+def test_seam_discontinuity_rejects_fractional_window():
+    belt = np.array([[0.0], [1.0]])
+
+    with pytest.raises(ValueError, match="window_px"):
+        pri.seam_discontinuity_profile(belt, window_px=1.5)
+
+
+def test_worst_frame_tables_rejects_negative_top_n(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+
+    with pytest.raises(ValueError, match="top_n"):
+        pri.worst_frame_tables(out, top_n=-1)
 
 
 def test_warp_perspective_identity():
