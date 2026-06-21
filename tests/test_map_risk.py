@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from beltmap.map_risk import compute_belt_map_risk_maps, score_map_risk_detections
+from beltmap.map_risk import (
+    BeltMapRiskMaps,
+    compute_belt_map_risk_maps,
+    load_belt_map_support,
+    score_map_risk_detections,
+)
 from beltmap.tracking import ParticleDetection
 
 
@@ -35,6 +40,36 @@ def test_compute_belt_map_risk_maps_marks_interpolated_and_low_support_pixels():
 def test_compute_belt_map_risk_maps_rejects_boolean_min_support():
     with pytest.raises(ValueError, match="min_support must be finite"):
         compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32), min_support=True)
+
+
+@pytest.mark.parametrize("min_support", ["1.0", float("nan"), -1.0])
+def test_compute_belt_map_risk_maps_rejects_invalid_min_support(min_support):
+    with pytest.raises(ValueError, match="min_support"):
+        compute_belt_map_risk_maps(
+            np.ones((2, 2), dtype=np.float32),
+            min_support=min_support,
+        )
+
+
+@pytest.mark.parametrize(
+    "support",
+    [
+        np.ones((2, 2), dtype=bool),
+        np.asarray([[1.0, -0.1]], dtype=np.float32),
+        np.asarray([["1.0", "2.0"]], dtype=object),
+    ],
+)
+def test_compute_belt_map_risk_maps_rejects_invalid_support_arrays(support):
+    with pytest.raises(ValueError, match="support"):
+        compute_belt_map_risk_maps(support)
+
+
+def test_load_belt_map_support_rejects_invalid_support_file(tmp_path):
+    path = tmp_path / "belt_map_support.npy"
+    np.save(path, np.asarray([[1.0, -0.1]], dtype=np.float32))
+
+    with pytest.raises(ValueError, match="REUSE_MAP_SUPPORT_PATH"):
+        load_belt_map_support(path, map_shape=(1, 2))
 
 
 def test_score_map_risk_detections_adds_bbox_support_stats_and_rejects():
@@ -88,7 +123,10 @@ def test_score_map_risk_detections_rejects_boolean_thresholds():
         )
 
 
-@pytest.mark.parametrize("frame_shape", [(1.5, 2), (1, float("nan")), (0, 2), (True, 2)])
+@pytest.mark.parametrize(
+    "frame_shape",
+    [(1.5, 2), (1, float("nan")), (0, 2), (True, 2), ("1", 2)],
+)
 def test_score_map_risk_detections_rejects_invalid_frame_shape(frame_shape):
     maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
 
@@ -97,6 +135,37 @@ def test_score_map_risk_detections_rejects_invalid_frame_shape(frame_shape):
             [_detection(bbox_left=0, bbox_right=1)],
             phase_px=0.0,
             frame_shape=frame_shape,
+            maps=maps,
+        )
+
+
+@pytest.mark.parametrize("phase_px", [True, "0.0", float("nan")])
+def test_score_map_risk_detections_rejects_invalid_phase(phase_px):
+    maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
+
+    with pytest.raises(ValueError, match="phase_px"):
+        score_map_risk_detections(
+            [_detection(bbox_left=0, bbox_right=1)],
+            phase_px=phase_px,
+            frame_shape=(1, 2),
+            maps=maps,
+        )
+
+
+def test_score_map_risk_detections_rejects_malformed_risk_maps():
+    maps = BeltMapRiskMaps(
+        support=np.ones((2, 2), dtype=np.float32),
+        observed_mask=np.ones((2, 2), dtype=bool),
+        interpolated_mask=np.ones((2, 2), dtype=np.float32),
+        low_support_mask=np.zeros((2, 2), dtype=bool),
+        risk=np.ones((2, 2), dtype=np.float32),
+    )
+
+    with pytest.raises(ValueError, match="interpolated_mask"):
+        score_map_risk_detections(
+            [_detection(bbox_left=0, bbox_right=1)],
+            phase_px=0.0,
+            frame_shape=(1, 2),
             maps=maps,
         )
 

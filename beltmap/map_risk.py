@@ -41,16 +41,12 @@ class MapRiskDetectionScore:
 def load_belt_map_support(path: Path, *, map_shape: tuple[int, int]) -> np.ndarray:
     """Load a previously written ``belt_map_support.npy`` with shape checks."""
 
-    support = np.load(path)
-    if support.ndim != 2:
-        raise ValueError("REUSE_MAP_SUPPORT_PATH must point to a 2-D support .npy")
+    support = _support_array(np.load(path), "REUSE_MAP_SUPPORT_PATH")
     if support.shape != map_shape:
         raise ValueError(
             "reused belt-map support shape does not match belt_map.npy: "
             f"{support.shape} != {map_shape}"
         )
-    support = np.asarray(support, dtype=np.float32)
-    support = np.where(np.isfinite(support) & (support > 0.0), support, 0.0)
     return support.astype(np.float32, copy=False)
 
 
@@ -67,9 +63,7 @@ def compute_belt_map_risk_maps(
     decreases linearly to 0 once ``support >= min_support``.
     """
 
-    support_arr = np.asarray(support, dtype=np.float32)
-    if support_arr.ndim != 2:
-        raise ValueError("support must be a 2-D array")
+    support_arr = _support_array(support, "support")
     min_support_value = _finite_float(min_support, "min_support")
     if min_support_value < 0.0:
         raise ValueError("min_support must be finite and non-negative")
@@ -125,6 +119,7 @@ def score_map_risk_detections(
         reject_max_low_support_fraction,
     )
     _validate_risk_map_shapes(maps)
+    phase_px = _finite_float(phase_px, "phase_px")
     height, width = _validate_frame_shape(frame_shape)
     if maps.support.shape[1] != width:
         raise ValueError(
@@ -228,11 +223,18 @@ def _finite_mean_clipped_fraction(values: np.ndarray) -> float | None:
 
 
 def _validate_risk_map_shapes(maps: BeltMapRiskMaps) -> None:
-    shape = maps.support.shape
-    for name in ("risk", "observed_mask", "interpolated_mask", "low_support_mask"):
+    support = _support_array(maps.support, "support")
+    shape = support.shape
+    risk = _probability_array(maps.risk, "risk")
+    if risk.shape != shape:
+        raise ValueError(f"risk shape must match support shape: {risk.shape} != {shape}")
+    for name in ("observed_mask", "interpolated_mask", "low_support_mask"):
         arr = getattr(maps, name)
-        if arr.shape != shape:
+        mask = np.asarray(arr)
+        if mask.shape != shape:
             raise ValueError(f"{name} shape must match support shape: {arr.shape} != {shape}")
+        if mask.dtype != np.bool_:
+            raise ValueError(f"{name} must be a boolean array")
 
 
 def _validate_frame_shape(frame_shape: tuple[int, int]) -> tuple[int, int]:
@@ -251,8 +253,8 @@ def _positive_integer_dimension(value: int, name: str) -> int:
 
 
 def _integer_coordinate(value: int, name: str) -> int:
-    parsed = float(value)
-    if not np.isfinite(parsed) or not parsed.is_integer():
+    parsed = _finite_float(value, name)
+    if not parsed.is_integer():
         raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
 
@@ -264,7 +266,7 @@ def _validate_probability_threshold(name: str, value: float) -> None:
 
 
 def _finite_float(value: object, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
+    if isinstance(value, (bool, np.bool_, str)):
         raise ValueError(f"{name} must be finite")
     try:
         parsed = float(value)
@@ -273,3 +275,24 @@ def _finite_float(value: object, name: str) -> float:
     if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
     return parsed
+
+
+def _support_array(value: object, name: str) -> np.ndarray:
+    raw = np.asarray(value)
+    if raw.dtype == np.bool_ or not np.issubdtype(raw.dtype, np.number):
+        raise ValueError(f"{name} must contain finite non-negative support values")
+    support = raw.astype(np.float32, copy=False)
+    if support.ndim != 2:
+        raise ValueError(f"{name} must be a 2-D array")
+    if not np.all(np.isfinite(support)) or np.any(support < 0.0):
+        raise ValueError(f"{name} must contain finite non-negative support values")
+    return support
+
+
+def _probability_array(value: object, name: str) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError(f"{name} must be a 2-D array")
+    if not np.all(np.isfinite(arr)) or np.any((arr < 0.0) | (arr > 1.0)):
+        raise ValueError(f"{name} must contain finite values in [0, 1]")
+    return arr
