@@ -270,6 +270,125 @@ def test_tracklet_truth_rejects_unreviewed_json_scaffold(tmp_path):
         load_tracklet_truth(label_path)
 
 
+def test_tracklet_truth_rejects_boolean_bbox_values(tmp_path):
+    label_path = tmp_path / "tracklets.json"
+    label_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "tracklets": [
+                    {
+                        "tracklet_id": "p01",
+                        "boxes": [
+                            {
+                                "frame_index": 10,
+                                "top": True,
+                                "left": 2,
+                                "bottom": 5,
+                                "right": 8,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid bbox"):
+        load_tracklet_truth(label_path)
+
+
+def test_tracklet_truth_rejects_bbox_without_valid_frame(tmp_path):
+    label_path = tmp_path / "tracklets.json"
+    label_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "tracklets": [
+                    {
+                        "tracklet_id": "p01",
+                        "boxes": [
+                            {
+                                "frame_index": True,
+                                "top": 1,
+                                "left": 2,
+                                "bottom": 5,
+                                "right": 8,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="valid frame"):
+        load_tracklet_truth(label_path)
+
+
+def test_tracklet_truth_rejects_invalid_top_level_bbox(tmp_path):
+    label_path = tmp_path / "tracklets.json"
+    label_path.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "tracklet_id": "p01",
+                "frame_index": 10,
+                "top": 5,
+                "left": 2,
+                "bottom": 1,
+                "right": 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid bbox"):
+        load_tracklet_truth(label_path)
+
+
+def test_tracklet_predictions_reject_bbox_without_valid_frame(tmp_path):
+    prediction_path = tmp_path / "filtered_tracks.csv"
+    write_csv(
+        prediction_path,
+        [
+            {
+                "track_id": "p01",
+                "frame_index": True,
+                "bbox_top": 1,
+                "bbox_left": 2,
+                "bbox_bottom": 5,
+                "bbox_right": 8,
+            }
+        ],
+        [
+            "track_id",
+            "frame_index",
+            "bbox_top",
+            "bbox_left",
+            "bbox_bottom",
+            "bbox_right",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="valid frame"):
+        load_tracklet_predictions(prediction_path)
+
+
+def test_tracklet_evaluation_rejects_boolean_iou_threshold(tmp_path):
+    output_dir, label_path = make_tracklet_case(tmp_path)
+    truth = load_tracklet_truth(label_path)
+    predictions = load_tracklet_predictions(output_dir / "filtered_tracks.csv")
+
+    with pytest.raises(ValueError, match="iou_threshold"):
+        evaluate_tracklets(truth, predictions, iou_threshold=True)
+
+
 def test_tracklet_truth_loader_counts_reviewed_empty_frame_metadata(tmp_path):
     label_path = tmp_path / "tracklets.json"
     label_path.write_text(
