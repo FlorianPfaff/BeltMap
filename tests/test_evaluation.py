@@ -192,6 +192,24 @@ def test_summarize_output_dir_rejects_boolean_metadata_and_progress(tmp_path: Pa
     assert summary["belt_map_contributed_fraction"] == 0.75
 
 
+def test_summarize_output_dir_ignores_boolean_and_negative_metadata_counts(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "invalid_counts"
+    write_run(output_dir)
+    metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_images"] = True
+    metadata["n_detections"] = -4
+    metadata["n_tracks"] = True
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    summary = summarize_output_dir(RunSpec(name="invalid_counts", output_dir=output_dir))
+
+    assert summary["n_images"] == 3
+    assert summary["n_detections"] == 4
+    assert summary["n_tracks"] is None
+
+
 def test_evaluation_rejects_non_object_json(tmp_path: Path) -> None:
     path = tmp_path / "metadata.json"
     path.write_text("[]", encoding="utf-8")
@@ -257,6 +275,32 @@ def test_summarize_output_dir_rejects_overfull_map_fractions(tmp_path: Path) -> 
     summary = summarize_output_dir(RunSpec(name="overfull", output_dir=output_dir))
 
     assert summary["belt_map_observed_fraction"] is None
+
+
+def test_summarize_output_dir_rejects_impossible_progress_fractions(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "invalid_progress"
+    write_run(output_dir)
+    (output_dir / "progress.jsonl").write_text(
+        json.dumps(
+            {
+                "stage": "belt_map",
+                "observed_pixels": 120,
+                "total_pixels": 100,
+                "masked_pixels": -5,
+                "contributed_pixels": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = summarize_output_dir(RunSpec(name="invalid_progress", output_dir=output_dir))
+
+    assert summary["belt_map_observed_fraction"] is None
+    assert summary["belt_map_masked_fraction"] is None
+    assert summary["belt_map_contributed_fraction"] is None
 
 
 def test_row_count_if_present_requires_regular_file(tmp_path: Path) -> None:
