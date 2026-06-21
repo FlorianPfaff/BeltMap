@@ -489,16 +489,16 @@ jobs:
             epochs="$EPOCHS" \
             imgsz="$IMGSZ" \
             batch="$BATCH" \
-            project=outputs/yolo11_beltmap_pilot/yolo_runs \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
             name=raw_train \
             exist_ok=True
           poetry run yolo detect val \
-            model=outputs/yolo11_beltmap_pilot/yolo_runs/raw_train/weights/best.pt \
+            model="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs/raw_train/weights/best.pt" \
             data=outputs/yolo11_beltmap_pilot/datasets/raw.yaml \
             split=test \
             imgsz="$IMGSZ" \
             batch="$BATCH" \
-            project=outputs/yolo11_beltmap_pilot/yolo_runs \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
             name=raw_test \
             exist_ok=True
 
@@ -521,16 +521,16 @@ jobs:
             epochs="$EPOCHS" \
             imgsz="$IMGSZ" \
             batch="$BATCH" \
-            project=outputs/yolo11_beltmap_pilot/yolo_runs \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
             name=residual_train \
             exist_ok=True
           poetry run yolo detect val \
-            model=outputs/yolo11_beltmap_pilot/yolo_runs/residual_train/weights/best.pt \
+            model="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs/residual_train/weights/best.pt" \
             data=outputs/yolo11_beltmap_pilot/datasets/residual.yaml \
             split=test \
             imgsz="$IMGSZ" \
             batch="$BATCH" \
-            project=outputs/yolo11_beltmap_pilot/yolo_runs \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
             name=residual_test \
             exist_ok=True
 
