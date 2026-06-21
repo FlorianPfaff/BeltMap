@@ -1,6 +1,7 @@
 import csv
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -8,7 +9,9 @@ from PIL import Image
 from scripts import filter_run_by_detection_overlap as overlap_filter
 
 
-def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str] | None = None) -> None:
+def write_csv(
+    path: Path, rows: list[dict[str, object]], fieldnames: list[str] | None = None
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = fieldnames or list(rows[0])
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -19,7 +22,9 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str] |
 
 def make_run(output_dir: Path, detections: list[dict[str, object]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    n_images = max(int(row["frame_index"]) for row in detections) + 1 if detections else 0
+    n_images = (
+        max(int(row["frame_index"]) for row in detections) + 1 if detections else 0
+    )
     (output_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -54,7 +59,10 @@ def make_run(output_dir: Path, detections: list[dict[str, object]]) -> None:
     }
     write_csv(
         output_dir / "detections_per_frame.csv",
-        [{"frame_index": index, "n_detections": counts[index]} for index in range(n_images)],
+        [
+            {"frame_index": index, "n_detections": counts[index]}
+            for index in range(n_images)
+        ],
     )
     Image.new("L", (16, 16), 96).save(output_dir / "residual_frame_000000.png")
 
@@ -87,6 +95,20 @@ def detection(
     }
 
 
+def make_args(tmp_path: Path, *extra: str):
+    return overlap_filter.build_parser().parse_args(
+        [
+            "--candidate-run",
+            str(tmp_path / "candidate"),
+            "--confirming-run",
+            str(tmp_path / "confirming"),
+            "--output-dir",
+            str(tmp_path / "output"),
+            *extra,
+        ]
+    )
+
+
 def test_filter_run_keeps_only_detections_confirmed_by_overlap(tmp_path):
     candidate = tmp_path / "candidate"
     confirming = tmp_path / "confirming"
@@ -111,8 +133,14 @@ def test_filter_run_keeps_only_detections_confirmed_by_overlap(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
-    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
+    rejected = list(
+        csv.DictReader(
+            (output / "rejected_detections.csv").open(newline="", encoding="utf-8")
+        )
+    )
     assert [row["label"] for row in kept] == ["1"]
     assert [row["label"] for row in rejected] == ["2"]
     assert kept[0]["confirmation_label"] == "1"
@@ -120,6 +148,132 @@ def test_filter_run_keeps_only_detections_confirmed_by_overlap(tmp_path):
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["n_detections"] == 1
     assert metadata["confirmation"]["rejected_detections"] == 1
+
+
+def test_parse_detection_expands_fractional_bbox_coordinates_for_tracking():
+    row = detection(1, x=10, y=10)
+    row["bbox_top"] = "8.5"
+    row["bbox_left"] = "8.5"
+    row["bbox_bottom"] = "13.5"
+    row["bbox_right"] = "13.5"
+
+    parsed = overlap_filter.parse_detection(row)
+
+    assert parsed.bbox_top == 8
+    assert parsed.bbox_left == 8
+    assert parsed.bbox_bottom == 14
+    assert parsed.bbox_right == 14
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("frame_index", "-1", "frame_index"),
+        ("label", "0", "label"),
+        ("area_px", "0", "area_px"),
+    ],
+)
+def test_parse_detection_rejects_invalid_integer_fields(field, value, message):
+    row = detection(1, x=10, y=10)
+    row[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        overlap_filter.parse_detection(row)
+
+
+@pytest.mark.parametrize("field", ["x", "y", "peak_signal"])
+def test_parse_detection_rejects_nonfinite_float_fields(field):
+    row = detection(1, x=10, y=10)
+    row[field] = "nan"
+
+    with pytest.raises(ValueError, match=field):
+        overlap_filter.parse_detection(row)
+
+
+def test_expanded_bbox_rejects_degenerate_boxes():
+    row = detection(1, x=10, y=10)
+    row["bbox_bottom"] = row["bbox_top"]
+
+    with pytest.raises(ValueError, match="bbox"):
+        overlap_filter.expanded_bbox(row, margin=0.0)
+
+
+def test_center_distance_rejects_nonfinite_coordinates():
+    first = detection(1, x=10, y=10)
+    second = detection(2, x=12, y=12)
+    second["x"] = "nan"
+
+    with pytest.raises(ValueError, match="x"):
+        overlap_filter.center_distance(first, second)
+
+
+def test_group_by_frame_rejects_negative_frame_indices():
+    row = detection(1, x=10, y=10)
+    row["frame_index"] = "-1"
+
+    with pytest.raises(ValueError, match="frame_index"):
+        overlap_filter.group_by_frame([row])
+
+
+def test_track_memberships_rejects_negative_track_ids(tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    row = {"track_id": "-1", "track_detection_index": 0, **detection(1, x=10, y=10)}
+    write_csv(
+        candidate / "tracks.csv",
+        [row],
+        ["track_id", "track_detection_index", *overlap_filter.DETECTION_FIELDS],
+    )
+
+    with pytest.raises(ValueError, match="track_id"):
+        overlap_filter.track_memberships(candidate)
+
+
+def test_infer_n_images_rejects_fractional_metadata(tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "metadata.json").write_text(
+        json.dumps({"n_images": 1.5}), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="n_images"):
+        overlap_filter.infer_n_images(candidate, [])
+
+
+def test_infer_belt_velocity_rejects_nonfinite_metadata():
+    args = SimpleNamespace(belt_velocity_px_per_frame=None)
+
+    with pytest.raises(ValueError, match="belt_velocity"):
+        overlap_filter.infer_belt_velocity(
+            args, {"belt_velocity_px_per_frame": float("nan")}
+        )
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--tracking-max-frame-gap", "nan"], "tracking-max-frame-gap"),
+        (["--belt-velocity-px-per-frame", "nan"], "belt-velocity"),
+        (
+            [
+                "--track-filter-min-velocity-ratio-y",
+                "2",
+                "--track-filter-max-velocity-ratio-y",
+                "1",
+            ],
+            "minimum velocity ratio",
+        ),
+        (
+            ["--track-filter-max-abs-x-velocity-px-per-frame", "nan"],
+            "max-abs-x-velocity",
+        ),
+    ],
+)
+def test_validate_args_rejects_invalid_tracking_config(tmp_path, extra, message):
+    args = make_args(tmp_path, *extra)
+
+    with pytest.raises(ValueError, match=message):
+        overlap_filter.validate_args(args)
 
 
 def test_filter_run_rejects_fractional_candidate_frame_indices(tmp_path, capsys):
@@ -182,8 +336,14 @@ def test_filter_run_can_reject_distant_iou_confirmation(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
-    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
+    rejected = list(
+        csv.DictReader(
+            (output / "rejected_detections.csv").open(newline="", encoding="utf-8")
+        )
+    )
     assert kept == []
     assert [row["label"] for row in rejected] == ["1"]
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
@@ -239,7 +399,9 @@ def test_filter_run_can_rescue_unmatched_detections_from_confirmed_tracks(tmp_pa
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
     assert len(kept) == 3
     assert kept[-1]["confirmation_rescued_by_track"] == "True"
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
@@ -278,7 +440,9 @@ def test_filter_run_can_confirm_against_filtered_tracks(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
     assert [row["label"] for row in kept] == ["1"]
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["confirmation"]["confirming_detections_source"] == "filtered_tracks"
@@ -331,8 +495,14 @@ def test_filter_run_can_limit_track_rescue_to_nearby_confirmed_detections(tmp_pa
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
-    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
+    rejected = list(
+        csv.DictReader(
+            (output / "rejected_detections.csv").open(newline="", encoding="utf-8")
+        )
+    )
     assert [row["frame_index"] for row in kept] == ["0", "1"]
     assert [row["frame_index"] for row in rejected] == ["2", "3"]
     assert kept[-1]["confirmation_rescued_by_track"] == "True"
@@ -386,8 +556,14 @@ def test_filter_run_can_gate_track_rescued_detections_by_quality(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
-    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
+    rejected = list(
+        csv.DictReader(
+            (output / "rejected_detections.csv").open(newline="", encoding="utf-8")
+        )
+    )
     assert [row["frame_index"] for row in kept] == ["0", "2"]
     assert [row["frame_index"] for row in rejected] == ["1"]
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
@@ -449,7 +625,9 @@ def test_filter_run_can_require_direct_confirmation_in_final_tracks(tmp_path):
     assert metadata["n_velocity_accepted_before_confirmation_filter"] == 1
     assert metadata["n_confirmation_filtered_velocity_estimates"] == 1
     assert metadata["n_filtered_velocity_estimates"] == 0
-    score_rows = list(csv.DictReader((output / "track_scores.csv").open(newline="", encoding="utf-8")))
+    score_rows = list(
+        csv.DictReader((output / "track_scores.csv").open(newline="", encoding="utf-8"))
+    )
     assert score_rows[0]["direct_confirmed_detections"] == "1"
     assert score_rows[0]["passes_confirmation"] == "False"
     assert score_rows[0]["accepted"] == "False"
@@ -481,8 +659,14 @@ def test_filter_run_can_use_one_to_one_confirmation(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
-    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
+    rejected = list(
+        csv.DictReader(
+            (output / "rejected_detections.csv").open(newline="", encoding="utf-8")
+        )
+    )
     assert [row["label"] for row in kept] == ["1"]
     assert [row["label"] for row in rejected] == ["2"]
 
@@ -512,7 +696,9 @@ def test_filter_run_allows_many_to_one_confirmation_by_default(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
     assert [row["label"] for row in kept] == ["1", "2"]
 
 
@@ -553,8 +739,14 @@ def test_filter_run_can_suppress_duplicate_confirmed_detections(tmp_path):
     )
 
     assert exit_code == 0
-    kept = list(csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8")))
-    rejected = list(csv.DictReader((output / "rejected_detections.csv").open(newline="", encoding="utf-8")))
+    kept = list(
+        csv.DictReader((output / "detections.csv").open(newline="", encoding="utf-8"))
+    )
+    rejected = list(
+        csv.DictReader(
+            (output / "rejected_detections.csv").open(newline="", encoding="utf-8")
+        )
+    )
     assert [row["label"] for row in kept] == ["2"]
     assert [row["label"] for row in rejected] == ["1"]
     assert rejected[0]["confirmation_duplicate_suppressed"] == "True"
