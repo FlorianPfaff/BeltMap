@@ -83,6 +83,11 @@ on:
         required: false
         type: string
         default: "beltmap-brick20-posmask-iter2-eval500"
+      build_beltmap_if_missing:
+        description: "Build the default Brick 20 g/s posmask_iter2 BeltMap residual source when no artifact/output directory is available."
+        required: true
+        type: boolean
+        default: true
       residual_clip:
         description: "Residual display clip as low,high normalized residual."
         required: true
@@ -192,6 +197,191 @@ jobs:
             --name "$BELTMAP_ARTIFACT_NAME" \
             --dir "$BELTMAP_OUTPUT_DIR"
           test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
+
+      - name: Build default Brick 20g BeltMap residual source if missing
+        if: ${{ inputs.include_residual && inputs.build_beltmap_if_missing && !inputs.smoke_only }}
+        env:
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          DATASET_NAME: ${{ inputs.dataset_name }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+        run: |
+          set -euo pipefail
+          if [ -f "$BELTMAP_OUTPUT_DIR/belt_map.npy" ] && [ -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv" ]; then
+            echo "Using existing BeltMap residual source at $BELTMAP_OUTPUT_DIR"
+            exit 0
+          fi
+          if [ "$DATASET_NAME" != "images_BrickandSandLimeBrick_50vs50_20gpers" ]; then
+            echo "No BeltMap source was found, and the built-in fallback is only configured for Brick 20 g/s 50:50." >&2
+            echo "Provide beltmap_run_id/beltmap_artifact_name or beltmap_output_dir for dataset $DATASET_NAME." >&2
+            exit 1
+          fi
+          if [ "$BELT_REGION" != "0,220,1330,1800" ]; then
+            echo "No BeltMap source was found, and the built-in fallback expects belt_region=0,220,1330,1800." >&2
+            echo "Provide a matching BeltMap artifact/output directory for belt_region=$BELT_REGION." >&2
+            exit 1
+          fi
+          if [ "$MAX_FRAMES" != "500" ]; then
+            echo "No BeltMap source was found, and the built-in fallback expects max_frames=500." >&2
+            echo "Provide a matching BeltMap artifact/output directory for max_frames=$MAX_FRAMES." >&2
+            exit 1
+          fi
+
+          mkdir -p "$BELTMAP_OUTPUT_DIR" outputs
+          cat > outputs/brick20g_posmask_iter2_eval500.toml <<EOF
+          [paths]
+          image_dir = "data/images"
+          output_dir = "$BELTMAP_OUTPUT_DIR"
+
+          [frames]
+          max_frames = 500
+          stride = 1
+
+          [belt]
+          region = [0, 220, 1330, 1800]
+          velocity_px_per_frame = 59.3
+          velocity_frame_unit = "source_frame"
+          period_px = 14723
+
+          [detection]
+          threshold = 12.0
+          mode = "positive"
+          low_threshold = 0.0
+          min_area_px = 50
+          max_area_px = 0
+          min_bbox_width_px = 3
+          min_bbox_height_px = 3
+          max_bbox_aspect_ratio = 4.0
+          min_bbox_extent = 0.15
+          split_merged_components = true
+          split_min_projection_gap_px = 1
+          split_min_component_area_px = 4
+          local_illumination_correction = false
+
+          [residual]
+          noise_radius_px = 15
+          clip_sigma = 5.0
+          min_noise = 1e-6
+          noise_exclusion_sigma = 4.0
+          noise_exclusion_radius_px = 2
+
+          [photometric]
+          enabled = true
+          trim_fraction = 0.05
+          max_iterations = 3
+          min_pixels = 10000
+
+          [tracking]
+          min_track_length = 3
+          max_frame_gap = 2.0
+          velocity_fit_method = "theil_sen"
+
+          [track_filter]
+          min_length = 5
+          min_velocity_ratio_y = 0.0
+          max_velocity_ratio_y = 1.1
+          max_abs_x_velocity_px_per_frame = 0.0
+
+          [map]
+          sample_frames = 500
+          sampling_strategy = "adaptive_phase_coverage"
+          adaptive_candidate_frames = 3000
+          reconstruction_trim_fraction = 0.0
+          fractional_splat = true
+          frame_median_offset_correction = true
+          local_illumination_correction = false
+          mask_iterations = 4
+          aggregation = "huber"
+          robust_iterations = 1
+          robust_huber_delta = 3.0
+          robust_min_scale = 1.0
+
+          [map_particle_mask]
+          mode = "positive"
+          threshold = 4.0
+          grow_threshold = 0.0
+          dilation_px = 8
+          margin_px = 16
+          min_area_px = 8
+
+          [static_noise]
+          sample_frames = 500
+          min_scale = 0.5
+          mask_threshold = 4.0
+          mask_margin_px = 16
+          mask_min_area_px = 4
+
+          [static_background]
+          sample_frames = 500
+          mask_threshold = 4.0
+          mask_margin_px = 16
+          mask_min_area_px = 4
+
+          [recurrent_artifact]
+          min_revolutions = 3
+          margin_px = 4
+          max_overlap_fraction = 0.3
+          mode = "soft"
+          soft_penalty_weight = 1.0
+
+          [registration]
+          search_radius_px = 12.0
+          search_step_px = 0.5
+          subpixel_refinement = true
+          robust_normalization = true
+
+          [phase]
+          estimation_mode = "registration"
+
+          [phase_refinement]
+          iterations = 1
+          min_score = 0.0
+          max_abs_correction_px = 4.0
+          smoothing_window_frames = 25
+
+          [phase_drift]
+          enabled = true
+          smoothing_alpha = 0.15
+          min_score = 0.05
+          max_abs_residual_correction_px = 4.0
+          max_abs_px = 8.0
+
+          [phase_smoothing]
+          window_frames = 25
+          min_score = 0.05
+          max_abs_correction_px = 4.0
+          min_support = 3
+
+          [progress]
+          interval_frames = 25
+          partial_output_interval_frames = 250
+
+          [debug]
+          residual_preview_frames = 3
+          residual_preview_interval_frames = 0
+          EOF
+
+          poetry run beltmap-apply --config outputs/brick20g_posmask_iter2_eval500.toml --print-config
+          test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
+          test -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv"
+
+      - name: Upload BeltMap residual source artifact
+        if: ${{ inputs.include_residual && !inputs.smoke_only }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.beltmap_artifact_name }}
+          path: |
+            ${{ inputs.beltmap_output_dir }}/belt_map.npy
+            ${{ inputs.beltmap_output_dir }}/phase_estimates.csv
+            ${{ inputs.beltmap_output_dir }}/detections.csv
+            ${{ inputs.beltmap_output_dir }}/detections_per_frame.csv
+            ${{ inputs.beltmap_output_dir }}/metadata.json
+            ${{ inputs.beltmap_output_dir }}/config_resolved.json
+            ${{ inputs.beltmap_output_dir }}/static_noise.npy
+            ${{ inputs.beltmap_output_dir }}/static_background.npy
+            ${{ inputs.beltmap_output_dir }}/recurrent_artifact_map.npy
+          if-no-files-found: error
+          retention-days: 21
 
       - name: Build YOLO raw/residual datasets
         env:
