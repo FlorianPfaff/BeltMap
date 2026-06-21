@@ -489,14 +489,17 @@ def _mark_detection_bbox(
     image_height: int | None,
 ) -> None:
     map_height, map_width = _validate_map_shape(mask.shape)
-    left = max(0, int(detection.bbox_left) - margin_px)
-    right = min(map_width, int(detection.bbox_right) + margin_px)
+    left = max(0, _integer_dimension(detection.bbox_left, "bbox_left") - margin_px)
+    right = min(
+        map_width,
+        _integer_dimension(detection.bbox_right, "bbox_right") + margin_px,
+    )
     if right <= left:
         return
     rows = _belt_rows_for_image_rows(
         range(
-            int(detection.bbox_top) - margin_px,
-            int(detection.bbox_bottom) + margin_px,
+            _integer_dimension(detection.bbox_top, "bbox_top") - margin_px,
+            _integer_dimension(detection.bbox_bottom, "bbox_bottom") + margin_px,
         ),
         phase_px=phase_px,
         map_height=map_height,
@@ -574,12 +577,14 @@ def _artifact_patch(
 ) -> NDArray[np.bool_] | NDArray[np.floating]:
     artifact = np.asarray(artifact_map)
     map_height, map_width = _validate_map_shape(artifact.shape)
-    left = max(0, int(detection.bbox_left))
-    right = min(map_width, int(detection.bbox_right))
-    if right <= left or detection.bbox_bottom <= detection.bbox_top:
+    top = _integer_dimension(detection.bbox_top, "bbox_top")
+    bottom = _integer_dimension(detection.bbox_bottom, "bbox_bottom")
+    left = max(0, _integer_dimension(detection.bbox_left, "bbox_left"))
+    right = min(map_width, _integer_dimension(detection.bbox_right, "bbox_right"))
+    if right <= left or bottom <= top:
         return artifact[:0, :0]
     rows = _belt_rows_for_image_rows(
-        range(int(detection.bbox_top), int(detection.bbox_bottom)),
+        range(top, bottom),
         phase_px=phase_px,
         map_height=map_height,
     )
@@ -655,7 +660,9 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         not np.isfinite(config.candidate_max_peak_signal)
         or config.candidate_max_peak_signal < 0
     ):
-        raise ValueError("candidate_max_peak_signal must be finite and non-negative when set")
+        raise ValueError(
+            "candidate_max_peak_signal must be finite and non-negative when set"
+        )
     reject_max_area_px = _optional_positive_integer_config_value(
         config.reject_max_area_px,
         "reject_max_area_px",
@@ -666,7 +673,9 @@ def _validate_filter_config(config: RecurrentArtifactConfig) -> None:
         not np.isfinite(config.reject_max_peak_signal)
         or config.reject_max_peak_signal < 0
     ):
-        raise ValueError("reject_max_peak_signal must be finite and non-negative when set")
+        raise ValueError(
+            "reject_max_peak_signal must be finite and non-negative when set"
+        )
 
 
 def _validate_phase_px_by_frame(
@@ -755,7 +764,14 @@ def _validate_frame_shape(
 
 
 def _positive_integer_dimension(value: int, name: str) -> int:
-    parsed = float(value)
-    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+    parsed = _integer_dimension(value, name)
+    if parsed < 1:
         raise ValueError(f"{name} dimensions must be positive finite integers")
+    return parsed
+
+
+def _integer_dimension(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
     return int(parsed)

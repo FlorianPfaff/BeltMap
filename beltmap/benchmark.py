@@ -239,12 +239,29 @@ def map_metrics(output_dir: Path, truth_path: Path, truth: dict[str, Any]) -> di
 def bbox_from_truth(row: dict[str, Any]) -> dict[str, float]:
     """Convert a synthetic truth particle entry to a box."""
 
+    try:
+        top = float(row["top"])
+        left = float(row["left"])
+        bottom = float(row["bottom"])
+        right = float(row["right"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("truth boxes must contain numeric top/left/bottom/right") from exc
+    if not all(math.isfinite(value) for value in (top, left, bottom, right)):
+        raise ValueError("truth box coordinates must be finite")
+    if bottom <= top or right <= left:
+        raise ValueError("truth boxes must have positive half-open area")
     return {
-        "top": float(row["top"]),
-        "left": float(row["left"]),
-        "bottom": float(row["bottom"]),
-        "right": float(row["right"]),
+        "top": top,
+        "left": left,
+        "bottom": bottom,
+        "right": right,
     }
+
+
+def truth_row_has_box_field(row: dict[str, Any]) -> bool:
+    """Return true when a synthetic truth row appears to contain a bbox."""
+
+    return any(str(row.get(key, "")).strip() != "" for key in ("top", "left", "bottom", "right"))
 
 
 def bbox_from_detection(row: dict[str, Any]) -> dict[str, float] | None:
@@ -392,10 +409,14 @@ def truth_event_boxes(truth: dict[str, Any]) -> list[dict[str, Any]]:
     for particle in truth_particle_rows(truth):
         frame_index = finite_int(particle.get("frame_index"))
         if frame_index is None:
+            if truth_row_has_box_field(particle):
+                raise ValueError("truth boxes must contain a finite integer frame_index")
             continue
         try:
             box: dict[str, Any] = bbox_from_truth(particle)
         except KeyError:
+            if truth_row_has_box_field(particle):
+                raise ValueError("truth boxes must contain top/left/bottom/right coordinates")
             continue
         box["frame_index"] = frame_index
         event_id = event_id_from_row(particle)
@@ -780,10 +801,14 @@ def group_truth_boxes(truth: dict[str, Any]) -> dict[int, list[dict[str, float]]
     for particle in truth_particle_rows(truth):
         frame_index = finite_int(particle.get("frame_index"))
         if frame_index is None:
+            if truth_row_has_box_field(particle):
+                raise ValueError("truth boxes must contain a finite integer frame_index")
             continue
         try:
             grouped.setdefault(frame_index, []).append(bbox_from_truth(particle))
         except KeyError:
+            if truth_row_has_box_field(particle):
+                raise ValueError("truth boxes must contain top/left/bottom/right coordinates")
             continue
     return grouped
 

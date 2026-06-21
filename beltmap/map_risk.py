@@ -180,10 +180,10 @@ def _bbox_map_risk_stats(
     low_support_view: np.ndarray,
 ) -> dict[str, float | None]:
     height, width = support_view.shape
-    top = max(0, int(detection.bbox_top))
-    left = max(0, int(detection.bbox_left))
-    bottom = min(height, int(detection.bbox_bottom))
-    right = min(width, int(detection.bbox_right))
+    top = max(0, _integer_coordinate(detection.bbox_top, "bbox_top"))
+    left = max(0, _integer_coordinate(detection.bbox_left, "bbox_left"))
+    bottom = min(height, _integer_coordinate(detection.bbox_bottom, "bbox_bottom"))
+    right = min(width, _integer_coordinate(detection.bbox_right, "bbox_right"))
     if bottom <= top or right <= left:
         return {
             "map_support_min": None,
@@ -246,6 +246,13 @@ def _positive_integer_dimension(value: int, name: str) -> int:
     parsed = float(value)
     if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
         raise ValueError(f"{name} must be a positive finite integer")
+    return int(parsed)
+
+
+def _integer_coordinate(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
 
 
