@@ -44,6 +44,8 @@ def finite_float(value: Any) -> float | None:
 
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -56,11 +58,8 @@ def finite_float(value: Any) -> float | None:
 def finite_int(value: Any) -> int | None:
     """Return an integer or ``None`` when parsing fails."""
 
-    if value is None:
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
+    parsed = finite_float(value)
+    if parsed is None:
         return None
     if not math.isfinite(parsed) or not parsed.is_integer():
         return None
