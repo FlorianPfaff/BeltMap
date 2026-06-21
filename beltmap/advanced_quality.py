@@ -18,6 +18,7 @@ import platform
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from numbers import Real
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -114,12 +115,19 @@ def robust_gain_offset(
     largest residuals according to ``trim_fraction``.
     """
 
+    trim_fraction = _finite_real(trim_fraction, "trim_fraction")
     if not 0.0 <= trim_fraction < 0.5:
         raise ValueError("trim_fraction must be in [0, 0.5)")
+    max_iterations = _integer_value(max_iterations, "max_iterations")
     if max_iterations < 1:
         raise ValueError("max_iterations must be positive")
+    min_pixels = _integer_value(min_pixels, "min_pixels")
+    if min_pixels < 1:
+        raise ValueError("min_pixels must be positive")
     obs = as_float_image(observed, name="observed")
     exp = as_float_image(expected, name="expected")
+    if obs.shape != exp.shape:
+        raise ValueError("observed and expected must have the same shape")
     valid = finite_mask(obs, exp)
     if mask is not None:
         user_mask = np.asarray(mask, dtype=bool)
@@ -130,6 +138,8 @@ def robust_gain_offset(
     y = obs[valid].ravel()
     if x.size < min_pixels:
         raise ValueError(f"not enough valid pixels for photometric fit: {x.size} < {min_pixels}")
+    if np.unique(x).size < 2:
+        raise ValueError("expected must contain at least two distinct finite values")
 
     keep = np.ones(x.size, dtype=bool)
     gain = 1.0
@@ -138,6 +148,8 @@ def robust_gain_offset(
         kept_x = x[keep]
         kept_y = y[keep]
         if kept_x.size < min_pixels:
+            break
+        if np.unique(kept_x).size < 2:
             break
         design = np.column_stack([kept_x, np.ones(kept_x.size)])
         gain, offset = (float(v) for v in np.linalg.lstsq(design, kept_y, rcond=None)[0])
@@ -166,6 +178,7 @@ def robust_gain_offset(
 def apply_gain_offset(expected: ArrayLike, fit: GainOffsetFit) -> FloatArray:
     """Return ``fit.gain * expected + fit.offset`` as float64."""
 
+    _validate_gain_offset_fit(fit)
     return fit.gain * as_float_image(expected, name="expected") + fit.offset
 
 
@@ -186,6 +199,8 @@ def quadratic_subpixel_minimum(offsets: Sequence[float], losses: Sequence[float]
         raise ValueError("no finite registration losses")
     x = x[finite]
     y = y[finite]
+    if np.unique(x).size != x.size:
+        raise ValueError("offsets must be distinct")
     best = int(np.argmin(y))
     if best == 0 or best == x.size - 1:
         return float(x[best])
@@ -201,6 +216,9 @@ def quadratic_subpixel_minimum(offsets: Sequence[float], losses: Sequence[float]
 
 
 def _trimmed_loss(values: np.ndarray, *, trim_fraction: float) -> float:
+    trim_fraction = _finite_real(trim_fraction, "trim_fraction")
+    if not 0.0 <= trim_fraction < 1.0:
+        raise ValueError("trim_fraction must be in [0, 1)")
     finite = values[np.isfinite(values)]
     if finite.size == 0:
         return float("inf")
@@ -226,10 +244,17 @@ def estimate_integer_xy_shift(
     is a sanity check for crop drift, horizontal misalignment, or camera motion.
     """
 
+    max_shift_y_px = _integer_value(max_shift_y_px, "max_shift_y_px")
+    max_shift_x_px = _integer_value(max_shift_x_px, "max_shift_x_px")
+    trim_fraction = _finite_real(trim_fraction, "trim_fraction")
+    if not 0.0 <= trim_fraction < 1.0:
+        raise ValueError("trim_fraction must be in [0, 1)")
     if max_shift_y_px < 0 or max_shift_x_px < 0:
         raise ValueError("max shifts must be non-negative")
     obs = as_float_image(observed, name="observed")
     exp = as_float_image(expected, name="expected")
+    if obs.ndim != 2 or exp.ndim != 2:
+        raise ValueError("observed and expected must be 2-D arrays")
     if obs.shape != exp.shape:
         raise ValueError("observed and expected must have the same shape")
     valid = finite_mask(obs, exp)
@@ -246,8 +271,11 @@ def estimate_integer_xy_shift(
             shifted_valid = np.roll(np.roll(valid, dy, axis=0), dx, axis=1) & valid
             loss = _trimmed_loss((obs - shifted)[shifted_valid], trim_fraction=trim_fraction)
             losses.append((loss, dy, dx))
+    finite_losses = [loss for loss, _dy, _dx in losses if np.isfinite(loss)]
+    if not finite_losses:
+        raise ValueError("no finite overlap for integer shift estimation")
     best_loss, best_y, best_x = min(losses, key=lambda item: item[0])
-    median_loss = float(np.median([loss for loss, _dy, _dx in losses if np.isfinite(loss)]))
+    median_loss = float(np.median(finite_losses))
     score = 0.0 if median_loss <= 0 else max(0.0, 1.0 - best_loss / median_loss)
     return ShiftEstimate(best_y, best_x, best_loss, score)
 
@@ -255,11 +283,14 @@ def estimate_integer_xy_shift(
 def unwrap_periodic(values: ArrayLike, period: float) -> FloatArray:
     """Unwrap periodic pixel phases into a continuous sequence."""
 
+    period = _finite_real(period, "period")
     if period <= 0:
         raise ValueError("period must be positive")
     arr = np.asarray(values, dtype=np.float64)
     if arr.size == 0:
         return arr.astype(np.float64)
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("values must be finite")
     radians = arr / period * 2.0 * np.pi
     return np.unwrap(radians) / (2.0 * np.pi) * period
 
@@ -279,6 +310,8 @@ def smooth_phase_velocity(
     integration is worthwhile.
     """
 
+    process_noise_px = _finite_real(process_noise_px, "process_noise_px")
+    measurement_noise_px = _finite_real(measurement_noise_px, "measurement_noise_px")
     if process_noise_px <= 0 or measurement_noise_px <= 0:
         raise ValueError("noise scales must be positive")
     measured = unwrap_periodic(measured_phase_px, period_px)
@@ -290,6 +323,8 @@ def smooth_phase_velocity(
         score_arr = np.asarray(scores, dtype=np.float64)
         if score_arr.shape != measured.shape:
             raise ValueError("scores must match measured phases")
+        if np.isinf(score_arr).any():
+            raise ValueError("scores must be finite or NaN")
         weights = np.clip(np.nan_to_num(score_arr, nan=0.0), 0.05, 1.0)
 
     state = np.array([measured[0], 0.0], dtype=np.float64)
@@ -326,6 +361,8 @@ def map_uncertainty_from_counts(
 ) -> FloatArray:
     """Convert belt-map observation counts to a noise/uncertainty floor."""
 
+    min_count = _finite_real(min_count, "min_count")
+    scale = _finite_real(scale, "scale")
     if min_count <= 0 or scale <= 0:
         raise ValueError("min_count and scale must be positive")
     count_arr = np.asarray(counts, dtype=np.float64)
@@ -341,10 +378,12 @@ def seam_discontinuity_profile(belt_map: ArrayLike, *, seam_row: int = 0, window
     belt = as_float_image(belt_map, name="belt_map")
     if belt.ndim != 2:
         raise ValueError("belt_map must be 2-D")
+    seam_row = _integer_value(seam_row, "seam_row")
+    window_px = _integer_value(window_px, "window_px")
     if window_px < 1:
         raise ValueError("window_px must be positive")
     height = belt.shape[0]
-    row = int(seam_row) % height
+    row = seam_row % height
     before = np.asarray([belt[(row - i - 1) % height] for i in range(window_px)], dtype=np.float64)
     after = np.asarray([belt[(row + i) % height] for i in range(window_px)], dtype=np.float64)
     jump = after[0] - before[0]
@@ -390,11 +429,23 @@ def track_confidence_score(
 ) -> float:
     """Continuous confidence score for a particle track."""
 
+    n_detections = _integer_value(n_detections, "n_detections")
+    min_track_length = _integer_value(min_track_length, "min_track_length")
+    if n_detections < 0:
+        raise ValueError("n_detections must be non-negative")
     if min_track_length <= 0:
         raise ValueError("min_track_length must be positive")
     length_score = min(1.0, max(0.0, n_detections / min_track_length))
+    mean_peak_signal = _optional_finite_real(mean_peak_signal, "mean_peak_signal")
+    velocity_fit_rmse_px = _optional_finite_real(
+        velocity_fit_rmse_px,
+        "velocity_fit_rmse_px",
+    )
+    velocity_ratio_y = _optional_finite_real(velocity_ratio_y, "velocity_ratio_y")
+    if velocity_fit_rmse_px is not None and velocity_fit_rmse_px < 0:
+        raise ValueError("velocity_fit_rmse_px must be non-negative when set")
     signal_score = 1.0 if mean_peak_signal is None else 1.0 - math.exp(-max(0.0, mean_peak_signal) / 5.0)
-    fit_score = 1.0 if velocity_fit_rmse_px is None else 1.0 / (1.0 + max(0.0, velocity_fit_rmse_px))
+    fit_score = 1.0 if velocity_fit_rmse_px is None else 1.0 / (1.0 + velocity_fit_rmse_px)
     if velocity_ratio_y is None:
         ratio_score = 1.0
     else:
@@ -405,13 +456,15 @@ def track_confidence_score(
 def bbox_iou(a: Mapping[str, float], b: Mapping[str, float]) -> float:
     """Intersection-over-union for boxes with top/left/bottom/right keys."""
 
-    top = max(float(a["top"]), float(b["top"]))
-    left = max(float(a["left"]), float(b["left"]))
-    bottom = min(float(a["bottom"]), float(b["bottom"]))
-    right = min(float(a["right"]), float(b["right"]))
+    a_box = _strict_box(a, label="a")
+    b_box = _strict_box(b, label="b")
+    top = max(a_box["top"], b_box["top"])
+    left = max(a_box["left"], b_box["left"])
+    bottom = min(a_box["bottom"], b_box["bottom"])
+    right = min(a_box["right"], b_box["right"])
     inter = max(0.0, bottom - top) * max(0.0, right - left)
-    area_a = max(0.0, float(a["bottom"]) - float(a["top"])) * max(0.0, float(a["right"]) - float(a["left"]))
-    area_b = max(0.0, float(b["bottom"]) - float(b["top"])) * max(0.0, float(b["right"]) - float(b["left"]))
+    area_a = max(0.0, a_box["bottom"] - a_box["top"]) * max(0.0, a_box["right"] - a_box["left"])
+    area_b = max(0.0, b_box["bottom"] - b_box["top"]) * max(0.0, b_box["right"] - b_box["left"])
     union = area_a + area_b - inter
     return 0.0 if union <= 0 else float(inter / union)
 
@@ -463,13 +516,21 @@ def load_real_label_boxes(path: Path) -> dict[int, list[dict[str, float]]]:
     for frame in frames:
         if not isinstance(frame, Mapping):
             raise ValueError("label frames must be objects")
-        frame_index = finite_int(frame.get("frame_index"))
-        if frame_index is None:
+        try:
+            frame_index = _integer_value(frame.get("frame_index"), "label frame_index")
+        except ValueError as exc:
+            raise ValueError("label frame_index values must be finite integers") from exc
+        if frame_index < 0:
             raise ValueError("label frame_index values must be finite integers")
         if frame_index in result:
             raise ValueError(f"duplicate label frame_index {frame_index}")
+        raw_boxes = frame.get("boxes", [])
+        if raw_boxes is None:
+            raw_boxes = []
+        if not isinstance(raw_boxes, list):
+            raise ValueError("label frame boxes must be a list")
         boxes: list[dict[str, float]] = []
-        for box in frame.get("boxes", []):
+        for box in raw_boxes:
             boxes.append(_parse_real_label_box(box))
         result[frame_index] = boxes
     return result
@@ -501,15 +562,19 @@ def _validate_reviewed_truth_status(data: dict[str, Any]) -> None:
 
 
 def _parse_real_label_box(box: Mapping[str, Any]) -> dict[str, float]:
+    if not isinstance(box, Mapping):
+        raise ValueError("label boxes must be objects")
     try:
-        top = float(box["top"])
-        left = float(box["left"])
-        bottom = float(box["bottom"])
-        right = float(box["right"])
-    except (KeyError, TypeError, ValueError) as exc:
+        raw_top = box["top"]
+        raw_left = box["left"]
+        raw_bottom = box["bottom"]
+        raw_right = box["right"]
+    except KeyError as exc:
         raise ValueError("label boxes must contain numeric top/left/bottom/right") from exc
-    if not all(math.isfinite(value) for value in (top, left, bottom, right)):
-        raise ValueError("label box coordinates must be finite")
+    top = _finite_real(raw_top, "top")
+    left = _finite_real(raw_left, "left")
+    bottom = _finite_real(raw_bottom, "bottom")
+    right = _finite_real(raw_right, "right")
     if bottom <= top or right <= left:
         raise ValueError("label boxes must have positive half-open area")
     return {"top": top, "left": left, "bottom": bottom, "right": right}
@@ -533,6 +598,7 @@ def _parse_detection_box(row: Mapping[str, Any]) -> dict[str, float] | None:
 def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_threshold: float = 0.5) -> RealLabelMetrics:
     """Evaluate BeltMap detections against sparse real-data annotations."""
 
+    iou_threshold = _finite_real(iou_threshold, "iou_threshold")
     if not 0.0 < iou_threshold <= 1.0:
         raise ValueError("iou_threshold must be in (0, 1]")
     detections = detection_boxes_by_frame(output_dir)
@@ -592,6 +658,8 @@ def evaluate_real_detections(output_dir: Path, labels_path: Path, *, iou_thresho
 def finite_float(value: Any) -> float | None:
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -606,6 +674,60 @@ def finite_int(value: Any) -> int | None:
     if parsed is None or not parsed.is_integer():
         return None
     return int(parsed)
+
+
+def _finite_real(value: Any, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if isinstance(value, np.bool_):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_real(value: Any | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_real(value, name)
+
+
+def _integer_value(value: Any, name: str) -> int:
+    parsed = _finite_real(value, name)
+    if not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
+
+
+def _validate_gain_offset_fit(fit: GainOffsetFit) -> None:
+    _finite_real(fit.gain, "fit.gain")
+    _finite_real(fit.offset, "fit.offset")
+    n_pixels = _integer_value(fit.n_pixels, "fit.n_pixels")
+    if n_pixels < 1:
+        raise ValueError("fit.n_pixels must be positive")
+    rmse_gray = _finite_real(fit.rmse_gray, "fit.rmse_gray")
+    if rmse_gray < 0:
+        raise ValueError("fit.rmse_gray must be non-negative")
+    trimmed_fraction = _finite_real(fit.trimmed_fraction, "fit.trimmed_fraction")
+    if not 0.0 <= trimmed_fraction <= 1.0:
+        raise ValueError("fit.trimmed_fraction must be in [0, 1]")
+
+
+def _strict_box(box: Mapping[str, float], *, label: str) -> dict[str, float]:
+    if not isinstance(box, Mapping):
+        raise ValueError(f"{label} box must be a mapping")
+    try:
+        return {
+            "top": _finite_real(box["top"], f"{label}.top"),
+            "left": _finite_real(box["left"], f"{label}.left"),
+            "bottom": _finite_real(box["bottom"], f"{label}.bottom"),
+            "right": _finite_real(box["right"], f"{label}.right"),
+        }
+    except KeyError as exc:
+        raise ValueError(f"{label} box must contain top/left/bottom/right") from exc
 
 
 def quality_flags(output_dir: Path) -> dict[str, Any]:

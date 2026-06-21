@@ -1,10 +1,9 @@
-
 """Agreement scoring for detections from independently learned belt maps."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import hypot, isfinite
+from math import hypot
 from numbers import Real
 from typing import Sequence
 
@@ -122,7 +121,7 @@ def score_cross_map_agreement(
 
     scores: list[CrossMapAgreementScore] = []
     for detection in primary_detections:
-        _validate_detection(detection, "primary detection")
+        _validate_detection(detection, "primary detection", bbox_prefix="first")
         primary_sign = detection_raw_sign(detection, primary_residual)
         matches = tuple(
             _best_match_for_map(
@@ -184,10 +183,12 @@ def detection_raw_sign(
         if np.isfinite(value) and value != 0.0:
             return 1 if value > 0.0 else -1
 
-    top = max(0, int(detection.bbox_top))
-    left = max(0, int(detection.bbox_left))
-    bottom = min(raw.shape[0], int(detection.bbox_bottom))
-    right = min(raw.shape[1], int(detection.bbox_right))
+    top = max(0, _integer_coordinate(detection.bbox_top, "bbox_top"))
+    left = max(0, _integer_coordinate(detection.bbox_left, "bbox_left"))
+    bottom = min(
+        raw.shape[0], _integer_coordinate(detection.bbox_bottom, "bbox_bottom")
+    )
+    right = min(raw.shape[1], _integer_coordinate(detection.bbox_right, "bbox_right"))
     if top >= bottom or left >= right:
         return None
     values = raw[top:bottom, left:right]
@@ -212,7 +213,11 @@ def _best_match_for_map(
     best: CrossMapAgreementMapScore | None = None
     best_rank: tuple[float, float, float, float] | None = None
     for candidate in candidates:
-        _validate_detection(candidate, "confirming detection")
+        _validate_detection(
+            candidate,
+            "confirming detection",
+            bbox_prefix="confirming detection",
+        )
         match = _score_match(
             detection,
             candidate,
@@ -221,7 +226,11 @@ def _best_match_for_map(
             map_index=map_index,
             config=config,
         )
-        distance_rank = -float("inf") if match.centroid_distance_px is None else -match.centroid_distance_px
+        distance_rank = (
+            -float("inf")
+            if match.centroid_distance_px is None
+            else -match.centroid_distance_px
+        )
         rank = (
             1.0 if match.accepted else 0.0,
             0.0 if match.bbox_iou is None else match.bbox_iou,
@@ -253,7 +262,9 @@ def _score_match(
     map_index: int,
     config: CrossMapAgreementConfig,
 ) -> CrossMapAgreementMapScore:
-    distance = hypot(float(detection.y) - float(candidate.y), float(detection.x) - float(candidate.x))
+    distance = hypot(
+        float(detection.y) - float(candidate.y), float(detection.x) - float(candidate.x)
+    )
     iou = bbox_iou(detection, candidate)
     ratio = peak_ratio(detection.peak_signal, candidate.peak_signal)
     sign_consistent = (
@@ -266,10 +277,7 @@ def _score_match(
         and iou >= config.min_bbox_iou
         and ratio is not None
         and ratio >= config.min_peak_ratio
-        and (
-            not config.require_sign_consistency
-            or sign_consistent is True
-        )
+        and (not config.require_sign_consistency or sign_consistent is True)
     )
     return CrossMapAgreementMapScore(
         map_index=map_index,
@@ -285,8 +293,8 @@ def _score_match(
 def bbox_iou(a: ParticleDetection, b: ParticleDetection) -> float:
     """Return intersection-over-union of two detection bounding boxes."""
 
-    a_top, a_left, a_bottom, a_right = _bbox_edges(a, "a")
-    b_top, b_left, b_bottom, b_right = _bbox_edges(b, "b")
+    a_top, a_left, a_bottom, a_right = _validated_bbox(a, prefix="a")
+    b_top, b_left, b_bottom, b_right = _validated_bbox(b, prefix="b")
     top = max(a_top, b_top)
     left = max(a_left, b_left)
     bottom = min(a_bottom, b_bottom)
@@ -294,10 +302,32 @@ def bbox_iou(a: ParticleDetection, b: ParticleDetection) -> float:
     inter_h = max(0, bottom - top)
     inter_w = max(0, right - left)
     intersection = inter_h * inter_w
-    area_a = max(0, a_bottom - a_top) * max(0, a_right - a_left)
-    area_b = max(0, b_bottom - b_top) * max(0, b_right - b_left)
+    area_a = (a_bottom - a_top) * (a_right - a_left)
+    area_b = (b_bottom - b_top) * (b_right - b_left)
     union = area_a + area_b - intersection
     return 0.0 if union <= 0 else float(intersection / union)
+
+
+def _validated_bbox(
+    detection: ParticleDetection,
+    *,
+    prefix: str,
+) -> tuple[int, int, int, int]:
+    separator = "." if prefix in {"a", "b", "confirming detection"} else " "
+    top = _integer_coordinate(detection.bbox_top, f"{prefix}{separator}bbox_top")
+    left = _integer_coordinate(detection.bbox_left, f"{prefix}{separator}bbox_left")
+    bottom = _integer_coordinate(detection.bbox_bottom, f"{prefix}{separator}bbox_bottom")
+    right = _integer_coordinate(detection.bbox_right, f"{prefix}{separator}bbox_right")
+    if bottom <= top or right <= left:
+        raise ValueError(f"{prefix} bbox must have positive half-open area")
+    return top, left, bottom, right
+
+
+def _integer_coordinate(value: int, name: str) -> int:
+    parsed = _finite_real(value, name)
+    if not parsed.is_integer():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
 
 
 def peak_ratio(a: float | None, b: float | None) -> float | None:
@@ -314,58 +344,37 @@ def peak_ratio(a: float | None, b: float | None) -> float | None:
 
 
 def _finite_real(value: object, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f"{name} must be numeric, not boolean")
+    if isinstance(value, (bool, np.bool_, str)):
+        raise ValueError(f"{name} must be finite")
     if not isinstance(value, Real):
-        raise ValueError(f"{name} must be numeric")
+        raise ValueError(f"{name} must be finite")
     parsed = float(value)
-    if not isfinite(parsed):
+    if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
     return parsed
-
-
-def _optional_finite_real(value: object | None, name: str) -> float | None:
-    if value is None:
-        return None
-    return _finite_real(value, name)
 
 
 def _integer_value(value: object, name: str) -> int:
     parsed = _finite_real(value, name)
     if not parsed.is_integer():
-        raise ValueError(f"{name} must be a positive finite integer")
+        raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
 
 
 def _bool_value(value: object, name: str) -> bool:
-    if not isinstance(value, (bool, np.bool_)):
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if not isinstance(value, bool):
         raise ValueError(f"{name} must be boolean")
-    return bool(value)
+    return value
 
 
-def _validate_detection(detection: ParticleDetection, label: str) -> None:
-    _finite_real(detection.frame_index, f"{label}.frame_index")
-    _integer_value(detection.label, f"{label}.label")
-    _finite_real(detection.y, f"{label}.y")
-    _finite_real(detection.x, f"{label}.x")
-    area_px = _integer_value(detection.area_px, f"{label}.area_px")
-    if area_px < 1:
-        raise ValueError(f"{label}.area_px must be positive")
-    _bbox_edges(detection, label)
-    _optional_finite_real(detection.mean_signal, f"{label}.mean_signal")
-    _optional_finite_real(detection.peak_signal, f"{label}.peak_signal")
-
-
-def _bbox_edges(
+def _validate_detection(
     detection: ParticleDetection,
-    label: str,
-) -> tuple[int, int, int, int]:
-    top = _integer_value(detection.bbox_top, f"{label}.bbox_top")
-    left = _integer_value(detection.bbox_left, f"{label}.bbox_left")
-    bottom = _integer_value(detection.bbox_bottom, f"{label}.bbox_bottom")
-    right = _integer_value(detection.bbox_right, f"{label}.bbox_right")
-    if top < 0 or left < 0:
-        raise ValueError(f"{label} bbox coordinates must be non-negative")
-    if bottom <= top or right <= left:
-        raise ValueError(f"{label} bbox must be half-open with positive area")
-    return top, left, bottom, right
+    name: str,
+    *,
+    bbox_prefix: str | None = None,
+) -> None:
+    _finite_real(detection.y, f"{name}.y")
+    _finite_real(detection.x, f"{name}.x")
+    _validated_bbox(detection, prefix=bbox_prefix or name)

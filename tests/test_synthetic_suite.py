@@ -138,6 +138,20 @@ def test_write_config_can_set_map_particle_mask_ablation_controls(tmp_path):
     assert "particle_mask_margin_px = 2" in config
 
 
+def test_write_config_canonicalizes_map_particle_mask_polarity_alias(tmp_path):
+    config_path = write_config(
+        tmp_path / "synthetic",
+        frames=4,
+        velocity=2.0,
+        period=16,
+        map_particle_mask_mode="dark",
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+
+    assert 'particle_mask_mode = "negative"' in config
+
+
 def test_write_config_can_enable_local_illumination_correction(tmp_path):
     config_path = write_config(
         tmp_path / "synthetic",
@@ -290,7 +304,7 @@ def test_main_records_map_particle_mask_ablation_controls(tmp_path):
             "--period",
             "16",
             "--map-particle-mask-mode",
-            "absolute",
+            "signed",
             "--map-particle-mask-grow-threshold",
             "1.75",
             "--map-particle-mask-margin-px",
