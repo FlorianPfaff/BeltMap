@@ -5,7 +5,11 @@ import json
 import math
 from pathlib import Path
 
-from beltmap.compare_runs import generate_comparison_report, parse_run_spec
+from beltmap.compare_runs import (
+    DEFAULT_FROC_MAX_THRESHOLDS,
+    generate_comparison_report,
+    parse_run_spec,
+)
 
 
 def parse_frames(value: str) -> list[int]:
@@ -139,6 +143,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Circular contiguous frame block length for frame-scoped bootstrap metrics. Default: 1",
     )
     parser.add_argument(
+        "--froc-max-thresholds",
+        type=parse_nonnegative_int,
+        default=DEFAULT_FROC_MAX_THRESHOLDS,
+        help=(
+            "Maximum distinct score thresholds to evaluate for labeled FROC. "
+            f"Default: {DEFAULT_FROC_MAX_THRESHOLDS}; 0 requests an exact sweep."
+        ),
+    )
+    parser.add_argument(
         "--skip-contact-sheets",
         action="store_true",
         help=(
@@ -170,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             frames=args.frames,
             truth_path=args.truth_path,
             truth_iou_threshold=args.truth_iou_threshold,
+            froc_max_thresholds=args.froc_max_thresholds,
             bootstrap_samples=args.bootstrap_samples,
             bootstrap_confidence_level=args.bootstrap_confidence_level,
             bootstrap_seed=args.bootstrap_seed,
@@ -189,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
                     "images": {key: str(path) for key, path in artifacts.images.items()},
                     "truth_path": None if args.truth_path is None else str(args.truth_path),
                     "truth_iou_threshold": args.truth_iou_threshold,
+                    "froc_max_thresholds": args.froc_max_thresholds,
                     "bootstrap_samples": args.bootstrap_samples,
                     "bootstrap_confidence_level": args.bootstrap_confidence_level,
                     "bootstrap_seed": args.bootstrap_seed,

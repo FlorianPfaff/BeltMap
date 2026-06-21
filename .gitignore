@@ -10,7 +10,11 @@ build/
 *.egg-info/
 
 # Raw/local datasets and generated intermediates must stay outside git.
-data/
+data/*
+!data/labels/
+data/labels/*
+!data/labels/brick20g_adversarial_labels.json
+!data/labels/brick20g_yolo_smoke_labels.json
 datasets/
 raw/
 outputs/

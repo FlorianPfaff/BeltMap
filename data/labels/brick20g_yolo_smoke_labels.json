@@ -1,0 +1,129 @@
+{
+  "status": "reviewed_ground_truth",
+  "requires_manual_review": false,
+  "dataset": {
+    "zenodo_record": "7801882",
+    "dataset_name": "images_BrickandSandLimeBrick_50vs50_20gpers",
+    "description": "Tiny reviewed label subset for GitHub Actions YOLO smoke tests only. Not for paper metrics."
+  },
+  "purpose": "Three-frame YOLO11 workflow smoke truth for testing dataset conversion and one-epoch training. This file is intentionally tiny and must not be used for scientific BeltMap paper metrics.",
+  "coordinate_system": {
+    "units": "crop-local pixels",
+    "bbox_convention": "half-open boxes: top, left, bottom, right",
+    "crop_region_in_source_image": {
+      "top": 0,
+      "left": 220,
+      "height": 1330,
+      "width": 1800
+    }
+  },
+  "scored_frames": [0, 3, 12],
+  "empty_frames": [],
+  "reviewed_empty_frames": [],
+  "no_particle_frames": [],
+  "particles": [
+    {
+      "frame_index": 0,
+      "top": 20,
+      "left": 459,
+      "bottom": 167,
+      "right": 553,
+      "event_id": "smoke_f000000_p01"
+    },
+    {
+      "frame_index": 0,
+      "top": 454,
+      "left": 960,
+      "bottom": 528,
+      "right": 1035,
+      "event_id": "smoke_f000000_p02"
+    },
+    {
+      "frame_index": 0,
+      "top": 916,
+      "left": 1453,
+      "bottom": 1027,
+      "right": 1536,
+      "event_id": "smoke_f000000_p03"
+    },
+    {
+      "frame_index": 3,
+      "top": 191,
+      "left": 456,
+      "bottom": 338,
+      "right": 551,
+      "event_id": "smoke_f000003_p01"
+    },
+    {
+      "frame_index": 3,
+      "top": 627,
+      "left": 958,
+      "bottom": 704,
+      "right": 1032,
+      "event_id": "smoke_f000003_p02"
+    },
+    {
+      "frame_index": 3,
+      "top": 1088,
+      "left": 1447,
+      "bottom": 1199,
+      "right": 1532,
+      "event_id": "smoke_f000003_p03"
+    },
+    {
+      "frame_index": 12,
+      "top": 109,
+      "left": 1066,
+      "bottom": 168,
+      "right": 1134,
+      "event_id": "smoke_f000012_p01"
+    },
+    {
+      "frame_index": 12,
+      "top": 746,
+      "left": 1319,
+      "bottom": 823,
+      "right": 1394,
+      "event_id": "smoke_f000012_p02"
+    },
+    {
+      "frame_index": 12,
+      "top": 1143,
+      "left": 952,
+      "bottom": 1221,
+      "right": 1028,
+      "event_id": "smoke_f000012_p03"
+    }
+  ],
+  "frame_reviews": [
+    {
+      "frame_index": 0,
+      "review_status": "reviewed_with_particles",
+      "confirmed_empty": false,
+      "particle_rows_added": 3,
+      "reviewer": "workflow_smoke_fixture",
+      "review_notes": "Tiny subset from reviewed pilot labels; workflow smoke only."
+    },
+    {
+      "frame_index": 3,
+      "review_status": "reviewed_with_particles",
+      "confirmed_empty": false,
+      "particle_rows_added": 3,
+      "reviewer": "workflow_smoke_fixture",
+      "review_notes": "Tiny subset from reviewed pilot labels; workflow smoke only."
+    },
+    {
+      "frame_index": 12,
+      "review_status": "reviewed_with_particles",
+      "confirmed_empty": false,
+      "particle_rows_added": 3,
+      "reviewer": "workflow_smoke_fixture",
+      "review_notes": "Tiny subset from reviewed pilot labels; workflow smoke only."
+    }
+  ],
+  "limitations": [
+    "This file is only for GitHub Actions smoke testing of YOLO-format conversion and one-epoch training.",
+    "Do not cite metrics from this file in the BeltMap paper.",
+    "Use the full reviewed Brick 20 g/s adversarial labels for scientific metrics."
+  ]
+}

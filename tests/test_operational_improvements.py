@@ -202,3 +202,16 @@ def test_event_classification_and_domain_randomization():
 
     assert event.label in {"belt-fixed-artifact", "loose-particle"}
     assert randomized.shape == (4, 4)
+
+
+def test_failure_mode_classifier_preserves_zero_quality_metrics():
+    warnings = classify_failure_modes(
+        {
+            "registration_score_median": 0.0,
+            "velocity_ratio_share_0_to_1": 0.0,
+        }
+    )
+
+    codes = {warning["code"] for warning in warnings}
+    assert "low-registration-score" in codes
+    assert "implausible-velocity-ratios" in codes

@@ -1107,6 +1107,10 @@ def classify_failure_modes(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     warnings: list[dict[str, Any]] = []
 
+    def metric(name: str, default: float) -> float:
+        value = _finite_float(summary.get(name))
+        return default if value is None else value
+
     def add(code: str, severity: str, message: str) -> None:
         warnings.append({"code": code, "severity": severity, "message": message})
 
