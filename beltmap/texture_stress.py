@@ -474,7 +474,11 @@ def write_texture_stress_plots(report_dir: Path, rows: list[dict[str, Any]]) -> 
     labels = sorted({str(row.get("run")) for row in rows})
     for label in labels:
         run_rows = [row for row in rows if row.get("run") == label]
-        run_rows.sort(key=lambda row: finite_float(row.get("stress_rank")) or math.inf)
+        def stress_rank_sort_key(row: dict[str, Any]) -> float:
+            rank = finite_float(row.get("stress_rank"))
+            return math.inf if rank is None else float(rank)
+
+        run_rows.sort(key=stress_rank_sort_key)
         xs = [float(row["stress_rank"]) for row in run_rows if finite_float(row.get("stress_rank")) is not None]
         ys = [
             float(value)

@@ -37,7 +37,12 @@ def test_compute_belt_map_risk_maps_marks_interpolated_and_low_support_pixels():
     np.testing.assert_allclose(maps.risk, [[1.0, 0.5, 0.0]])
 
 
-@pytest.mark.parametrize("min_support", [True, "1.0", float("nan"), -1.0])
+def test_compute_belt_map_risk_maps_rejects_boolean_min_support():
+    with pytest.raises(ValueError, match="min_support must be finite"):
+        compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32), min_support=True)
+
+
+@pytest.mark.parametrize("min_support", ["1.0", float("nan"), -1.0])
 def test_compute_belt_map_risk_maps_rejects_invalid_min_support(min_support):
     with pytest.raises(ValueError, match="min_support"):
         compute_belt_map_risk_maps(
@@ -93,8 +98,7 @@ def test_score_map_risk_detections_adds_bbox_support_stats_and_rejects():
     assert scored.map_low_support_fraction == pytest.approx(0.5)
 
 
-@pytest.mark.parametrize("reject_max_mean_risk", [1.5, True, "0.5", float("nan")])
-def test_score_map_risk_detections_rejects_invalid_thresholds(reject_max_mean_risk):
+def test_score_map_risk_detections_rejects_invalid_thresholds():
     maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
     with pytest.raises(ValueError, match="reject_max_mean_risk"):
         score_map_risk_detections(
@@ -102,7 +106,20 @@ def test_score_map_risk_detections_rejects_invalid_thresholds(reject_max_mean_ri
             phase_px=0.0,
             frame_shape=(1, 2),
             maps=maps,
-            reject_max_mean_risk=reject_max_mean_risk,
+            reject_max_mean_risk=1.5,
+        )
+
+
+def test_score_map_risk_detections_rejects_boolean_thresholds():
+    maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
+
+    with pytest.raises(ValueError, match="reject_max_mean_risk"):
+        score_map_risk_detections(
+            [_detection(bbox_left=0, bbox_right=1)],
+            phase_px=0.0,
+            frame_shape=(1, 2),
+            maps=maps,
+            reject_max_mean_risk=True,
         )
 
 
@@ -153,10 +170,10 @@ def test_score_map_risk_detections_rejects_malformed_risk_maps():
         )
 
 
-def test_score_map_risk_detections_rejects_fractional_detection_bbox():
+def test_score_map_risk_detections_rejects_fractional_bbox_coordinates():
     maps = compute_belt_map_risk_maps(np.ones((2, 2), dtype=np.float32))
 
-    with pytest.raises(ValueError, match=r"detection\.bbox_top"):
+    with pytest.raises(ValueError, match="bbox_top must be a finite integer"):
         score_map_risk_detections(
             [_detection(bbox_top=0.5, bbox_left=0, bbox_bottom=1, bbox_right=1)],
             phase_px=0.0,

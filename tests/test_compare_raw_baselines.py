@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import numpy as np
 from PIL import Image
 
 from scripts import compare_raw_baselines as crb
@@ -43,6 +44,88 @@ def valid_args(**updates):
     return argparse.Namespace(**values)
 
 
+@pytest.mark.parametrize("value", ["0,0,3.5,4", "-1,0,3,4"])
+def test_parse_region_rejects_fractional_or_negative_values(value):
+    with pytest.raises(argparse.ArgumentTypeError):
+        crb.parse_region(value)
+
+
+def test_crop_rejects_regions_outside_frame():
+    frame = np.zeros((5, 5), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        crb.crop(frame, (4, 0, 2, 2))
+
+
+def test_sample_indices_rejects_empty_population_or_sample_count():
+    with pytest.raises(ValueError, match="count"):
+        crb.sample_indices(0, 1)
+    with pytest.raises(ValueError, match="sample_count"):
+        crb.sample_indices(3, 0)
+
+
+@pytest.mark.parametrize("percentiles", [(99, 1), (float("nan"), 99), (1, 101)])
+def test_robust_display_scale_rejects_invalid_percentiles(percentiles):
+    with pytest.raises(ValueError, match="percentiles"):
+        crb.robust_display_scale([np.array([1.0, 2.0])], percentiles=percentiles)
+
+
+def test_save_scaled_png_handles_nonfinite_values(tmp_path):
+    path = tmp_path / "preview.png"
+
+    crb.save_scaled_png(np.array([[0.0, np.nan, np.inf]]), path, scale=(0.0, 1.0))
+
+    assert path.is_file()
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"frame_index": "-1"}, "frame_index"),
+        ({"label": "0"}, "label"),
+        ({"area_px": "0"}, "area_px"),
+        ({"bbox_bottom": "1"}, "positive area"),
+    ],
+)
+def test_parse_detection_rejects_invalid_geometry_or_ids(updates, message):
+    row = {
+        "frame_index": "0",
+        "label": "1",
+        "y": "2",
+        "x": "3",
+        "area_px": "4",
+        "bbox_top": "1",
+        "bbox_left": "1",
+        "bbox_bottom": "3",
+        "bbox_right": "3",
+    }
+    row.update(updates)
+
+    with pytest.raises(ValueError, match=message):
+        crb.parse_detection(row)
+
+
+def test_infer_run_frame_count_rejects_boolean_or_fractional_metadata(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(ValueError, match="n_images"):
+        crb.infer_run_frame_count(run_dir, [], {"n_images": True})
+    with pytest.raises(ValueError, match="n_images"):
+        crb.infer_run_frame_count(run_dir, [], {"n_images": 1.5})
+
+
+def test_parse_optional_float_rejects_nonfinite_values():
+    with pytest.raises(argparse.ArgumentTypeError, match="finite"):
+        crb.parse_optional_float("nan")
+
+
+@pytest.mark.parametrize("value", ["1.5", "-1", "nan"])
+def test_parse_preview_frames_rejects_invalid_indices(value):
+    with pytest.raises(ValueError, match="preview frame"):
+        crb.parse_preview_frames(value, frame_count=10)
+
+
 def test_load_existing_beltmap_detections_rejects_fractional_frame_stride(tmp_path):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
@@ -71,11 +154,20 @@ def test_load_existing_beltmap_detections_rejects_fractional_frame_stride(tmp_pa
     ("updates", "message"),
     [
         ({"threshold": float("nan")}, "--threshold must be finite"),
-        ({"belt_velocity_px_per_frame": float("nan")}, "--belt-velocity-px-per-frame must be finite"),
-        ({"low_threshold": 6.0}, "--low-threshold must be less than or equal"),
-        ({"tracking_max_frame_gap": float("nan")}, "--tracking-max-frame-gap must be finite"),
         (
-            {"track_filter_min_velocity_ratio_y": 1.2, "track_filter_max_velocity_ratio_y": 1.0},
+            {"belt_velocity_px_per_frame": float("nan")},
+            "--belt-velocity-px-per-frame must be finite",
+        ),
+        ({"low_threshold": 6.0}, "--low-threshold must be less than or equal"),
+        (
+            {"tracking_max_frame_gap": float("nan")},
+            "--tracking-max-frame-gap must be finite",
+        ),
+        (
+            {
+                "track_filter_min_velocity_ratio_y": 1.2,
+                "track_filter_max_velocity_ratio_y": 1.0,
+            },
             "--track-filter-min-velocity-ratio-y must be less than or equal",
         ),
     ],
