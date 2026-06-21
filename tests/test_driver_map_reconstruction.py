@@ -110,6 +110,78 @@ def test_winsorized_map_reconstruction_clips_single_bright_outlier(tmp_path, mon
     assert winsorized_map[0, 0] == pytest.approx(11.0)
 
 
+def test_map_exclusion_mask_removes_belt_coordinate_contributions(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    path = tmp_path / "frame_000.png"
+    _write_gray_array(path, np.asarray([[10, 20], [30, 40]], dtype=np.uint8))
+    exclusion = np.zeros((2, 2), dtype=bool)
+    exclusion[0, 1] = True
+
+    belt_map, support, coverage = accumulate_belt_map(
+        paths=[path],
+        samples=[0],
+        region=(0, 0, 2, 2),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=2.0,
+        map_height=2,
+        previous_belt_map=None,
+        mask_threshold=5.0,
+        mask_mode="positive",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+        fractional_splat=False,
+        return_support=True,
+        map_exclusion_mask=exclusion,
+    )
+
+    assert support[0, 1] == 0.0
+    assert support[0, 0] > 0.0
+    assert support[1, 0] > 0.0
+    assert belt_map[0, 0] == pytest.approx(10.0)
+    assert coverage["map_excluded_pixels"] == 1
+
+
+def test_accumulate_belt_map_accepts_dark_alias_for_particle_masking(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(rt, "OUT", tmp_path / "out")
+    monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
+
+    base = np.full((4, 4), 120.0, dtype=np.float32)
+    frame = base.copy()
+    frame[1:3, 1:3] -= 80.0
+    path = tmp_path / "frame_000.png"
+    _write_gray_array(path, frame)
+
+    _belt_map, coverage = accumulate_belt_map(
+        paths=[path],
+        samples=[0],
+        region=(0, 0, 4, 4),
+        velocity=0.0,
+        reference_phase=0.0,
+        model_period=4.0,
+        map_height=4,
+        previous_belt_map=base,
+        mask_threshold=3.0,
+        mask_mode="dark",
+        mask_grow_threshold=2.0,
+        mask_dilation_px=0,
+        mask_margin_px=0,
+        mask_min_area_px=1,
+        pass_label="test",
+    )
+
+    assert coverage["masked_pixels"] == 4
+    assert coverage["contributed_pixels"] == 12
+
+
 def test_frame_median_offset_correction_aligns_additive_illumination(tmp_path, monkeypatch):
     monkeypatch.setattr(rt, "OUT", tmp_path / "out")
     monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")

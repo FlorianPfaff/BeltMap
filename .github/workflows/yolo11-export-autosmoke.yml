@@ -1,0 +1,84 @@
+name: YOLO export autosmoke
+
+run-name: YOLO export autosmoke ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/yolo11-export-autosmoke.yml"
+      - ".github/triggers/yolo11-export-autosmoke.txt"
+      - "beltmap/yolo_export.py"
+      - "beltmap/cli/yolo_export.py"
+      - "tests/test_yolo_export.py"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yolo11-export-autosmoke-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MPLBACKEND: "Agg"
+
+jobs:
+  yolo-export-autosmoke:
+    name: Test YOLO-to-BeltMap export
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install BeltMap test environment
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Run YOLO export tests
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_yolo_export.py -q --basetemp=.pytest-tmp
+
+      - name: Exercise console script
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path('outputs/yolo_export_autosmoke_fixture')
+          images = root / 'images'
+          labels = root / 'labels'
+          images.mkdir(parents=True, exist_ok=True)
+          labels.mkdir(parents=True, exist_ok=True)
+          Image.new('L', (120, 80), 32).save(images / 'frame_000010.png')
+          (labels / 'frame_000010.txt').write_text('0 0.5 0.5 0.25 0.5 0.77\n', encoding='utf-8')
+          PY
+          beltmap-yolo-export \
+            --labels-dir outputs/yolo_export_autosmoke_fixture/labels \
+            --images-dir outputs/yolo_export_autosmoke_fixture/images \
+            --output-dir outputs/yolo_export_autosmoke_fixture/exported \
+            --source yolo_export_autosmoke
+          test -f outputs/yolo_export_autosmoke_fixture/exported/detections.csv
+          test -f outputs/yolo_export_autosmoke_fixture/exported/detections_per_frame.csv
+
+      - name: Upload autosmoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yolo-export-autosmoke-${{ github.run_id }}
+          path: outputs/yolo_export_autosmoke_fixture
+          if-no-files-found: ignore
+          retention-days: 7

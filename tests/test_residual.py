@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from beltmap import (
+    BeltRegion,
     BeltMotionModel,
     PhaseEstimate,
     ResidualConfig,
@@ -10,6 +11,7 @@ from beltmap import (
     render_belt_view,
     render_clean_belt_residual,
 )
+from beltmap.rendering import CleanBeltRender
 
 
 def test_generate_residual_image_uses_masked_expected_background():
@@ -126,6 +128,14 @@ def test_estimate_local_noise_excludes_negative_particle_pixels_when_requested()
         (ResidualConfig(noise_exclusion_radius_px=float("nan")), "noise_exclusion_radius_px"),
         (ResidualConfig(noise_exclusion_radius_px=1.5), "noise_exclusion_radius_px"),
         (ResidualConfig(min_noise=float("nan")), "min_noise"),
+        (ResidualConfig(noise_radius_px=True), "noise_radius_px"),
+        (ResidualConfig(clip_sigma=True), "clip_sigma"),
+        (ResidualConfig(noise_exclusion_sigma=True), "noise_exclusion_sigma"),
+        (ResidualConfig(noise_exclusion_radius_px=True), "noise_exclusion_radius_px"),
+        (ResidualConfig(min_noise=True), "min_noise"),
+        (ResidualConfig(fill_value=True), "fill_value"),
+        (ResidualConfig(noise_radius_px="1"), "noise_radius_px"),
+        (ResidualConfig(noise_exclusion_mode=None), "noise_exclusion_mode"),
     ],
 )
 def test_estimate_local_noise_rejects_invalid_numeric_config(config, message):
@@ -133,6 +143,28 @@ def test_estimate_local_noise_rejects_invalid_numeric_config(config, message):
 
     with pytest.raises(ValueError, match=message):
         estimate_local_noise(residual, config=config)
+
+
+def test_estimate_local_noise_rejects_non_2d_residual():
+    with pytest.raises(ValueError, match="2-D"):
+        estimate_local_noise(np.ones(5, dtype=float))
+
+
+def test_generate_residual_image_rejects_mismatched_clean_render_mask_shape():
+    image = np.ones((2, 2), dtype=float)
+    clean_render = CleanBeltRender(
+        image=np.zeros_like(image),
+        mask=np.ones((2, 3), dtype=bool),
+        phase_estimate=PhaseEstimate(
+            phase_px=0.0,
+            frame_index=0.0,
+            predicted_phase_px=0.0,
+        ),
+        belt_region=BeltRegion(top=0, left=0, height=2, width=2),
+    )
+
+    with pytest.raises(ValueError, match="mask must have the same shape"):
+        generate_residual_image(image, clean_render)
 
 
 def test_render_clean_belt_residual_returns_standardized_particle_signal():

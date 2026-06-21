@@ -204,17 +204,28 @@ def option_value(config: dict[str, Any], name: str) -> str | None:
 
 def parse_optional_float(row: dict[str, str], key: str) -> float | None:
     value = row.get(key, "")
-    return None if value is None or str(value).strip() == "" else float(value)
+    return finite_float(value)
 
 
-def finite_int(value: Any) -> int | None:
+def finite_float(value: Any) -> float | None:
     if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    if isinstance(value, str) and value.strip() == "":
         return None
     try:
         parsed = float(value)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(parsed) or not parsed.is_integer():
+    return parsed if math.isfinite(parsed) else None
+
+
+def finite_int(value: Any) -> int | None:
+    parsed = finite_float(value)
+    if parsed is None:
+        return None
+    if not parsed.is_integer():
         return None
     return int(parsed)
 
@@ -226,13 +237,20 @@ def parse_required_int(value: Any, *, name: str) -> int:
     return parsed
 
 
+def parse_required_float(value: Any, *, name: str) -> float:
+    parsed = finite_float(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be a finite numeric field")
+    return parsed
+
+
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
     frame_index = parse_required_int(row.get("frame_index"), name="frame_index")
     return ParticleDetection(
         frame_index=frame_index,
         label=parse_required_int(row.get("label"), name="label"),
-        y=float(row["y"]),
-        x=float(row["x"]),
+        y=parse_required_float(row.get("y"), name="y"),
+        x=parse_required_float(row.get("x"), name="x"),
         area_px=parse_required_int(row.get("area_px"), name="area_px"),
         bbox_top=parse_required_int(row.get("bbox_top"), name="bbox_top"),
         bbox_left=parse_required_int(row.get("bbox_left"), name="bbox_left"),
@@ -340,7 +358,7 @@ def load_phase_px_by_frame(path: Path, *, frame_count: int) -> list[float]:
     for row in read_csv_rows(path):
         frame_index = finite_int(row.get("frame_index"))
         if frame_index is not None and 0 <= frame_index < frame_count:
-            phase_by_frame[frame_index] = float(row["phase_px"])
+            phase_by_frame[frame_index] = parse_required_float(row.get("phase_px"), name="phase_px")
     missing = [index for index, value in enumerate(phase_by_frame) if value is None]
     if missing:
         preview = ", ".join(str(index) for index in missing[:8])
@@ -384,8 +402,8 @@ def infer_region(metadata: dict[str, Any], config: dict[str, Any]) -> tuple[int,
 
 
 def finite_nonzero_float(value: Any, *, name: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed) or abs(parsed) <= 1e-12:
+    parsed = finite_float(value)
+    if parsed is None or abs(parsed) <= 1e-12:
         raise ValueError(f"{name} must be finite and non-zero")
     return parsed
 
@@ -393,9 +411,10 @@ def finite_nonzero_float(value: Any, *, name: str) -> float:
 def optional_nonnegative_float(value: float | None, *, name: str) -> float | None:
     if value is None:
         return None
-    if not math.isfinite(value) or value < 0:
+    parsed = finite_float(value)
+    if parsed is None or parsed < 0:
         raise ValueError(f"{name} must be finite and non-negative")
-    return None if value == 0 else value
+    return None if parsed == 0 else parsed
 
 
 def int_option(config: dict[str, Any], name: str, default: int) -> int:
@@ -405,14 +424,21 @@ def int_option(config: dict[str, Any], name: str, default: int) -> int:
 
 def float_option(config: dict[str, Any], name: str, default: float) -> float:
     value = option_value(config, name)
-    return default if value is None else float(value)
+    if value is None:
+        return default
+    parsed = finite_float(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be finite")
+    return parsed
 
 
 def optional_float_option(config: dict[str, Any], name: str) -> float | None:
     value = option_value(config, name)
     if value is None:
         return None
-    parsed = float(value)
+    parsed = finite_float(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be finite")
     return None if parsed <= 0 else parsed
 
 
@@ -525,8 +551,10 @@ def write_tracking_outputs(
 
 
 def summarize_detection_areas(rows: list[dict[str, Any]]) -> float | None:
-    values = np.asarray([float(row["area_px"]) for row in rows], dtype=np.float64)
-    values = values[np.isfinite(values)]
+    values = np.asarray(
+        [value for row in rows if (value := finite_float(row.get("area_px"))) is not None],
+        dtype=np.float64,
+    )
     return None if values.size == 0 else float(np.median(values))
 
 

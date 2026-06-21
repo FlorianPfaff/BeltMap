@@ -178,6 +178,11 @@ def finite_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def finite_float_or(value: Any, default: float) -> float:
+    parsed = finite_float(value)
+    return default if parsed is None else parsed
+
+
 def finite_int(value: Any) -> int | None:
     """Parse an integer, returning ``None`` when parsing fails."""
 
@@ -992,7 +997,10 @@ def write_run_trust_artifacts(
         write_csv_rows(path, edge_rows, list(edge_rows[0].keys()) if edge_rows else [])
         artifacts["detection_edge_audit"] = path
 
-        conf_rows = confidence_rows(edge_rows, threshold=finite_float(metadata.get("detection_threshold")) or 5.0)
+        conf_rows = confidence_rows(
+            edge_rows,
+            threshold=finite_float_or(metadata.get("detection_threshold"), 5.0),
+        )
         path = output_dir / "detection_confidence.csv"
         write_csv_rows(path, conf_rows, list(conf_rows[0].keys()) if conf_rows else [])
         artifacts["detection_confidence"] = path
