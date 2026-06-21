@@ -1898,8 +1898,10 @@ def generate_comparison_report(
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
-    if len(specs) < 2:
-        raise ValueError("at least two runs are required for comparison")
+    if not specs:
+        raise ValueError("at least one run is required")
+    if len(specs) < 2 and truth_path is None:
+        raise ValueError("at least two runs are required when no truth labels are supplied")
     if bootstrap_samples < 0:
         raise ValueError("bootstrap samples must be non-negative")
     if not 0.0 < bootstrap_confidence_level < 1.0:
