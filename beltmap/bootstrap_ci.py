@@ -11,6 +11,7 @@ from .benchmark import (
     detection_precision,
     detection_recall,
     f1_score,
+    finite_float,
     group_detection_boxes,
     group_truth_boxes,
     predicted_center,
@@ -73,74 +74,59 @@ class LabeledFrameOutcome:
 MetricFunction = Callable[[np.ndarray], float | None]
 
 
-def empty_bootstrap_metrics() -> dict[str, Any]:
-    """Return blank bootstrap fields for stable comparison CSV schemas."""
+def _finite_float_value(value: Any, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
 
-    return {field: None for field in BOOTSTRAP_SUMMARY_FIELDS}
 
-
-def finite_float(value: Any) -> float | None:
-    """Parse a finite float without treating booleans as numeric samples."""
-
+def _optional_finite_float(value: Any) -> float | None:
     if value is None:
         return None
     if isinstance(value, (bool, np.bool_)):
         return None
-    if isinstance(value, str) and value.strip() == "":
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if math.isfinite(parsed) else None
-
-
-def finite_int(value: Any) -> int | None:
-    """Parse an integer without treating booleans as frame ids or counts."""
-
     parsed = finite_float(value)
-    if parsed is None or not parsed.is_integer():
-        return None
+    return parsed
+
+
+def _nonnegative_integer_value(value: Any, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if not parsed.is_integer() or parsed < 0:
+        raise ValueError(f"{name} must be a finite non-negative integer")
     return int(parsed)
 
 
-def row_frame_index(row: Mapping[str, Any]) -> int | None:
-    """Infer frame index using strict numeric parsing for explicit fields."""
-
-    image = row.get("image")
-    if image is not None and str(image).strip():
-        frame_index = source_frame_index({"image": image})
-        if frame_index is not None:
-            return frame_index
-    return finite_int(row.get("frame_index"))
+def _positive_integer_value(value: Any, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a finite positive integer")
+    return int(parsed)
 
 
-def validated_nonnegative_int(value: Any, name: str) -> int:
-    parsed = finite_int(value)
-    if parsed is None or parsed < 0:
-        raise ValueError(f"{name} must be a non-negative integer")
+def _confidence_level_value(value: Any) -> float:
+    parsed = _finite_float_value(value, "confidence_level")
+    if not 0.0 < parsed < 1.0:
+        raise ValueError("confidence_level must be between 0 and 1")
     return parsed
 
 
-def validated_positive_int(value: Any, name: str) -> int:
-    parsed = validated_nonnegative_int(value, name)
-    if parsed < 1:
-        raise ValueError(f"{name} must be a positive integer")
+def _iou_threshold_value(value: Any) -> float:
+    parsed = _finite_float_value(value, "iou_threshold")
+    if not 0.0 < parsed <= 1.0:
+        raise ValueError("iou_threshold must be in (0, 1]")
     return parsed
 
 
-def validated_open_unit_interval(value: Any, name: str) -> float:
-    parsed = finite_float(value)
-    if parsed is None or not 0.0 < parsed < 1.0:
-        raise ValueError(f"{name} must be a finite number between 0 and 1")
-    return parsed
+def empty_bootstrap_metrics() -> dict[str, Any]:
+    """Return blank bootstrap fields for stable comparison CSV schemas."""
 
-
-def validated_unit_interval(value: Any, name: str) -> float:
-    parsed = finite_float(value)
-    if parsed is None or not 0.0 <= parsed <= 1.0:
-        raise ValueError(f"{name} must be a finite number in [0, 1]")
-    return parsed
+    return {field: None for field in BOOTSTRAP_SUMMARY_FIELDS}
 
 
 def finite_values(rows: Iterable[Mapping[str, Any]], field: str) -> list[float]:
@@ -148,7 +134,7 @@ def finite_values(rows: Iterable[Mapping[str, Any]], field: str) -> list[float]:
 
     values: list[float] = []
     for row in rows:
-        value = finite_float(row.get(field))
+        value = _optional_finite_float(row.get(field))
         if value is not None:
             values.append(value)
     return values
@@ -162,8 +148,8 @@ def resample_indices(
 ) -> np.ndarray:
     """Return bootstrap indices, optionally using circular contiguous blocks."""
 
-    n_units = validated_nonnegative_int(n_units, "n_units")
-    block_length = validated_positive_int(block_length, "block_length")
+    n_units = _nonnegative_integer_value(n_units, "n_units")
+    block_length = _positive_integer_value(block_length, "block_length")
     if n_units <= 0:
         return np.asarray([], dtype=np.int64)
     if block_length <= 1:
@@ -183,15 +169,12 @@ def ci_summary(
 ) -> tuple[float | None, float | None, float | None]:
     """Return bootstrap median and equal-tailed confidence interval bounds."""
 
-    confidence_level = validated_open_unit_interval(
-        confidence_level,
-        "confidence_level",
-    )
+    confidence_level = _confidence_level_value(confidence_level)
     arr = np.asarray(
         [
             parsed
             for value in values
-            if (parsed := finite_float(value)) is not None
+            if (parsed := _optional_finite_float(value)) is not None
         ],
         dtype=np.float64,
     )
@@ -231,13 +214,10 @@ def bootstrap_numeric_metrics(
 ) -> dict[str, Any]:
     """Bootstrap scalar metrics computed from a one-dimensional numeric sample."""
 
+    samples = _nonnegative_integer_value(samples, "samples")
+    confidence_level = _confidence_level_value(confidence_level)
+    block_length = _positive_integer_value(block_length, "block_length")
     result: dict[str, Any] = {}
-    samples = validated_nonnegative_int(samples, "samples")
-    confidence_level = validated_open_unit_interval(
-        confidence_level,
-        "confidence_level",
-    )
-    block_length = validated_positive_int(block_length, "block_length")
     arr = np.asarray(values, dtype=np.float64)
     arr = arr[np.isfinite(arr)]
     estimates: dict[str, list[float | None]] = {name: [] for name in metrics}
@@ -253,7 +233,9 @@ def bootstrap_numeric_metrics(
             estimates[name].append(function(sample))
 
     for name, values_for_metric in estimates.items():
-        add_ci_fields(result, name, values_for_metric, confidence_level=confidence_level)
+        add_ci_fields(
+            result, name, values_for_metric, confidence_level=confidence_level
+        )
     return result
 
 
@@ -272,8 +254,12 @@ def share_0_to_1(values: np.ndarray) -> float | None:
 
 
 def count_ge(threshold: float) -> MetricFunction:
+    threshold = _finite_float_value(threshold, "threshold")
+
     def count(values: np.ndarray) -> float | None:
-        return None if values.size == 0 else float(np.count_nonzero(values >= threshold))
+        return (
+            None if values.size == 0 else float(np.count_nonzero(values >= threshold))
+        )
 
     return count
 
@@ -287,11 +273,19 @@ def labeled_frame_outcomes(
 ) -> list[LabeledFrameOutcome]:
     """Compute per-frame labeled detection outcomes for bootstrap resampling."""
 
+    iou_threshold = _iou_threshold_value(iou_threshold)
+    normalized_scored_frames = {
+        _nonnegative_integer_value(frame, "scored_frames") for frame in scored_frames
+    }
     truth_by_frame = group_truth_boxes(dict(truth))
     pred_by_frame = group_detection_boxes(
-        [dict(row) for row in detection_rows if row_frame_index(row) in scored_frames]
+        [
+            dict(row)
+            for row in detection_rows
+            if source_frame_index(dict(row)) in normalized_scored_frames
+        ]
     )
-    frame_indices = sorted(scored_frames)
+    frame_indices = sorted(normalized_scored_frames)
     outcomes: list[LabeledFrameOutcome] = []
 
     for frame_index in frame_indices:
@@ -316,7 +310,9 @@ def labeled_frame_outcomes(
             matched_ious.append(float(iou))
             pred_y, pred_x = predicted_center(preds[pred_index])
             truth_y, truth_x = truth_center(truths[truth_index])
-            centroid_errors.append(float(math.hypot(pred_y - truth_y, pred_x - truth_x)))
+            centroid_errors.append(
+                float(math.hypot(pred_y - truth_y, pred_x - truth_x))
+            )
 
         true_positives = len(matched_preds)
         outcomes.append(
@@ -334,9 +330,39 @@ def labeled_frame_outcomes(
     return outcomes
 
 
-def aggregate_labeled_outcomes(outcomes: Sequence[LabeledFrameOutcome]) -> dict[str, Any]:
+def _validate_labeled_outcome(outcome: LabeledFrameOutcome) -> None:
+    truth_boxes = _nonnegative_integer_value(outcome.truth_boxes, "truth_boxes")
+    predicted_boxes = _nonnegative_integer_value(
+        outcome.predicted_boxes,
+        "predicted_boxes",
+    )
+    true_positives = _nonnegative_integer_value(
+        outcome.true_positives,
+        "true_positives",
+    )
+    false_positives = _nonnegative_integer_value(
+        outcome.false_positives,
+        "false_positives",
+    )
+    false_negatives = _nonnegative_integer_value(
+        outcome.false_negatives,
+        "false_negatives",
+    )
+    if true_positives > min(truth_boxes, predicted_boxes):
+        raise ValueError("true_positives cannot exceed truth or predicted boxes")
+    if false_positives != predicted_boxes - true_positives:
+        raise ValueError("false_positives must equal predicted_boxes - true_positives")
+    if false_negatives != truth_boxes - true_positives:
+        raise ValueError("false_negatives must equal truth_boxes - true_positives")
+
+
+def aggregate_labeled_outcomes(
+    outcomes: Sequence[LabeledFrameOutcome],
+) -> dict[str, Any]:
     """Aggregate per-frame labeled outcomes into detection precision/recall metrics."""
 
+    for outcome in outcomes:
+        _validate_labeled_outcome(outcome)
     truth_boxes = sum(outcome.truth_boxes for outcome in outcomes)
     predicted_boxes = sum(outcome.predicted_boxes for outcome in outcomes)
     true_positives = sum(outcome.true_positives for outcome in outcomes)
@@ -347,7 +373,9 @@ def aggregate_labeled_outcomes(outcomes: Sequence[LabeledFrameOutcome]) -> dict[
     f1 = f1_score(precision, recall)
 
     matched_ious = [value for outcome in outcomes for value in outcome.matched_ious]
-    centroid_errors = [value for outcome in outcomes for value in outcome.centroid_errors_px]
+    centroid_errors = [
+        value for outcome in outcomes for value in outcome.centroid_errors_px
+    ]
     return {
         "labeled_truth_boxes": truth_boxes,
         "labeled_predicted_boxes": predicted_boxes,
@@ -357,8 +385,12 @@ def aggregate_labeled_outcomes(outcomes: Sequence[LabeledFrameOutcome]) -> dict[
         "labeled_precision": None if precision is None else float(precision),
         "labeled_recall": None if recall is None else float(recall),
         "labeled_f1": None if f1 is None else float(f1),
-        "labeled_mean_matched_iou": None if not matched_ious else float(np.mean(matched_ious)),
-        "labeled_mean_centroid_error_px": None if not centroid_errors else float(np.mean(centroid_errors)),
+        "labeled_mean_matched_iou": (
+            None if not matched_ious else float(np.mean(matched_ious))
+        ),
+        "labeled_mean_centroid_error_px": (
+            None if not centroid_errors else float(np.mean(centroid_errors))
+        ),
     }
 
 
@@ -372,12 +404,9 @@ def bootstrap_labeled_metrics(
 ) -> dict[str, Any]:
     """Bootstrap labeled detection metrics over scored frames."""
 
-    samples = validated_nonnegative_int(samples, "samples")
-    confidence_level = validated_open_unit_interval(
-        confidence_level,
-        "confidence_level",
-    )
-    block_length_frames = validated_positive_int(
+    samples = _nonnegative_integer_value(samples, "samples")
+    confidence_level = _confidence_level_value(confidence_level)
+    block_length_frames = _positive_integer_value(
         block_length_frames,
         "block_length_frames",
     )
@@ -429,21 +458,15 @@ def bootstrap_run_summary(
 ) -> dict[str, Any]:
     """Return bootstrap median/CI fields for one comparison row."""
 
-    samples = validated_nonnegative_int(samples, "bootstrap samples")
-    confidence_level = validated_open_unit_interval(
-        confidence_level,
-        "bootstrap confidence level",
-    )
-    block_length_frames = validated_positive_int(
+    samples = _nonnegative_integer_value(samples, "samples")
+    confidence_level = _confidence_level_value(confidence_level)
+    block_length_frames = _positive_integer_value(
         block_length_frames,
-        "bootstrap block length",
+        "block_length_frames",
     )
+    truth_iou_threshold = _iou_threshold_value(truth_iou_threshold)
     if seed is not None:
-        seed = validated_nonnegative_int(seed, "bootstrap seed")
-    truth_iou_threshold = validated_unit_interval(
-        truth_iou_threshold,
-        "truth_iou_threshold",
-    )
+        seed = _nonnegative_integer_value(seed, "seed")
 
     result = empty_bootstrap_metrics()
     if samples == 0:

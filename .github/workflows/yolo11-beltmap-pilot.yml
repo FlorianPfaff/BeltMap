@@ -1,0 +1,956 @@
+name: YOLO11 BeltMap pilot
+
+run-name: >-
+  YOLO11 BeltMap pilot dataset=${{ inputs.dataset_name || 'images_BrickandSandLimeBrick_50vs50_20gpers' }}
+  frames=${{ inputs.max_frames || '500' }}
+  model=${{ inputs.yolo_model || 'yolo11n.pt' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_name:
+        description: "Prepared Zenodo dataset name to expose as data/images."
+        required: true
+        type: string
+        default: "images_BrickandSandLimeBrick_50vs50_20gpers"
+      zenodo_record_id:
+        description: "Zenodo record containing the image zip."
+        required: true
+        type: string
+        default: "7801882"
+      record_file_glob:
+        description: "File glob passed to beltmap-prepare-zenodo."
+        required: true
+        type: string
+        default: "images_*.zip"
+      truth_path:
+        description: "Reviewed crop-local truth JSON used to build YOLO labels."
+        required: true
+        type: string
+        default: "data/labels/brick20g_adversarial_labels.json"
+      belt_region:
+        description: "Crop as top,left,height,width. Must match the truth JSON."
+        required: true
+        type: string
+        default: "0,220,1330,1800"
+      max_frames:
+        description: "Maximum number of source images to expose to label conversion."
+        required: true
+        type: string
+        default: "500"
+      split_modulus:
+        description: "Deterministic frame split modulus. train: residues 0..mod-3, val: mod-2, test: mod-1."
+        required: true
+        type: string
+        default: "5"
+      yolo_model:
+        description: "Ultralytics YOLO model name or path."
+        required: true
+        type: string
+        default: "yolo11n.pt"
+      epochs:
+        description: "YOLO training epochs. Use 0 to only build datasets."
+        required: true
+        type: string
+        default: "50"
+      imgsz:
+        description: "YOLO image size."
+        required: true
+        type: string
+        default: "960"
+      batch:
+        description: "YOLO batch size. Use -1 for auto batch where supported."
+        required: true
+        type: string
+        default: "4"
+      include_residual:
+        description: "Also train/evaluate YOLO on BeltMap normalized residual crops. Requires belt_map.npy."
+        required: true
+        type: boolean
+        default: true
+      include_recurrence_filter:
+        description: "Also evaluate raw YOLO detections with a BeltMap belt-coordinate recurrence post-filter."
+        required: true
+        type: boolean
+        default: false
+      beltmap_output_dir:
+        description: "BeltMap output directory containing belt_map.npy and phase_estimates.csv for residual crops. It is also included as a comparison run when detections.csv exists."
+        required: false
+        type: string
+        default: "outputs/brick20g_comparable_500_runs/runs/posmask_iter2"
+      beltmap_run_id:
+        description: "Optional workflow run ID to download a BeltMap output artifact before building residual crops."
+        required: false
+        type: string
+        default: ""
+      beltmap_artifact_name:
+        description: "Artifact name downloaded from beltmap_run_id."
+        required: false
+        type: string
+        default: "beltmap-brick20-posmask-iter2-eval500"
+      build_beltmap_if_missing:
+        description: "Build the default Brick 20 g/s posmask_iter2 BeltMap residual source when no artifact/output directory is available."
+        required: true
+        type: boolean
+        default: true
+      residual_clip:
+        description: "Residual display clip as low,high normalized residual."
+        required: true
+        type: string
+        default: "-3,12"
+      compare_bootstrap_samples:
+        description: "Bootstrap samples for beltmap-compare on exported YOLO detections. Use 0 to disable."
+        required: true
+        type: string
+        default: "0"
+      compare_bootstrap_block_length_frames:
+        description: "Circular block length for comparison bootstrap when enabled."
+        required: true
+        type: string
+        default: "5"
+      smoke_only:
+        description: "Build YOLO datasets and compile checks, but skip YOLO training/validation/prediction/comparison."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: yolo11-beltmap-pilot-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  POETRY_NO_INTERACTION: "1"
+  POETRY_VERSION: "2.2.1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  MPLBACKEND: "Agg"
+
+jobs:
+  yolo11-beltmap-pilot:
+    name: YOLO11 raw vs BeltMap residual pilot
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 720
+
+    steps:
+      - name: Check out BeltMap
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: |
+          set -euo pipefail
+          python -m venv .poetry-bootstrap
+          .poetry-bootstrap/bin/python -m pip install --upgrade pip
+          .poetry-bootstrap/bin/python -m pip install "poetry==${POETRY_VERSION}"
+          echo "$PWD/.poetry-bootstrap/bin" >> "$GITHUB_PATH"
+          .poetry-bootstrap/bin/poetry --version
+
+      - name: Install BeltMap, speed dependencies, and Ultralytics
+        run: |
+          set -euo pipefail
+          rm -rf .venv
+          poetry lock
+          poetry install --extras "speed test"
+          poetry run python -m pip install --upgrade "ultralytics>=8.3.0" "opencv-python-headless>=4.9" "pyyaml>=6"
+          poetry run python - <<'PY'
+          import importlib
+          for name in ("beltmap", "ultralytics", "PIL", "yaml", "cv2"):
+              importlib.import_module(name)
+              print(f"import ok: {name}")
+          PY
+
+      - name: Prepare Zenodo dataset
+        env:
+          ZENODO_RECORD_ID: ${{ inputs.zenodo_record_id }}
+          RECORD_FILE_GLOB: ${{ inputs.record_file_glob }}
+          DATASET_NAME: ${{ inputs.dataset_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p data outputs
+          poetry run beltmap-prepare-zenodo \
+            --record-id "$ZENODO_RECORD_ID" \
+            --record-file-glob "$RECORD_FILE_GLOB" \
+            --dataset-name "$DATASET_NAME" \
+            --image-link data/images \
+            --zip-link "data/${DATASET_NAME}.zip" \
+            --manifest-path outputs/dataset_manifest.json
+          echo "Dataset image count:"
+          find -L data/images -type f | wc -l
+          printf 'data/images -> %s\n' "$(readlink -f data/images)"
+
+      - name: Download optional BeltMap artifact
+        if: ${{ inputs.beltmap_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BELTMAP_RUN_ID: ${{ inputs.beltmap_run_id }}
+          BELTMAP_ARTIFACT_NAME: ${{ inputs.beltmap_artifact_name }}
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+        run: |
+          set -euo pipefail
+          rm -rf "$BELTMAP_OUTPUT_DIR"
+          mkdir -p "$BELTMAP_OUTPUT_DIR"
+          gh run download "$BELTMAP_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$BELTMAP_ARTIFACT_NAME" \
+            --dir "$BELTMAP_OUTPUT_DIR"
+          test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
+
+      - name: Build default Brick 20g BeltMap residual source if missing
+        if: ${{ (inputs.include_residual || inputs.include_recurrence_filter) && inputs.build_beltmap_if_missing && !inputs.smoke_only }}
+        env:
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          DATASET_NAME: ${{ inputs.dataset_name }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+        run: |
+          set -euo pipefail
+          if [ -f "$BELTMAP_OUTPUT_DIR/belt_map.npy" ] && [ -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv" ]; then
+            echo "Using existing BeltMap residual source at $BELTMAP_OUTPUT_DIR"
+            exit 0
+          fi
+          if [ "$DATASET_NAME" != "images_BrickandSandLimeBrick_50vs50_20gpers" ]; then
+            echo "No BeltMap source was found, and the built-in fallback is only configured for Brick 20 g/s 50:50." >&2
+            echo "Provide beltmap_run_id/beltmap_artifact_name or beltmap_output_dir for dataset $DATASET_NAME." >&2
+            exit 1
+          fi
+          if [ "$BELT_REGION" != "0,220,1330,1800" ]; then
+            echo "No BeltMap source was found, and the built-in fallback expects belt_region=0,220,1330,1800." >&2
+            echo "Provide a matching BeltMap artifact/output directory for belt_region=$BELT_REGION." >&2
+            exit 1
+          fi
+          if [ "$MAX_FRAMES" != "500" ]; then
+            echo "No BeltMap source was found, and the built-in fallback expects max_frames=500." >&2
+            echo "Provide a matching BeltMap artifact/output directory for max_frames=$MAX_FRAMES." >&2
+            exit 1
+          fi
+
+          mkdir -p "$BELTMAP_OUTPUT_DIR" outputs
+          cat > outputs/brick20g_posmask_iter2_eval500.toml <<EOF
+          [paths]
+          image_dir = "data/images"
+          output_dir = "$BELTMAP_OUTPUT_DIR"
+
+          [frames]
+          max_frames = 500
+          stride = 1
+
+          [belt]
+          region = [0, 220, 1330, 1800]
+          velocity_px_per_frame = 59.3
+          velocity_frame_unit = "source_frame"
+          period_px = 14723
+
+          [detection]
+          threshold = 12.0
+          mode = "positive"
+          low_threshold = 0.0
+          min_area_px = 50
+          max_area_px = 0
+          min_bbox_width_px = 3
+          min_bbox_height_px = 3
+          max_bbox_aspect_ratio = 4.0
+          min_bbox_extent = 0.15
+          split_merged_components = true
+          split_min_projection_gap_px = 1
+          split_min_component_area_px = 4
+          local_illumination_correction = false
+
+          [residual]
+          noise_radius_px = 15
+          clip_sigma = 5.0
+          min_noise = 1e-6
+          noise_exclusion_sigma = 4.0
+          noise_exclusion_radius_px = 2
+
+          [photometric]
+          enabled = true
+          trim_fraction = 0.05
+          max_iterations = 3
+          min_pixels = 10000
+
+          [tracking]
+          min_track_length = 3
+          max_frame_gap = 2.0
+          velocity_fit_method = "theil_sen"
+
+          [track_filter]
+          min_length = 5
+          min_velocity_ratio_y = 0.0
+          max_velocity_ratio_y = 1.1
+          max_abs_x_velocity_px_per_frame = 0.0
+
+          [map]
+          sample_frames = 500
+          sampling_strategy = "adaptive_phase_coverage"
+          adaptive_candidate_frames = 3000
+          reconstruction_trim_fraction = 0.0
+          fractional_splat = true
+          frame_median_offset_correction = true
+          local_illumination_correction = false
+          mask_iterations = 4
+          aggregation = "huber"
+          robust_iterations = 1
+          robust_huber_delta = 3.0
+          robust_min_scale = 1.0
+
+          [map_particle_mask]
+          mode = "positive"
+          threshold = 4.0
+          grow_threshold = 0.0
+          dilation_px = 8
+          margin_px = 16
+          min_area_px = 8
+
+          [static_noise]
+          sample_frames = 500
+          min_scale = 0.5
+          mask_threshold = 4.0
+          mask_margin_px = 16
+          mask_min_area_px = 4
+
+          [static_background]
+          sample_frames = 500
+          mask_threshold = 4.0
+          mask_margin_px = 16
+          mask_min_area_px = 4
+
+          [recurrent_artifact]
+          min_revolutions = 3
+          margin_px = 4
+          max_overlap_fraction = 0.3
+          mode = "soft"
+          soft_penalty_weight = 1.0
+
+          [registration]
+          search_radius_px = 12.0
+          search_step_px = 0.5
+          subpixel_refinement = true
+          robust_normalization = true
+
+          [phase]
+          estimation_mode = "registration"
+
+          [phase_refinement]
+          iterations = 1
+          min_score = 0.0
+          max_abs_correction_px = 4.0
+          smoothing_window_frames = 25
+
+          [phase_drift]
+          enabled = true
+          smoothing_alpha = 0.15
+          min_score = 0.05
+          max_abs_residual_correction_px = 4.0
+          max_abs_px = 8.0
+
+          [phase_smoothing]
+          window_frames = 25
+          min_score = 0.05
+          max_abs_correction_px = 4.0
+          min_support = 3
+
+          [progress]
+          interval_frames = 25
+          partial_output_interval_frames = 250
+
+          [debug]
+          residual_preview_frames = 3
+          residual_preview_interval_frames = 0
+          EOF
+
+          poetry run beltmap-apply --config outputs/brick20g_posmask_iter2_eval500.toml --print-config
+          test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
+          test -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv"
+
+      - name: Upload BeltMap residual source artifact
+        if: ${{ (inputs.include_residual || inputs.include_recurrence_filter) && !inputs.smoke_only }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.beltmap_artifact_name }}
+          path: |
+            ${{ inputs.beltmap_output_dir }}/belt_map.npy
+            ${{ inputs.beltmap_output_dir }}/phase_estimates.csv
+            ${{ inputs.beltmap_output_dir }}/detections.csv
+            ${{ inputs.beltmap_output_dir }}/detections_per_frame.csv
+            ${{ inputs.beltmap_output_dir }}/metadata.json
+            ${{ inputs.beltmap_output_dir }}/config_resolved.json
+            ${{ inputs.beltmap_output_dir }}/static_noise.npy
+            ${{ inputs.beltmap_output_dir }}/static_background.npy
+            ${{ inputs.beltmap_output_dir }}/recurrent_artifact_map.npy
+          if-no-files-found: error
+          retention-days: 21
+
+      - name: Build YOLO raw/residual datasets
+        env:
+          TRUTH_PATH: ${{ inputs.truth_path }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+          SPLIT_MODULUS: ${{ inputs.split_modulus }}
+          INCLUDE_RESIDUAL: ${{ inputs.include_residual }}
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          RESIDUAL_CLIP: ${{ inputs.residual_clip }}
+        run: |
+          set -euo pipefail
+          poetry run python - <<'PY'
+          from __future__ import annotations
+
+          import csv
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          import numpy as np
+          import yaml
+          from PIL import Image
+
+          from beltmap.phase import PhaseEstimate
+          from beltmap.residual import render_clean_belt_residual
+
+          image_exts = {".bmp", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+          split_names = ("train", "val", "test")
+
+          def natural_key(path: Path):
+              parts = re.split(r"(\d+)", str(path))
+              return [int(part) if part.isdigit() else part.lower() for part in parts]
+
+          def parse_int_tuple(value: str, *, expected: int, name: str) -> tuple[int, ...]:
+              parts = [part.strip() for part in value.split(",")]
+              if len(parts) != expected:
+                  raise SystemExit(f"{name} must contain {expected} comma-separated values: {value!r}")
+              return tuple(int(float(part)) for part in parts)
+
+          def parse_float_tuple(value: str, *, expected: int, name: str) -> tuple[float, ...]:
+              parts = [part.strip() for part in value.split(",")]
+              if len(parts) != expected:
+                  raise SystemExit(f"{name} must contain {expected} comma-separated values: {value!r}")
+              return tuple(float(part) for part in parts)
+
+          def frame_split(frame_index: int, modulus: int) -> str:
+              residue = frame_index % modulus
+              if residue == modulus - 1:
+                  return "test"
+              if residue == modulus - 2:
+                  return "val"
+              return "train"
+
+          def yolo_box(row: dict, *, crop_width: int, crop_height: int) -> str:
+              top = float(row["top"])
+              left = float(row["left"])
+              bottom = float(row["bottom"])
+              right = float(row["right"])
+              top = min(max(top, 0.0), float(crop_height))
+              bottom = min(max(bottom, 0.0), float(crop_height))
+              left = min(max(left, 0.0), float(crop_width))
+              right = min(max(right, 0.0), float(crop_width))
+              if bottom <= top or right <= left:
+                  raise ValueError(f"invalid box after clipping: {row}")
+              x_center = 0.5 * (left + right) / crop_width
+              y_center = 0.5 * (top + bottom) / crop_height
+              width = (right - left) / crop_width
+              height = (bottom - top) / crop_height
+              return f"0 {x_center:.8f} {y_center:.8f} {width:.8f} {height:.8f}"
+
+          def load_phase_estimates(path: Path) -> dict[int, PhaseEstimate]:
+              if not path.is_file():
+                  return {}
+              result: dict[int, PhaseEstimate] = {}
+              with path.open(newline="", encoding="utf-8") as handle:
+                  reader = csv.DictReader(handle)
+                  for row in reader:
+                      frame_text = row.get("frame_index") or row.get("source_frame_index") or row.get("image_index")
+                      phase_text = row.get("phase_px") or row.get("smoothed_phase_px") or row.get("refined_phase_px")
+                      if frame_text in (None, "") or phase_text in (None, ""):
+                          continue
+                      frame_index = int(float(frame_text))
+                      phase_px = float(phase_text)
+                      predicted = float(row.get("predicted_phase_px") or phase_px)
+                      correction = float(row.get("correction_px") or row.get("smoothed_correction_px") or 0.0)
+                      result[frame_index] = PhaseEstimate(
+                          phase_px=phase_px,
+                          frame_index=float(frame_index),
+                          predicted_phase_px=predicted,
+                          correction_px=correction,
+                          method=row.get("method") or "phase_estimates_csv",
+                      )
+              return result
+
+          def save_crop(source: Path, target: Path, *, box: tuple[int, int, int, int]) -> np.ndarray:
+              top, left, height, width = box
+              with Image.open(source) as image:
+                  gray = image.convert("L")
+                  crop = gray.crop((left, top, left + width, top + height))
+              target.parent.mkdir(parents=True, exist_ok=True)
+              crop.save(target)
+              return np.asarray(crop, dtype=np.float64)
+
+          def save_residual_crop(
+              crop_values: np.ndarray,
+              target: Path,
+              *,
+              belt_map: np.ndarray,
+              frame_index: int,
+              phase_estimates: dict[int, PhaseEstimate],
+              clip_low: float,
+              clip_high: float,
+          ) -> bool:
+              phase = phase_estimates.get(frame_index)
+              if phase is None:
+                  return False
+              residual = render_clean_belt_residual(
+                  image=crop_values,
+                  belt_map=belt_map,
+                  frame_index=float(frame_index),
+                  belt_region=None,
+                  phase_estimate=phase,
+                  periodic=True,
+              )
+              norm = residual.normalized
+              scaled = np.clip(norm, clip_low, clip_high)
+              scaled = (scaled - clip_low) / max(clip_high - clip_low, 1e-6)
+              scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
+              image = Image.fromarray((255.0 * scaled).astype(np.uint8), mode="L")
+              target.parent.mkdir(parents=True, exist_ok=True)
+              image.save(target)
+              return True
+
+          truth_path = Path(os.environ["TRUTH_PATH"])
+          truth = json.loads(truth_path.read_text(encoding="utf-8"))
+          if truth.get("status") != "reviewed_ground_truth" or truth.get("requires_manual_review"):
+              raise SystemExit(
+                  f"Truth file must be reviewed_ground_truth and not require review: {truth_path}"
+              )
+          scored_frames = {int(frame) for frame in truth.get("scored_frames", [])}
+          if not scored_frames:
+              raise SystemExit("truth file has no scored_frames")
+
+          crop_box = parse_int_tuple(os.environ["BELT_REGION"], expected=4, name="BELT_REGION")
+          crop_top, crop_left, crop_height, crop_width = crop_box
+          truth_crop = truth.get("coordinate_system", {}).get("crop_region_in_source_image", {})
+          if truth_crop:
+              expected = (
+                  int(truth_crop.get("top", crop_top)),
+                  int(truth_crop.get("left", crop_left)),
+                  int(truth_crop.get("height", crop_height)),
+                  int(truth_crop.get("width", crop_width)),
+              )
+              if expected != crop_box:
+                  raise SystemExit(f"BELT_REGION {crop_box} does not match truth crop {expected}")
+
+          max_frames = int(os.environ["MAX_FRAMES"])
+          split_modulus = int(os.environ["SPLIT_MODULUS"])
+          if split_modulus < 3:
+              raise SystemExit("split_modulus must be at least 3")
+
+          images = sorted(
+              (path for path in Path("data/images").rglob("*") if path.suffix.lower() in image_exts),
+              key=natural_key,
+          )
+          if max_frames > 0:
+              images = images[:max_frames]
+          if not images:
+              raise SystemExit("no source images found below data/images")
+          if max(scored_frames) >= len(images):
+              raise SystemExit(
+                  f"truth references frame {max(scored_frames)}, but only {len(images)} images are available"
+              )
+
+          rows_by_frame: dict[int, list[dict]] = {frame: [] for frame in scored_frames}
+          for particle in truth.get("particles", []):
+              frame_index = int(particle["frame_index"])
+              if frame_index in rows_by_frame:
+                  rows_by_frame[frame_index].append(particle)
+          if not any(rows_by_frame.values()):
+              raise SystemExit("truth file contains no particle boxes on scored_frames")
+
+          output_root = Path("outputs/yolo11_beltmap_pilot")
+          dataset_root = output_root / "datasets"
+          for mode in ("raw", "residual"):
+              for split in split_names:
+                  (dataset_root / mode / "images" / split).mkdir(parents=True, exist_ok=True)
+                  (dataset_root / mode / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+          include_residual = os.environ["INCLUDE_RESIDUAL"].lower() == "true"
+          beltmap_output_dir = Path(os.environ["BELTMAP_OUTPUT_DIR"])
+          belt_map_path = beltmap_output_dir / "belt_map.npy"
+          phase_path = beltmap_output_dir / "phase_estimates.csv"
+          belt_map = None
+          phase_estimates: dict[int, PhaseEstimate] = {}
+          if include_residual:
+              if belt_map_path.is_file() and phase_path.is_file():
+                  belt_map = np.load(belt_map_path)
+                  phase_estimates = load_phase_estimates(phase_path)
+                  print(f"Loaded BeltMap residual source: {belt_map_path}, phases={len(phase_estimates)}")
+              else:
+                  print(
+                      "Residual dataset requested but belt_map.npy or phase_estimates.csv is missing; "
+                      "only raw YOLO dataset will be built."
+                  )
+                  include_residual = False
+          clip_low, clip_high = parse_float_tuple(os.environ["RESIDUAL_CLIP"], expected=2, name="RESIDUAL_CLIP")
+          if clip_high <= clip_low:
+              raise SystemExit("RESIDUAL_CLIP high must be greater than low")
+
+          manifest_rows = []
+          split_counts = {mode: {split: 0 for split in split_names} for mode in ("raw", "residual")}
+          for frame_index in sorted(scored_frames):
+              split = frame_split(frame_index, split_modulus)
+              source = images[frame_index]
+              stem = f"frame_{frame_index:06d}"
+              raw_target = dataset_root / "raw" / "images" / split / f"{stem}.png"
+              crop_values = save_crop(source, raw_target, box=crop_box)
+              label_lines = [
+                  yolo_box(row, crop_width=crop_width, crop_height=crop_height)
+                  for row in rows_by_frame.get(frame_index, [])
+              ]
+              label_target = dataset_root / "raw" / "labels" / split / f"{stem}.txt"
+              label_target.write_text("\n".join(label_lines) + ("\n" if label_lines else ""), encoding="utf-8")
+              split_counts["raw"][split] += 1
+
+              residual_written = False
+              if include_residual and belt_map is not None:
+                  residual_target = dataset_root / "residual" / "images" / split / f"{stem}.png"
+                  residual_written = save_residual_crop(
+                      crop_values,
+                      residual_target,
+                      belt_map=belt_map,
+                      frame_index=frame_index,
+                      phase_estimates=phase_estimates,
+                      clip_low=clip_low,
+                      clip_high=clip_high,
+                  )
+                  if residual_written:
+                      residual_label = dataset_root / "residual" / "labels" / split / f"{stem}.txt"
+                      residual_label.write_text(label_target.read_text(encoding="utf-8"), encoding="utf-8")
+                      split_counts["residual"][split] += 1
+
+              manifest_rows.append(
+                  {
+                      "frame_index": frame_index,
+                      "split": split,
+                      "source_image": str(source),
+                      "raw_image": str(raw_target),
+                      "residual_image_written": residual_written,
+                      "n_boxes": len(label_lines),
+                  }
+              )
+
+          class_names = ["particle"]
+          for mode in ("raw", "residual"):
+              if mode == "residual" and not any(split_counts[mode].values()):
+                  continue
+              data_yaml = {
+                  "path": str((dataset_root / mode).resolve()),
+                  "train": "images/train",
+                  "val": "images/val",
+                  "test": "images/test",
+                  "names": {index: name for index, name in enumerate(class_names)},
+              }
+              (dataset_root / f"{mode}.yaml").write_text(yaml.safe_dump(data_yaml, sort_keys=False), encoding="utf-8")
+
+          output_root.mkdir(parents=True, exist_ok=True)
+          with (output_root / "dataset_manifest.csv").open("w", newline="", encoding="utf-8") as handle:
+              writer = csv.DictWriter(handle, fieldnames=list(manifest_rows[0]))
+              writer.writeheader()
+              writer.writerows(manifest_rows)
+          (output_root / "dataset_summary.json").write_text(
+              json.dumps(
+                  {
+                      "truth_path": str(truth_path),
+                      "n_scored_frames": len(scored_frames),
+                      "n_particles": sum(len(rows) for rows in rows_by_frame.values()),
+                      "crop_region": dict(top=crop_top, left=crop_left, height=crop_height, width=crop_width),
+                      "split_counts": split_counts,
+                      "residual_dataset_built": any(split_counts["residual"].values()),
+                  },
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
+          print(json.dumps(json.loads((output_root / "dataset_summary.json").read_text()), indent=2))
+          PY
+
+      - name: Write test-split truth for BeltMap comparison
+        env:
+          TRUTH_PATH: ${{ inputs.truth_path }}
+        run: |
+          set -euo pipefail
+          poetry run python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import re
+          from pathlib import Path
+
+          def infer_frame_index(path: Path) -> int:
+              matches = re.findall(r"(\d+)", path.stem)
+              if not matches:
+                  raise ValueError(f"could not infer frame index from {path}")
+              return int(matches[-1])
+
+          truth_path = Path(__import__('os').environ['TRUTH_PATH'])
+          truth = json.loads(truth_path.read_text(encoding='utf-8'))
+          test_images = sorted(Path('outputs/yolo11_beltmap_pilot/datasets/raw/images/test').glob('*.png'))
+          if not test_images:
+              raise SystemExit('raw test split contains no images')
+          test_frames = {infer_frame_index(path) for path in test_images}
+          subset = dict(truth)
+          subset['scored_frames'] = sorted(test_frames)
+          subset['particles'] = [
+              row for row in truth.get('particles', [])
+              if int(row.get('frame_index')) in test_frames
+          ]
+          if 'empty_frames' in subset:
+              subset['empty_frames'] = [
+                  int(frame) for frame in truth.get('empty_frames', [])
+                  if int(frame) in test_frames
+              ]
+          if 'frame_reviews' in subset:
+              subset['frame_reviews'] = [
+                  row for row in truth.get('frame_reviews', [])
+                  if int(row.get('frame_index')) in test_frames
+              ]
+          if 'review_frames' in subset:
+              subset['review_frames'] = [
+                  row for row in truth.get('review_frames', [])
+                  if int(row.get('frame_index')) in test_frames
+              ]
+          subset['source_truth_path'] = str(truth_path)
+          subset['subset_role'] = 'yolo11_pilot_test_split_only'
+          subset['subset_warning'] = (
+              'This truth file is restricted to the YOLO test split so beltmap-compare '
+              'does not count train/validation frames as false negatives.'
+          )
+          out = Path('outputs/yolo11_beltmap_pilot/test_truth.json')
+          out.write_text(json.dumps(subset, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps({
+              'test_truth': str(out),
+              'test_frames': sorted(test_frames),
+              'n_test_frames': len(test_frames),
+              'n_test_particles': len(subset['particles']),
+          }, indent=2))
+          PY
+
+      - name: Train and validate YOLO11 on raw crops
+        if: ${{ !inputs.smoke_only && inputs.epochs != '0' }}
+        env:
+          YOLO_MODEL: ${{ inputs.yolo_model }}
+          EPOCHS: ${{ inputs.epochs }}
+          IMGSZ: ${{ inputs.imgsz }}
+          BATCH: ${{ inputs.batch }}
+        run: |
+          set -euo pipefail
+          poetry run yolo detect train \
+            model="$YOLO_MODEL" \
+            data=outputs/yolo11_beltmap_pilot/datasets/raw.yaml \
+            epochs="$EPOCHS" \
+            imgsz="$IMGSZ" \
+            batch="$BATCH" \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
+            name=raw_train \
+            exist_ok=True
+          poetry run yolo detect val \
+            model="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs/raw_train/weights/best.pt" \
+            data=outputs/yolo11_beltmap_pilot/datasets/raw.yaml \
+            split=test \
+            imgsz="$IMGSZ" \
+            batch="$BATCH" \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
+            name=raw_test \
+            exist_ok=True
+
+      - name: Predict, export, and score YOLO11 raw detections
+        if: ${{ !inputs.smoke_only && inputs.epochs != '0' }}
+        env:
+          IMGSZ: ${{ inputs.imgsz }}
+          BATCH: ${{ inputs.batch }}
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          BOOTSTRAP_SAMPLES: ${{ inputs.compare_bootstrap_samples }}
+          BOOTSTRAP_BLOCK_LENGTH_FRAMES: ${{ inputs.compare_bootstrap_block_length_frames }}
+        run: |
+          set -euo pipefail
+          poetry run yolo detect predict \
+            model="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs/raw_train/weights/best.pt" \
+            source=outputs/yolo11_beltmap_pilot/datasets/raw/images/test \
+            imgsz="$IMGSZ" \
+            batch="$BATCH" \
+            save_txt=True \
+            save_conf=True \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
+            name=raw_predict \
+            exist_ok=True
+          mkdir -p outputs/yolo11_beltmap_pilot/yolo_runs/raw_predict/labels
+          poetry run beltmap-yolo-export \
+            --labels-dir outputs/yolo11_beltmap_pilot/yolo_runs/raw_predict/labels \
+            --images-dir outputs/yolo11_beltmap_pilot/datasets/raw/images/test \
+            --output-dir outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_raw_test \
+            --source yolo11_raw
+
+          run_args=(--run yolo11_raw=outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_raw_test)
+          if [ -f "$BELTMAP_OUTPUT_DIR/detections.csv" ]; then
+            run_args+=(--run beltmap_reference="$BELTMAP_OUTPUT_DIR")
+          fi
+          poetry run beltmap-compare "${run_args[@]}" \
+            --truth-path outputs/yolo11_beltmap_pilot/test_truth.json \
+            --report-dir outputs/yolo11_beltmap_pilot/yolo_compare/raw_test \
+            --metrics-only \
+            --froc-max-thresholds 250 \
+            --bootstrap-samples "$BOOTSTRAP_SAMPLES" \
+            --bootstrap-block-length-frames "$BOOTSTRAP_BLOCK_LENGTH_FRAMES"
+
+      - name: Score raw YOLO detections with BeltMap recurrence post-filter
+        if: ${{ !inputs.smoke_only && inputs.epochs != '0' && inputs.include_recurrence_filter }}
+        env:
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          BELT_REGION: ${{ inputs.belt_region }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
+          BOOTSTRAP_SAMPLES: ${{ inputs.compare_bootstrap_samples }}
+          BOOTSTRAP_BLOCK_LENGTH_FRAMES: ${{ inputs.compare_bootstrap_block_length_frames }}
+        run: |
+          set -euo pipefail
+          test -f outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_raw_test/detections.csv
+          test -f "$BELTMAP_OUTPUT_DIR/belt_map.npy"
+          test -f "$BELTMAP_OUTPUT_DIR/phase_estimates.csv"
+          poetry run beltmap-yolo-recurrence-filter \
+            --yolo-run-dir outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_raw_test \
+            --beltmap-reference-dir "$BELTMAP_OUTPUT_DIR" \
+            --source-image-dir data/images \
+            --truth-path outputs/yolo11_beltmap_pilot/test_truth.json \
+            --output-dir outputs/yolo11_beltmap_pilot/yolo_recurrence \
+            --frame-count "$MAX_FRAMES" \
+            --belt-region "$BELT_REGION" \
+            --bootstrap-samples "$BOOTSTRAP_SAMPLES" \
+            --bootstrap-block-length-frames "$BOOTSTRAP_BLOCK_LENGTH_FRAMES"
+
+      - name: Train and validate YOLO11 on BeltMap residual crops
+        if: ${{ !inputs.smoke_only && inputs.epochs != '0' && inputs.include_residual }}
+        env:
+          YOLO_MODEL: ${{ inputs.yolo_model }}
+          EPOCHS: ${{ inputs.epochs }}
+          IMGSZ: ${{ inputs.imgsz }}
+          BATCH: ${{ inputs.batch }}
+        run: |
+          set -euo pipefail
+          test -f outputs/yolo11_beltmap_pilot/datasets/residual.yaml || {
+            echo "Residual YOLO dataset was not built; skipping residual train/val."
+            exit 0
+          }
+          poetry run yolo detect train \
+            model="$YOLO_MODEL" \
+            data=outputs/yolo11_beltmap_pilot/datasets/residual.yaml \
+            epochs="$EPOCHS" \
+            imgsz="$IMGSZ" \
+            batch="$BATCH" \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
+            name=residual_train \
+            exist_ok=True
+          poetry run yolo detect val \
+            model="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs/residual_train/weights/best.pt" \
+            data=outputs/yolo11_beltmap_pilot/datasets/residual.yaml \
+            split=test \
+            imgsz="$IMGSZ" \
+            batch="$BATCH" \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
+            name=residual_test \
+            exist_ok=True
+
+      - name: Predict, export, and score YOLO11 residual detections
+        if: ${{ !inputs.smoke_only && inputs.epochs != '0' && inputs.include_residual }}
+        env:
+          IMGSZ: ${{ inputs.imgsz }}
+          BATCH: ${{ inputs.batch }}
+          BELTMAP_OUTPUT_DIR: ${{ inputs.beltmap_output_dir }}
+          BOOTSTRAP_SAMPLES: ${{ inputs.compare_bootstrap_samples }}
+          BOOTSTRAP_BLOCK_LENGTH_FRAMES: ${{ inputs.compare_bootstrap_block_length_frames }}
+        run: |
+          set -euo pipefail
+          test -f outputs/yolo11_beltmap_pilot/datasets/residual.yaml || {
+            echo "Residual YOLO dataset was not built; skipping residual prediction/export/compare."
+            exit 0
+          }
+          poetry run yolo detect predict \
+            model="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs/residual_train/weights/best.pt" \
+            source=outputs/yolo11_beltmap_pilot/datasets/residual/images/test \
+            imgsz="$IMGSZ" \
+            batch="$BATCH" \
+            save_txt=True \
+            save_conf=True \
+            project="$PWD/outputs/yolo11_beltmap_pilot/yolo_runs" \
+            name=residual_predict \
+            exist_ok=True
+          mkdir -p outputs/yolo11_beltmap_pilot/yolo_runs/residual_predict/labels
+          poetry run beltmap-yolo-export \
+            --labels-dir outputs/yolo11_beltmap_pilot/yolo_runs/residual_predict/labels \
+            --images-dir outputs/yolo11_beltmap_pilot/datasets/residual/images/test \
+            --output-dir outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_residual_test \
+            --source yolo11_residual
+
+          run_args=(--run yolo11_residual=outputs/yolo11_beltmap_pilot/beltmap_runs/yolo11_residual_test)
+          if [ -f "$BELTMAP_OUTPUT_DIR/detections.csv" ]; then
+            run_args+=(--run beltmap_reference="$BELTMAP_OUTPUT_DIR")
+          fi
+          poetry run beltmap-compare "${run_args[@]}" \
+            --truth-path outputs/yolo11_beltmap_pilot/test_truth.json \
+            --report-dir outputs/yolo11_beltmap_pilot/yolo_compare/residual_test \
+            --metrics-only \
+            --froc-max-thresholds 250 \
+            --bootstrap-samples "$BOOTSTRAP_SAMPLES" \
+            --bootstrap-block-length-frames "$BOOTSTRAP_BLOCK_LENGTH_FRAMES"
+
+      - name: Write YOLO pilot report
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/yolo11_beltmap_pilot
+          cat > outputs/yolo11_beltmap_pilot/README.md <<'EOF'
+          # YOLO11 BeltMap pilot
+
+          This workflow compares YOLO11 trained on raw belt crops against YOLO11 trained on BeltMap normalized residual crops when a `belt_map.npy` and `phase_estimates.csv` are available.
+
+          The workflow deliberately uses the equidistant BeltMap image sequence and reviewed BeltMap crop-local labels, not the separately cropped/non-equidistant YOLO dataset. This keeps the test aligned with belt-coordinate recurrence and map-only diagnostics.
+
+          The workflow now also predicts on the held-out test split, exports YOLO prediction labels into a BeltMap-compatible `detections.csv` run directory with `beltmap-yolo-export`, and scores those detections with `beltmap-compare` against a test-split-only truth JSON. The test truth is restricted to the YOLO test frames so train/validation frames are not counted as false negatives.
+
+          Outputs:
+          - `datasets/raw.yaml` and YOLO-format raw crop labels.
+          - `datasets/residual.yaml` and YOLO-format residual crop labels when residual generation succeeds.
+          - `test_truth.json`, the reviewed truth restricted to the YOLO test split.
+          - `yolo_runs/raw_train`, `raw_test`, `raw_predict`, and optionally residual counterparts.
+          - `beltmap_runs/yolo11_raw_test` and optionally `beltmap_runs/yolo11_residual_test`.
+          - `yolo_recurrence/` and `beltmap_runs/yolo11_raw_recurrence_*_test` when recurrence filtering is enabled.
+          - `yolo_compare/raw_test/summary.csv` and optionally residual comparison outputs.
+          - `dataset_summary.json` and `dataset_manifest.csv`.
+
+          The default deterministic full100 split is exploratory. For paper-strength YOLO evidence, train on frames outside the corrected full100 evaluation set or report cross-validation explicitly.
+          EOF
+          find outputs/yolo11_beltmap_pilot -maxdepth 5 -type f | sort > outputs/yolo11_beltmap_pilot/files.txt
+          cat outputs/yolo11_beltmap_pilot/dataset_summary.json || true
+          if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv ]; then
+            printf "\nRaw YOLO exported comparison summary:\n"
+            cat outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv
+          fi
+          if [ -f outputs/yolo11_beltmap_pilot/yolo_recurrence/compare/summary.csv ]; then
+            printf "\nRaw YOLO recurrence post-filter comparison summary:\n"
+            cat outputs/yolo11_beltmap_pilot/yolo_recurrence/compare/summary.csv
+          fi
+          if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/residual_test/summary.csv ]; then
+            printf "\nResidual YOLO exported comparison summary:\n"
+            cat outputs/yolo11_beltmap_pilot/yolo_compare/residual_test/summary.csv
+          fi
+
+      - name: Upload YOLO11 BeltMap pilot artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: yolo11-beltmap-pilot-${{ github.run_id }}
+          path: outputs/yolo11_beltmap_pilot
+          if-no-files-found: error
+          retention-days: 21
