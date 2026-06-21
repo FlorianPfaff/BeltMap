@@ -938,7 +938,7 @@ jobs:
             cat outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv
           fi
           if [ -f outputs/yolo11_beltmap_pilot/yolo_recurrence/compare/summary.csv ]; then
-            echo "\nRaw YOLO recurrence post-filter comparison summary:"
+            printf "\nRaw YOLO recurrence post-filter comparison summary:\n"
             cat outputs/yolo11_beltmap_pilot/yolo_recurrence/compare/summary.csv
           fi
           if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/residual_test/summary.csv ]; then
