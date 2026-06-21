@@ -904,11 +904,11 @@ jobs:
           find outputs/yolo11_beltmap_pilot -maxdepth 5 -type f | sort > outputs/yolo11_beltmap_pilot/files.txt
           cat outputs/yolo11_beltmap_pilot/dataset_summary.json || true
           if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv ]; then
-            echo "\nRaw YOLO exported comparison summary:"
+            printf "\nRaw YOLO exported comparison summary:\n"
             cat outputs/yolo11_beltmap_pilot/yolo_compare/raw_test/summary.csv
           fi
           if [ -f outputs/yolo11_beltmap_pilot/yolo_compare/residual_test/summary.csv ]; then
-            echo "\nResidual YOLO exported comparison summary:"
+            printf "\nResidual YOLO exported comparison summary:\n"
             cat outputs/yolo11_beltmap_pilot/yolo_compare/residual_test/summary.csv
           fi
 
