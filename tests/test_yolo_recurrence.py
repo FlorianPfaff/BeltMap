@@ -15,7 +15,9 @@ def test_crop_region_parse() -> None:
 
 def test_patch_correlation_identical_patch_is_one() -> None:
     patch = np.arange(16, dtype=float).reshape(4, 4)
-    assert patch_correlation(patch, patch) == 1.0
+    value = patch_correlation(patch, patch)
+    assert value is not None
+    assert abs(value - 1.0) < 1e-12
 
 
 def test_patch_stats_reports_positive_excess() -> None:
