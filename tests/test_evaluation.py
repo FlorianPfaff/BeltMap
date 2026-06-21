@@ -8,6 +8,7 @@ import pytest
 
 from beltmap.evaluation import (
     RunSpec,
+    finite_float,
     format_markdown_value,
     fraction,
     missing_standard_files,
@@ -150,6 +151,45 @@ def test_summarize_output_dir_ignores_fractional_metadata_counts(
 
     assert summary["n_detections"] == 4
     assert summary["n_tracks"] is None
+
+
+def test_finite_numeric_helpers_reject_boolean_values() -> None:
+    assert finite_float(True) is None
+    assert finite_float(False) is None
+    assert fraction(True, 100) is None
+    assert fraction(10, False) is None
+
+
+def test_summarize_output_dir_rejects_boolean_metadata_and_progress(tmp_path: Path) -> None:
+    output_dir = tmp_path / "boolean_metadata"
+    write_run(output_dir)
+    metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["n_images"] = True
+    metadata["n_detections"] = True
+    metadata["n_tracks"] = False
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (output_dir / "progress.jsonl").write_text(
+        json.dumps(
+            {
+                "stage": "belt_map",
+                "observed_pixels": True,
+                "total_pixels": 100,
+                "masked_pixels": False,
+                "contributed_pixels": 75,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = summarize_output_dir(RunSpec(name="boolean_metadata", output_dir=output_dir))
+
+    assert summary["n_images"] == 3
+    assert summary["n_detections"] == 4
+    assert summary["n_tracks"] is None
+    assert summary["belt_map_observed_fraction"] is None
+    assert summary["belt_map_masked_fraction"] is None
+    assert summary["belt_map_contributed_fraction"] == 0.75
 
 
 def test_evaluation_rejects_non_object_json(tmp_path: Path) -> None:
