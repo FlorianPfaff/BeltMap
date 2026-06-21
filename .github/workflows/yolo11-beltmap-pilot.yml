@@ -147,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .venv
-          poetry install --with test --extras speed
+          poetry install --extras "speed test"
           poetry run python -m pip install --upgrade "ultralytics>=8.3.0" "opencv-python-headless>=4.9" "pyyaml>=6"
           poetry run python - <<'PY'
           import importlib
