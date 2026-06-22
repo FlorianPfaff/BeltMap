@@ -180,6 +180,21 @@ def test_negative_map_mask_catches_dark_components_without_absolute_mode():
     assert not negative[0, 0]
 
 
+@pytest.mark.parametrize(
+    ("alias", "expected"),
+    [
+        ("bright", "positive"),
+        ("light-on-dark", "positive"),
+        ("dark", "negative"),
+        ("dark particles", "negative"),
+        ("signed", "absolute"),
+        ("two-sided", "absolute"),
+    ],
+)
+def test_map_particle_mask_mode_accepts_particle_polarity_aliases(alias, expected):
+    assert validate_map_particle_mask_mode(alias) == expected
+
+
 def test_invalid_map_particle_mask_mode_raises_useful_error():
     with pytest.raises(ValueError, match="MAP_PARTICLE_MASK_MODE"):
         validate_map_particle_mask_mode("unknown")

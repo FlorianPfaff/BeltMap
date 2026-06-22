@@ -141,7 +141,8 @@ def write_json(path: Path, payload: Mapping[str, Any]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(_jsonable(payload), indent=2, sort_keys=True), encoding="utf-8"
+        json.dumps(_jsonable(payload), indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
     )
 
 
@@ -164,13 +165,17 @@ def write_csv_rows(
         writer = csv.DictWriter(handle, fieldnames=list(fieldnames))
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fieldnames})
+            writer.writerow(
+                {field: _jsonable(row.get(field, "")) for field in fieldnames}
+            )
 
 
 def finite_float(value: Any) -> float | None:
     """Parse a finite float, returning ``None`` for blanks and invalid values."""
 
     if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
         return None
     if isinstance(value, str) and value.strip() == "":
         return None
@@ -181,13 +186,29 @@ def finite_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def finite_float_or(value: Any, default: float) -> float:
+    parsed = finite_float(value)
+    return default if parsed is None else parsed
+
+
 def finite_int(value: Any) -> int | None:
     """Parse an integer, returning ``None`` when parsing fails."""
 
+    if isinstance(value, bool):
+        return None
     parsed = finite_float(value)
     if parsed is None or not parsed.is_integer():
         return None
     return int(parsed)
+
+
+def finite_nonnegative_int(value: Any) -> int | None:
+    """Parse a non-negative integer, returning ``None`` when parsing fails."""
+
+    parsed = finite_int(value)
+    if parsed is None or parsed < 0:
+        return None
+    return parsed
 
 
 def _finite_float_value(value: Any, name: str) -> float:
@@ -233,9 +254,9 @@ def _nonnegative_integer_value(value: Any, name: str) -> int:
     return int(parsed)
 
 
-def _region_tuple(
-    value: str | Sequence[int] | None, name: str = "region"
-) -> tuple[int, int, int, int] | None:
+def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int] | None:
+    """Parse ``top,left,height,width`` from text or sequence form."""
+
     if value is None:
         return None
     parts = (
@@ -244,18 +265,12 @@ def _region_tuple(
         else list(value)
     )
     if len(parts) != 4:
-        raise ValueError(f"{name} must contain four values: top,left,height,width")
-    top = _nonnegative_integer_value(parts[0], f"{name} top")
-    left = _nonnegative_integer_value(parts[1], f"{name} left")
-    height = _positive_integer_value(parts[2], f"{name} height")
-    width = _positive_integer_value(parts[3], f"{name} width")
+        raise ValueError("region must contain four values: top,left,height,width")
+    top = _nonnegative_integer_value(parts[0], "region top")
+    left = _nonnegative_integer_value(parts[1], "region left")
+    height = _positive_integer_value(parts[2], "region height")
+    width = _positive_integer_value(parts[3], "region width")
     return top, left, height, width
-
-
-def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int] | None:
-    """Parse ``top,left,height,width`` from text or sequence form."""
-
-    return _region_tuple(value)
 
 
 def natural_key(path: Path) -> list[int | str]:
@@ -306,7 +321,6 @@ def sequence_report(
 ) -> dict[str, Any]:
     """Detect missing frame numbers, duplicate frame numbers, and duplicate images."""
 
-    max_hash_files = _nonnegative_integer_value(max_hash_files, "max_hash_files")
     paths = image_paths(image_dir)
     frame_numbers = [frame_number_from_path(path) for path in paths]
     numeric = [number for number in frame_numbers if number is not None]
@@ -381,7 +395,11 @@ def _load_gray(
         arr = np.asarray(image.convert("L"), dtype=np.float64)
     if region is None:
         return arr
-    top, left, height, width = _region_tuple(region, "region")
+    top, left, height, width = region
+    if top < 0 or left < 0 or height <= 0 or width <= 0:
+        raise ValueError("region must be non-negative with positive height and width")
+    if top + height > arr.shape[0] or left + width > arr.shape[1]:
+        raise ValueError("region extends beyond image bounds")
     return arr[top : top + height, left : left + width]
 
 
@@ -413,8 +431,8 @@ def frame_quality_metrics(
         "saturation_threshold",
     )
     dark_threshold = _finite_float_value(dark_threshold, "dark_threshold")
-    if dark_threshold >= saturation_threshold:
-        raise ValueError("dark_threshold must be less than saturation_threshold")
+    if saturation_threshold <= dark_threshold:
+        raise ValueError("saturation_threshold must be greater than dark_threshold")
     gray = _load_gray(path, region=region)
     finite = np.isfinite(gray)
     values = gray[finite]
@@ -470,7 +488,6 @@ def quality_report(
     """Summarize image quality over a sampled subset of frames."""
 
     sample_limit = _positive_integer_value(sample_limit, "sample_limit")
-    region = _region_tuple(region, "region")
     paths = image_paths(image_dir)
     if not paths:
         return {
@@ -576,8 +593,6 @@ def speed_consistency_report(output_dir: Path) -> dict[str, Any]:
     scores: list[float] = []
     boundary_hits = 0
     search_radius = finite_float(metadata.get("registration_search_radius_px"))
-    if search_radius is not None and search_radius <= 0:
-        search_radius = None
     for row in phase_rows:
         frame = finite_float(row.get("frame_index"))
         correction = finite_float(row.get("correction_px"))
@@ -641,10 +656,10 @@ def run_drift_report(output_dir: Path) -> dict[str, Any]:
     ]
     detection_counts = [value for value in detection_counts if value is not None]
     phase_rows = read_csv_rows(output_dir / "phase_estimates.csv")
-    correction_frames: list[float] = []
-    loss_frames: list[float] = []
     corrections: list[float] = []
+    correction_frames: list[float] = []
     losses: list[float] = []
+    loss_frames: list[float] = []
     for row in phase_rows:
         frame = finite_float(row.get("frame_index"))
         if frame is None:
@@ -701,17 +716,26 @@ def plan_map_epochs(
 
     frame_count = _positive_integer_value(frame_count, "frame_count")
     overlap_frames = _nonnegative_integer_value(overlap_frames, "overlap_frames")
-    if epoch_count is None and epoch_length_frames is None:
-        epoch_count = 1
-    if epoch_length_frames is None:
-        assert epoch_count is not None
+    if epoch_count is not None:
         epoch_count = _positive_integer_value(epoch_count, "epoch_count")
-        epoch_length_frames = int(math.ceil(frame_count / epoch_count))
-    else:
+    if epoch_length_frames is not None:
         epoch_length_frames = _positive_integer_value(
             epoch_length_frames,
             "epoch_length_frames",
         )
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
+    if overlap_frames < 0:
+        raise ValueError("overlap_frames must be non-negative")
+    if epoch_count is None and epoch_length_frames is None:
+        epoch_count = 1
+    if epoch_length_frames is None:
+        assert epoch_count is not None
+        if epoch_count <= 0:
+            raise ValueError("epoch_count must be positive")
+        epoch_length_frames = int(math.ceil(frame_count / epoch_count))
+    if epoch_length_frames <= 0:
+        raise ValueError("epoch_length_frames must be positive")
 
     epochs: list[dict[str, int | str]] = []
     start = 0
@@ -744,8 +768,11 @@ def edge_audit_rows(
 ) -> list[dict[str, Any]]:
     """Annotate detections with crop-edge and truncation flags."""
 
-    height = _positive_integer_value(height, "height")
-    width = _positive_integer_value(width, "width")
+    try:
+        height = _positive_integer_value(height, "height")
+        width = _positive_integer_value(width, "width")
+    except ValueError as exc:
+        raise ValueError("height and width must be positive") from exc
     margin_px = _nonnegative_integer_value(margin_px, "margin_px")
     rows: list[dict[str, Any]] = []
     for row in detections:
@@ -790,36 +817,58 @@ def events_from_tracks(track_rows: Sequence[Mapping[str, Any]]) -> list[dict[str
     by_track: dict[int, list[Mapping[str, Any]]] = {}
     for row in track_rows:
         track_id = finite_int(row.get("track_id"))
-        frame_index = finite_int(row.get("frame_index"))
-        if track_id is None or track_id < 0 or frame_index is None or frame_index < 0:
+        if track_id is None:
             continue
         by_track.setdefault(track_id, []).append(row)
 
     events: list[dict[str, Any]] = []
     for event_id, (track_id, rows) in enumerate(sorted(by_track.items())):
-        frames = [finite_int(row.get("frame_index")) for row in rows]
-        ys = [finite_float(row.get("y")) for row in rows]
-        xs = [finite_float(row.get("x")) for row in rows]
+        frame_y_pairs: list[tuple[float, float]] = []
+        frame_x_pairs: list[tuple[float, float]] = []
+        frames: list[float] = []
+        ys: list[float] = []
+        xs: list[float] = []
         peaks = [finite_float(row.get("peak_signal")) for row in rows]
-        frames_f = [value for value in frames if value is not None]
-        ys_f = [value for value in ys if value is not None]
-        xs_f = [value for value in xs if value is not None]
+        for row in rows:
+            frame = finite_float(row.get("frame_index"))
+            y = finite_float(row.get("y"))
+            x = finite_float(row.get("x"))
+            if frame is not None:
+                frames.append(frame)
+            if y is not None:
+                ys.append(y)
+            if x is not None:
+                xs.append(x)
+            if frame is not None and y is not None:
+                frame_y_pairs.append((frame, y))
+            if frame is not None and x is not None:
+                frame_x_pairs.append((frame, x))
         peaks_f = [value for value in peaks if value is not None]
         velocity_y = (
-            _linear_slope(frames_f, ys_f) if len(frames_f) == len(ys_f) else None
+            _linear_slope(
+                [frame for frame, _value in frame_y_pairs],
+                [value for _frame, value in frame_y_pairs],
+            )
+            if frame_y_pairs
+            else None
         )
         velocity_x = (
-            _linear_slope(frames_f, xs_f) if len(frames_f) == len(xs_f) else None
+            _linear_slope(
+                [frame for frame, _value in frame_x_pairs],
+                [value for _frame, value in frame_x_pairs],
+            )
+            if frame_x_pairs
+            else None
         )
         events.append(
             {
                 "event_id": event_id,
                 "track_id": track_id,
-                "first_frame": min(frames_f) if frames_f else "",
-                "last_frame": max(frames_f) if frames_f else "",
+                "first_frame": min(frames) if frames else "",
+                "last_frame": max(frames) if frames else "",
                 "n_observations": len(rows),
-                "representative_y": float(np.median(ys_f)) if ys_f else "",
-                "representative_x": float(np.median(xs_f)) if xs_f else "",
+                "representative_y": float(np.median(ys)) if ys else "",
+                "representative_x": float(np.median(xs)) if xs else "",
                 "peak_signal_median": float(np.median(peaks_f)) if peaks_f else "",
                 "velocity_y_px_per_frame": "" if velocity_y is None else velocity_y,
                 "velocity_x_px_per_frame": "" if velocity_x is None else velocity_x,
@@ -839,14 +888,15 @@ def confidence_rows(
 ) -> list[dict[str, Any]]:
     """Attach a simple confidence score to detection-like rows."""
 
-    threshold = _positive_float_value(threshold, "threshold")
+    if not math.isfinite(threshold) or threshold <= 0:
+        raise ValueError("threshold must be finite and positive")
     rows: list[dict[str, Any]] = []
     for row in detections:
         peak = finite_float(row.get("peak_signal"))
         mean = finite_float(row.get("mean_signal"))
         area = finite_float(row.get("area_px"))
         overlap = finite_float(row.get("recurrent_artifact_overlap_fraction"))
-        overlap = 0.0 if overlap is None else max(0.0, min(1.0, overlap))
+        overlap = min(1.0, max(0.0, overlap if overlap is not None else 0.0))
         truncated = str(row.get("is_truncated", "False")).lower() in {
             "1",
             "true",
@@ -1040,12 +1090,12 @@ def scale_calibration_from_points(
 ) -> ScaleCalibration:
     """Estimate pixel scale from two calibration-target points."""
 
+    if len(point_a) != 2 or len(point_b) != 2:
+        raise ValueError("point_a and point_b must contain two values each")
     known_distance_mm = _positive_float_value(
         known_distance_mm,
         "known_distance_mm",
     )
-    if len(point_a) != 2 or len(point_b) != 2:
-        raise ValueError("point_a and point_b must contain two values each")
     ay = _finite_float_value(point_a[0], "point_a")
     ax = _finite_float_value(point_a[1], "point_a")
     by = _finite_float_value(point_b[0], "point_b")
@@ -1127,14 +1177,11 @@ def write_run_trust_artifacts(
     if region is None:
         belt_region = metadata.get("belt_region")
         if isinstance(belt_region, dict):
-            region = _region_tuple(
-                (
-                    belt_region["top"],
-                    belt_region["left"],
-                    belt_region["height"],
-                    belt_region["width"],
-                ),
-                "belt_region",
+            region = (
+                int(belt_region["top"]),
+                int(belt_region["left"]),
+                int(belt_region["height"]),
+                int(belt_region["width"]),
             )
 
     if image_dir is not None:
@@ -1177,11 +1224,10 @@ def write_run_trust_artifacts(
         write_csv_rows(path, edge_rows, list(edge_rows[0].keys()) if edge_rows else [])
         artifacts["detection_edge_audit"] = path
 
-        threshold = finite_float(metadata.get("detection_threshold"))
-        conf_rows = confidence_rows(
-            edge_rows,
-            threshold=5.0 if threshold is None or threshold <= 0 else threshold,
-        )
+        detection_threshold = finite_float(metadata.get("detection_threshold"))
+        if detection_threshold is None or detection_threshold <= 0:
+            detection_threshold = 5.0
+        conf_rows = confidence_rows(edge_rows, threshold=detection_threshold)
         path = output_dir / "detection_confidence.csv"
         write_csv_rows(path, conf_rows, list(conf_rows[0].keys()) if conf_rows else [])
         artifacts["detection_confidence"] = path
@@ -1302,32 +1348,30 @@ def minimum_evidence_report(output_dir: Path) -> str:
 def _metadata_crop_shape(metadata: Mapping[str, Any]) -> tuple[int, int]:
     region = metadata.get("belt_region")
     if isinstance(region, dict):
-        height = finite_int(region.get("height"))
-        width = finite_int(region.get("width"))
-        if height is None or width is None or height <= 0 or width <= 0:
-            return 0, 0
+        height = finite_nonnegative_int(region.get("height")) or 0
+        width = finite_nonnegative_int(region.get("width")) or 0
         return height, width
     shape = metadata.get("first_image_shape")
     if isinstance(shape, list) and len(shape) >= 2:
-        height = finite_int(shape[0])
-        width = finite_int(shape[1])
-        if height is None or width is None or height <= 0 or width <= 0:
-            return 0, 0
+        height = finite_nonnegative_int(shape[0]) or 0
+        width = finite_nonnegative_int(shape[1]) or 0
         return height, width
     return 0, 0
 
 
 def _stable_repr(value: Any) -> str:
-    return json.dumps(_jsonable(value), sort_keys=True)
+    return json.dumps(_jsonable(value), sort_keys=True, allow_nan=False)
 
 
 def _jsonable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, np.generic):
-        return value.item()
+        return _jsonable(value.item())
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return _jsonable(value.tolist())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if isinstance(value, ScaleCalibration):
         return {
             "px_per_mm": value.px_per_mm,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Real
 
 import numpy as np
 
@@ -51,6 +52,7 @@ class RegistrationQualityGateConfig:
     uncertainty_inflation_scale: float = 0.0
 
     def validate(self) -> None:
+        _validate_bool_value(self.enabled, "enabled")
         if normalize_registration_quality_action(self.action) != self.action:
             raise ValueError(
                 "RegistrationQualityGateConfig.action must already be normalized"
@@ -69,19 +71,21 @@ class RegistrationQualityGateConfig:
             "max_abs_correction_px",
         )
         _require_finite(self.noise_inflation_factor, "noise_inflation_factor")
-        if self.noise_inflation_factor < 1.0:
+        if _require_finite(self.noise_inflation_factor, "noise_inflation_factor") < 1.0:
             raise ValueError("noise_inflation_factor must be at least 1")
         _require_finite(
             self.uncertainty_inflation_scale,
             "uncertainty_inflation_scale",
         )
-        if self.uncertainty_inflation_scale < 0.0:
+        if _require_finite(self.uncertainty_inflation_scale, "uncertainty_inflation_scale") < 0.0:
             raise ValueError("uncertainty_inflation_scale must be non-negative")
 
 
 def normalize_registration_quality_action(value: str) -> str:
     """Normalize registration-quality response aliases."""
 
+    if not isinstance(value, str):
+        raise ValueError("REGISTRATION_QUALITY_ACTION must be a string")
     normalized = value.strip().lower().replace("-", "_")
     aliases = {
         "diagnostic": "report",
@@ -116,6 +120,7 @@ def evaluate_registration_quality(
     feature is disabled; otherwise it contains one CSV-ready diagnostic row.
     """
 
+    _validate_bool_value(config.enabled, "enabled")
     if not config.enabled:
         return residual, None, False
     config.validate()
@@ -191,16 +196,27 @@ def registration_quality_inflation_factor(
 ) -> float:
     """Return the residual-noise multiplier for a suspect frame."""
 
-    factor = max(1.0, float(config.noise_inflation_factor))
+    factor = max(
+        1.0,
+        _require_finite(config.noise_inflation_factor, "noise_inflation_factor"),
+    )
     uncertainty = estimate.uncertainty_px
     if (
         uncertainty is not None
         and np.isfinite(uncertainty)
-        and config.uncertainty_inflation_scale > 0.0
+        and _require_finite(
+            config.uncertainty_inflation_scale,
+            "uncertainty_inflation_scale",
+        ) > 0.0
     ):
         factor = max(
             factor,
-            1.0 + config.uncertainty_inflation_scale * max(0.0, float(uncertainty)),
+            1.0
+            + _require_finite(
+                config.uncertainty_inflation_scale,
+                "uncertainty_inflation_scale",
+            )
+            * max(0.0, float(uncertainty)),
         )
     return float(factor)
 
@@ -208,9 +224,18 @@ def registration_quality_inflation_factor(
 def residual_with_inflated_noise(residual: ResidualImage, factor: float) -> ResidualImage:
     """Return a residual whose normalized signal is divided by ``factor``."""
 
-    if factor <= 1.0:
+    factor_value = _require_finite(factor, "factor")
+    if factor_value < 1.0:
+        raise ValueError("factor must be at least 1")
+    if factor_value == 1.0:
         return residual
-    local_noise = np.asarray(residual.local_noise, dtype=np.float64) * float(factor)
+    if (
+        residual.raw.shape != residual.local_noise.shape
+        or residual.raw.shape != residual.normalized.shape
+        or residual.raw.shape != residual.mask.shape
+    ):
+        raise ValueError("residual arrays must have matching shapes")
+    local_noise = np.asarray(residual.local_noise, dtype=np.float64) * factor_value
     valid = (
         residual.mask
         & np.isfinite(residual.raw)
@@ -276,11 +301,22 @@ def _csv_float(value: float | None) -> float | str:
 def _validate_optional_non_negative(value: float | None, name: str) -> None:
     if value is None:
         return
-    _require_finite(value, name)
-    if value < 0:
+    parsed = _require_finite(value, name)
+    if parsed < 0:
         raise ValueError(f"{name} must be non-negative when set")
 
 
-def _require_finite(value: float, name: str) -> None:
-    if not np.isfinite(float(value)):
+def _require_finite(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
+    parsed = float(value)
+    if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _validate_bool_value(value: bool, name: str) -> None:
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be boolean")
