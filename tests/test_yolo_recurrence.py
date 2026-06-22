@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from beltmap.yolo_recurrence import parse_belt_region, patch_correlation, patch_excess
+from beltmap.yolo_recurrence_key_patch import duplicate_safe_row_key
 
 
 def test_parse_belt_region() -> None:
@@ -24,3 +25,22 @@ def test_patch_excess_reports_positive_excess() -> None:
     background_patch = np.full((5, 5), 10.0)
     raw_patch[2, 2] = 50.0
     assert patch_excess(raw_patch, background_patch) == 40.0
+
+
+def test_duplicate_safe_row_key_distinguishes_same_frame_same_label_boxes() -> None:
+    base = {
+        "frame_index": "12",
+        "label": "0",
+        "bbox_top": "10",
+        "bbox_left": "20",
+        "bbox_bottom": "30",
+        "bbox_right": "40",
+        "y": "20",
+        "x": "30",
+        "confidence": "0.9",
+        "source": "yolo11_raw",
+    }
+    second = dict(base)
+    second.update({"bbox_left": "120", "bbox_right": "140", "x": "130"})
+
+    assert duplicate_safe_row_key(base) != duplicate_safe_row_key(second)
