@@ -84,6 +84,35 @@ def test_export_yolo_predictions_writes_beltmap_run(tmp_path: Path) -> None:
     assert metadata["n_detections"] == 2
 
 
+def test_export_yolo_predictions_allows_missing_labels_dir_for_empty_predictions(
+    tmp_path: Path,
+) -> None:
+    images = tmp_path / "images"
+    missing_labels = tmp_path / "missing_labels"
+    out = tmp_path / "run"
+    write_image(images / "frame_000001.png")
+    write_image(images / "frame_000002.png")
+
+    summary = export_yolo_predictions_to_beltmap_run(
+        labels_dir=missing_labels,
+        images_dir=images,
+        output_dir=out,
+        source="yolo11_raw",
+    )
+
+    assert summary.n_images == 2
+    assert summary.n_label_files == 0
+    assert summary.n_detections == 0
+    assert read_csv(out / "detections.csv") == []
+    assert read_csv(out / "detections_per_frame.csv") == [
+        {"frame_index": "1", "n_detections": "0"},
+        {"frame_index": "2", "n_detections": "0"},
+    ]
+    metadata = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["n_label_files"] == 0
+    assert metadata["n_detections"] == 0
+
+
 def test_yolo_export_cli(tmp_path: Path) -> None:
     images = tmp_path / "images"
     labels = tmp_path / "labels"
