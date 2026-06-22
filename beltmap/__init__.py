@@ -75,6 +75,10 @@ from .tracking import (
     track_particle_detections,
 )
 
+# Import for side effect: make direct imports of beltmap.yolo_recurrence use the
+# duplicate-safe YOLO detection key, not only the CLI wrapper path.
+from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
