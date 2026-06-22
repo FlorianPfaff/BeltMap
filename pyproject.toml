@@ -91,3 +91,9 @@ speed = [
 packages = [
     { include = "beltmap" },
 ]
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = ">=9.1.1"
