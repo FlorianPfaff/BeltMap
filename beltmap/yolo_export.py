@@ -10,24 +10,11 @@ from typing import Mapping, Sequence
 
 from PIL import Image
 
+from .output_schema import DETECTIONS_PER_FRAME_FIELDS, YOLO_DETECTION_FIELDS
+
 IMAGE_EXTENSIONS = {".bmp", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 DEFAULT_FRAME_INDEX_PATTERN = r"(\d+)"
-DETECTION_FIELDS = [
-    "frame_index",
-    "label",
-    "y",
-    "x",
-    "area_px",
-    "bbox_top",
-    "bbox_left",
-    "bbox_bottom",
-    "bbox_right",
-    "score",
-    "confidence",
-    "class_id",
-    "source",
-]
-DETECTIONS_PER_FRAME_FIELDS = ["frame_index", "n_detections"]
+DETECTION_FIELDS = YOLO_DETECTION_FIELDS
 
 
 @dataclass(frozen=True)
