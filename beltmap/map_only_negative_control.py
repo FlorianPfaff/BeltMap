@@ -217,7 +217,11 @@ def generate_map_only_negative_control_report(
         config=cfg,
         period_px=period_px,
     )
-    crop_height = cfg.crop_height_px or belt_map.shape[0]
+    crop_height = (
+        _positive_int_value(cfg.crop_height_px, "crop_height_px")
+        if cfg.crop_height_px is not None
+        else belt_map.shape[0]
+    )
     if crop_height < 1:
         raise ValueError("crop_height_px must be positive")
 
@@ -284,8 +288,7 @@ def highpass_normalized_belt_map(
 ) -> tuple[FloatArray, MapOnlySignalStats]:
     """Return a robust high-pass z-score map for map-only ghost detection."""
 
-    if radius_px < 0:
-        raise ValueError("highpass radius must be non-negative")
+    radius_px = _nonnegative_int_value(radius_px, "highpass_radius_px")
     if min_scale_gray <= 0:
         raise ValueError("highpass min scale must be positive")
     belt = _as_float_map(belt_map, name="belt_map")
@@ -330,6 +333,7 @@ def load_phase_samples(
         reader = csv.DictReader(handle)
         if reader.fieldnames is None or "phase_px" not in reader.fieldnames:
             raise ValueError(f"{path} must contain a phase_px column")
+        seen_frames: set[int] = set()
         for row_number, row in enumerate(reader):
             if frame_count is not None and len(samples) >= frame_count:
                 break
@@ -338,17 +342,21 @@ def load_phase_samples(
                 raise ValueError(f"non-finite phase_px in {path} row {row_number + 2}")
             raw_frame = row.get("frame_index")
             if raw_frame is None or str(raw_frame).strip() == "":
-                frame = float(len(samples))
+                frame_index = len(samples)
             else:
-                frame_index = _finite_nonnegative_int(raw_frame)
+                frame_index = _finite_int(raw_frame)
                 if frame_index is None:
                     raise ValueError(
                         f"invalid frame_index in {path} row {row_number + 2}"
                     )
-                frame = float(frame_index)
+                if frame_index < 0:
+                    raise ValueError(
+                        f"invalid frame_index: negative frame_index in {path} row {row_number + 2}"
+                    )
+            frame = float(frame_index)
             if frame in seen_frames:
                 raise ValueError(
-                    f"duplicate frame_index in {path} row {row_number + 2}"
+                    f"duplicate frame_index {frame_index} in {path} row {row_number + 2}"
                 )
             seen_frames.add(frame)
             image = (
@@ -375,14 +383,12 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
             raise ValueError("low_threshold must be non-negative")
         if config.low_threshold > config.threshold:
             raise ValueError("low_threshold must be less than or equal to threshold")
-    if config.min_area_px < 1:
-        raise ValueError("min_area_px must be positive")
-    if config.max_area_px is not None and config.max_area_px < config.min_area_px:
+    min_area_px = _positive_int_value(config.min_area_px, "min_area_px")
+    max_area_px = _optional_positive_int_value(config.max_area_px, "max_area_px")
+    if max_area_px is not None and max_area_px < min_area_px:
         raise ValueError("max_area_px must be greater than or equal to min_area_px")
-    if config.min_bbox_width_px is not None and config.min_bbox_width_px < 1:
-        raise ValueError("min_bbox_width_px must be positive when set")
-    if config.min_bbox_height_px is not None and config.min_bbox_height_px < 1:
-        raise ValueError("min_bbox_height_px must be positive when set")
+    _optional_positive_int_value(config.min_bbox_width_px, "min_bbox_width_px")
+    _optional_positive_int_value(config.min_bbox_height_px, "min_bbox_height_px")
     if config.max_bbox_aspect_ratio is not None and (
         not math.isfinite(config.max_bbox_aspect_ratio)
         or config.max_bbox_aspect_ratio < 1.0
@@ -393,6 +399,7 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         or not (0.0 <= config.min_bbox_extent <= 1.0)
     ):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
+    _nonnegative_int_value(config.highpass_radius_px, "highpass_radius_px")
     if config.split_min_projection_gap_px < 1:
         raise ValueError("split_min_projection_gap_px must be positive")
     if (
@@ -400,16 +407,12 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         and config.split_min_component_area_px < 1
     ):
         raise ValueError("split_min_component_area_px must be positive when set")
-    if config.highpass_radius_px < 0:
-        raise ValueError("highpass_radius_px must be non-negative")
     if config.highpass_min_scale_gray <= 0 or not math.isfinite(
         config.highpass_min_scale_gray
     ):
         raise ValueError("highpass_min_scale_gray must be positive")
-    if config.crop_height_px is not None and config.crop_height_px < 1:
-        raise ValueError("crop_height_px must be positive when set")
-    if config.frame_count is not None and config.frame_count < 1:
-        raise ValueError("frame_count must be positive when set")
+    _optional_positive_int_value(config.crop_height_px, "crop_height_px")
+    _optional_positive_int_value(config.frame_count, "frame_count")
     if config.belt_velocity_px_per_frame is not None and not math.isfinite(
         config.belt_velocity_px_per_frame
     ):
@@ -420,6 +423,7 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         raise ValueError("period_px must be positive when set")
     if config.noise_sigma < 0 or not math.isfinite(config.noise_sigma):
         raise ValueError("noise_sigma must be finite and non-negative")
+    _nonnegative_int_value(config.random_seed, "random_seed")
     if config.max_match_distance_px is not None and (
         config.max_match_distance_px <= 0
         or not math.isfinite(config.max_match_distance_px)
@@ -429,10 +433,10 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         config.tracking_max_frame_gap
     ):
         raise ValueError("tracking_max_frame_gap must be finite and positive")
-    if config.min_track_length < 2:
+    min_track_length = _positive_int_value(config.min_track_length, "min_track_length")
+    if min_track_length < 2:
         raise ValueError("min_track_length must be at least 2")
-    if config.track_filter_min_length < 1:
-        raise ValueError("track_filter_min_length must be positive")
+    _positive_int_value(config.track_filter_min_length, "track_filter_min_length")
     if not math.isfinite(config.track_filter_min_velocity_ratio_y):
         raise ValueError("track_filter_min_velocity_ratio_y must be finite")
     if not math.isfinite(config.track_filter_max_velocity_ratio_y):
@@ -452,8 +456,7 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
         raise ValueError(
             "track_filter_max_abs_x_velocity_px_per_frame must be non-negative when set"
         )
-    if config.long_track_length < 1:
-        raise ValueError("long_track_length must be positive")
+    _positive_int_value(config.long_track_length, "long_track_length")
 
 
 def _detect_and_track(
@@ -736,7 +739,11 @@ def _resolve_phase_samples(
             "phase_estimates.csv is missing and belt_velocity_px_per_frame is not set; "
             "pass --belt-velocity-px-per-frame or --phase-estimates-path"
         )
-    count = config.frame_count or 100
+    count = (
+        _positive_int_value(config.frame_count, "frame_count")
+        if config.frame_count is not None
+        else 100
+    )
     samples = [
         PhaseSample(
             frame_index=float(index),
@@ -905,6 +912,26 @@ def _finite_int(value: Any) -> int | None:
     if parsed is None or not parsed.is_integer():
         return None
     return int(parsed)
+
+
+def _positive_int_value(value: Any, name: str) -> int:
+    parsed = _finite_int(value)
+    if parsed is None or parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def _nonnegative_int_value(value: Any, name: str) -> int:
+    parsed = _finite_int(value)
+    if parsed is None or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return parsed
+
+
+def _optional_positive_int_value(value: Any, name: str) -> int | None:
+    if value is None:
+        return None
+    return _positive_int_value(value, name)
 
 
 def _finite_nonnegative_int(value: Any) -> int | None:

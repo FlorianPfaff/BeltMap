@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from beltmap.operational_improvements import (
     StreamingFrameState,
@@ -58,12 +59,36 @@ def test_homography_warp_identity_preserves_image():
     np.testing.assert_allclose(warped, image)
 
 
+def test_homography_rejects_nonfinite_points():
+    with pytest.raises(ValueError, match="finite"):
+        estimate_homography(
+            [(0, 0), (3, 0), (float("nan"), 3), (0, 3)],
+            [(0, 0), (3, 0), (3, 3), (0, 3)],
+        )
+
+
 def test_homography_warp_negative_projective_scale_preserves_image():
     image = np.arange(16, dtype=float).reshape(4, 4)
 
     warped = warp_perspective(image, -np.eye(3), image.shape, interpolation="nearest")
 
     np.testing.assert_allclose(warped, image)
+
+
+def test_homography_warp_rejects_nonfinite_matrix():
+    image = np.arange(16, dtype=float).reshape(4, 4)
+    matrix = np.eye(3)
+    matrix[0, 0] = np.nan
+
+    with pytest.raises(ValueError, match="finite"):
+        warp_perspective(image, matrix, image.shape)
+
+
+def test_homography_warp_rejects_fractional_output_shape():
+    image = np.arange(16, dtype=float).reshape(4, 4)
+
+    with pytest.raises(ValueError, match="output_shape height"):
+        warp_perspective(image, np.eye(3), (4.5, 4))
 
 
 def test_period_estimator_recovers_repeated_profile():
@@ -74,6 +99,21 @@ def test_period_estimator_recovers_repeated_profile():
 
     assert estimate.period_px == 6
     assert estimate.score > 0.9
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"min_period_px": 4.5}, "min_period_px"),
+        ({"min_period_px": 4, "max_period_px": 12.5}, "max_period_px"),
+        ({"min_period_px": 4, "max_period_px": 12, "top_k": 2.5}, "top_k"),
+    ],
+)
+def test_period_estimator_rejects_fractional_integer_config(kwargs, message):
+    profile = np.tile(np.array([0.0, 1.0, 0.0, -1.0]), 10)
+
+    with pytest.raises(ValueError, match=message):
+        estimate_period_from_profile(profile, **kwargs)
 
 
 def test_adaptive_sampler_spreads_phase_bins():
@@ -88,6 +128,28 @@ def test_adaptive_sampler_spreads_phase_bins():
     assert len({sample.bin_index for sample in samples}) >= 3
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"map_height_px": 60.5, "sample_count": 2}, "map_height_px"),
+        ({"map_height_px": 60, "sample_count": 2.5}, "sample_count"),
+        (
+            {"map_height_px": 60, "sample_count": 2, "crop_height_px": 1.5},
+            "crop_height_px",
+        ),
+        ({"map_height_px": 60, "sample_count": 2, "bin_count": 3.5}, "bin_count"),
+    ],
+)
+def test_adaptive_sampler_rejects_fractional_integer_config(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        select_adaptive_map_frames([0, 10], **kwargs)
+
+
+def test_adaptive_sampler_rejects_nonfinite_phases():
+    with pytest.raises(ValueError, match="phases_px"):
+        select_adaptive_map_frames([0, float("nan")], map_height_px=60, sample_count=2)
+
+
 def test_ignore_masks_and_edge_margins():
     valid = np.ones((5, 5), dtype=bool)
     ignore = belt_edge_ignore_mask((5, 5), top_px=1, right_px=1)
@@ -100,7 +162,9 @@ def test_ignore_masks_and_edge_margins():
 
 def test_threshold_and_fdr_helpers():
     residual = np.array([-1.0, 0.0, 1.0, 2.0, 8.0, 9.0])
-    threshold = recommend_threshold(residual, expected_false_pixels_per_frame=1, polarity="bright")
+    threshold = recommend_threshold(
+        residual, expected_false_pixels_per_frame=1, polarity="bright"
+    )
     p_values = empirical_p_values(residual, polarity="bright")
     fdr = fdr_threshold_from_p_values(p_values, residual, alpha=0.5)
 
@@ -117,7 +181,9 @@ def test_particle_density_descriptor_uncertainty_and_split():
 
     pieces = split_merged_components(mask, max_area_px=4, min_gap_px=2)
     descriptor = particle_descriptor_from_mask(pieces[0], signal=signal)
-    uncertainty = estimate_centroid_uncertainty(pieces[0], signal=signal, local_noise=1.0)
+    uncertainty = estimate_centroid_uncertainty(
+        pieces[0], signal=signal, local_noise=1.0
+    )
     density = particle_density_score(signal, threshold=4.0)
 
     assert len(pieces) == 2
@@ -178,7 +244,12 @@ def test_stream_manifest_map_update_and_multicamera(tmp_path: Path):
     manifest = dataset_manifest(tmp_path)
     state = StreamingFrameState()
     new_paths = discover_new_stream_frames(tmp_path, state)
-    updated = incremental_update_map(np.zeros((2, 2)), np.ones((2, 2)) * 10, np.array([[True, False], [False, True]]), learning_rate=0.5)
+    updated = incremental_update_map(
+        np.zeros((2, 2)),
+        np.ones((2, 2)) * 10,
+        np.array([[True, False], [False, True]]),
+        learning_rate=0.5,
+    )
     events = stitch_multicamera_events(
         {
             "a": [{"time_s": 1.0, "phase_px": 10.0}],
@@ -197,8 +268,17 @@ def test_stream_manifest_map_update_and_multicamera(tmp_path: Path):
 
 
 def test_event_classification_and_domain_randomization():
-    event = classify_event(recurrent_overlap_fraction=0.8, velocity_ratio_y=0.2, peak_signal=6.0)
-    randomized = randomize_synthetic_frame(np.ones((4, 4)) * 100, config=__import__("beltmap.operational_improvements", fromlist=["SyntheticRandomizationConfig"]).SyntheticRandomizationConfig(scratch_count=1), rng=np.random.default_rng(1))
+    event = classify_event(
+        recurrent_overlap_fraction=0.8, velocity_ratio_y=0.2, peak_signal=6.0
+    )
+    randomized = randomize_synthetic_frame(
+        np.ones((4, 4)) * 100,
+        config=__import__(
+            "beltmap.operational_improvements",
+            fromlist=["SyntheticRandomizationConfig"],
+        ).SyntheticRandomizationConfig(scratch_count=1),
+        rng=np.random.default_rng(1),
+    )
 
     assert event.label in {"belt-fixed-artifact", "loose-particle"}
     assert randomized.shape == (4, 4)

@@ -5,7 +5,6 @@ from typing import Any
 
 import numpy as np
 
-
 DEFAULT_SMALL_AREA_THRESHOLD_PX = 50.0
 DEFAULT_NEAR_THRESHOLD_MARGIN = 1.0
 
@@ -56,7 +55,9 @@ def safe_share(count: int, total: int) -> float | None:
     return None if total <= 0 else float(count / total)
 
 
-def group_rows_by_track_id(rows: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def group_rows_by_track_id(
+    rows: Iterable[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for index, row in enumerate(rows):
         track_id = str(row.get("track_id", "")).strip() or f"missing:{index}"
@@ -73,10 +74,22 @@ def detection_quality_summary(
 ) -> dict[str, Any]:
     """Summarize small and weak detections that can survive velocity checks."""
 
+    small_area_threshold_px = _nonnegative_float_value(
+        small_area_threshold_px,
+        "small_area_threshold_px",
+    )
+    near_threshold_margin = _nonnegative_float_value(
+        near_threshold_margin,
+        "near_threshold_margin",
+    )
+    if detection_threshold is not None:
+        detection_threshold = _nonnegative_float_value(
+            detection_threshold,
+            "detection_threshold",
+        )
+
     areas = [
-        value
-        for row in rows
-        if (value := finite_float(row.get("area_px"))) is not None
+        value for row in rows if (value := finite_float(row.get("area_px"))) is not None
     ]
     peaks = [
         value
@@ -117,6 +130,24 @@ def accepted_track_quality_summary(
     very_long_track_min_detections: int = 10,
 ) -> dict[str, Any]:
     """Summarize accepted tracks that remain suspicious despite plausible velocity."""
+
+    small_area_threshold_px = _nonnegative_float_value(
+        small_area_threshold_px,
+        "small_area_threshold_px",
+    )
+    long_track_min_detections = _positive_integer_value(
+        long_track_min_detections,
+        "long_track_min_detections",
+    )
+    very_long_track_min_detections = _positive_integer_value(
+        very_long_track_min_detections,
+        "very_long_track_min_detections",
+    )
+    if very_long_track_min_detections < long_track_min_detections:
+        raise ValueError(
+            "very_long_track_min_detections must be greater than or equal to "
+            "long_track_min_detections"
+        )
 
     grouped = group_rows_by_track_id(rows)
     track_lengths: list[int] = []
@@ -165,3 +196,17 @@ def accepted_track_quality_summary(
         "long_small_accepted_tracks_ge_10": len(very_long_small_track_ids),
         "small_accepted_track_ids_preview": small_track_ids[:20],
     }
+
+
+def _nonnegative_float_value(value: float, name: str) -> float:
+    parsed = float(value)
+    if not np.isfinite(parsed) or parsed < 0.0:
+        raise ValueError(f"{name} must be finite and non-negative")
+    return parsed
+
+
+def _positive_integer_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a finite positive integer")
+    return int(parsed)

@@ -381,6 +381,8 @@ def estimate_homography(
     dst = np.asarray(target_points, dtype=np.float64)
     if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 2 or src.shape[0] < 4:
         raise ValueError("source_points and target_points must be Nx2 arrays with N >= 4")
+    if not np.all(np.isfinite(src)) or not np.all(np.isfinite(dst)):
+        raise ValueError("source_points and target_points must be finite")
 
     src_norm, src_transform = _normalize_points(src)
     dst_norm, dst_transform = _normalize_points(dst)
@@ -429,9 +431,12 @@ def warp_perspective(
     matrix = homography.matrix if isinstance(homography, HomographyModel) else np.asarray(homography, dtype=np.float64)
     if matrix.shape != (3, 3):
         raise ValueError("homography matrix must be 3x3")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("homography matrix must be finite")
     if interpolation not in {"nearest", "bilinear"}:
         raise ValueError("interpolation must be 'nearest' or 'bilinear'")
-    out_h, out_w = output_shape
+    out_h = _positive_integer_value(output_shape[0], "output_shape height")
+    out_w = _positive_integer_value(output_shape[1], "output_shape width")
     yy, xx = np.indices((out_h, out_w), dtype=np.float64)
     target = np.stack([xx.ravel(), yy.ravel(), np.ones(xx.size)], axis=0)
     source = np.linalg.inv(matrix) @ target
@@ -490,6 +495,13 @@ def estimate_period_from_profile(
     """Estimate a periodicity from a 1-D belt texture profile."""
 
     values = np.asarray(profile, dtype=np.float64).ravel()
+    min_period_px = _positive_integer_value(min_period_px, "min_period_px")
+    top_k = _positive_integer_value(top_k, "top_k")
+    max_period_px = (
+        None
+        if max_period_px is None
+        else _positive_integer_value(max_period_px, "max_period_px")
+    )
     values = values[np.isfinite(values)]
     if values.size < 2 * min_period_px:
         raise ValueError("profile is too short for the requested minimum period")
@@ -548,8 +560,13 @@ def select_adaptive_map_frames(
     phases = np.asarray(phases_px, dtype=np.float64)
     if phases.size == 0:
         return []
-    if map_height_px <= 0 or sample_count <= 0 or crop_height_px <= 0:
-        raise ValueError("map_height_px, sample_count, and crop_height_px must be positive")
+    if not np.all(np.isfinite(phases)):
+        raise ValueError("phases_px must be finite")
+    map_height_px = _positive_integer_value(map_height_px, "map_height_px")
+    sample_count = _positive_integer_value(sample_count, "sample_count")
+    crop_height_px = _positive_integer_value(crop_height_px, "crop_height_px")
+    if bin_count is not None:
+        bin_count = _positive_integer_value(bin_count, "bin_count")
     scores = np.ones(phases.size, dtype=np.float64) if quality_scores is None else np.asarray(quality_scores, dtype=np.float64)
     if scores.shape != phases.shape:
         raise ValueError("quality_scores must have one value per phase")
@@ -1409,6 +1426,13 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _positive_integer_value(value: Any, name: str) -> int:
+    parsed = _finite_float(value)
+    if parsed is None or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(parsed)
 
 
 def _last_int_in_stem(path: Path, *, fallback: int) -> int:

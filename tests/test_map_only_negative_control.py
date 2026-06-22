@@ -136,6 +136,32 @@ def test_load_phase_samples_rejects_duplicate_frame_indices(tmp_path):
         load_phase_samples(phase_path)
 
 
+@pytest.mark.parametrize(
+    ("csv_text", "message"),
+    [
+        ("frame_index,image,phase_px\n-1,frame_000000.png,0\n", "negative frame_index"),
+        (
+            "frame_index,image,phase_px\n0,frame_000000.png,0\n0,frame_000001.png,1\n",
+            "duplicate frame_index 0",
+        ),
+        (
+            "frame_index,image,phase_px\n,frame_000000.png,0\n0,frame_000001.png,1\n",
+            "duplicate frame_index 0",
+        ),
+    ],
+)
+def test_load_phase_samples_rejects_invalid_frame_sequence(
+    tmp_path,
+    csv_text,
+    message,
+):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(csv_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_phase_samples(phase_path)
+
+
 def test_load_phase_samples_uses_sequence_order_for_blank_frame_indices(tmp_path):
     phase_path = tmp_path / "phase_estimates.csv"
     phase_path.write_text(
@@ -182,6 +208,15 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
         ({"threshold": -1.0}, "threshold must be positive"),
         ({"low_threshold": -0.5}, "low_threshold must be non-negative"),
         ({"period_px": float("nan")}, "period_px must be positive"),
+        ({"min_area_px": 1.5}, "min_area_px must be a positive integer"),
+        (
+            {"highpass_radius_px": 1.5},
+            "highpass_radius_px must be a non-negative integer",
+        ),
+        ({"crop_height_px": 12.5}, "crop_height_px must be a positive integer"),
+        ({"frame_count": 2.5}, "frame_count must be a positive integer"),
+        ({"random_seed": 1.5}, "random_seed must be a non-negative integer"),
+        ({"long_track_length": 3.5}, "long_track_length must be a positive integer"),
         (
             {"belt_velocity_px_per_frame": float("nan")},
             "belt_velocity_px_per_frame must be finite",
@@ -278,9 +313,9 @@ def test_map_only_cli_ignores_fractional_crop_region_height():
 @pytest.mark.parametrize(
     ("option", "value", "message"),
     [
-        ("--long-track-length", "0", "long_track_length must be positive"),
-        ("--frame-count", "-1", "frame_count must be positive"),
-        ("--crop-height-px", "0", "crop_height_px must be positive"),
+        ("--long-track-length", "0", "long_track_length must be a positive integer"),
+        ("--frame-count", "-1", "frame_count must be a positive integer"),
+        ("--crop-height-px", "0", "crop_height_px must be a positive integer"),
         ("--threshold", "-1", "threshold must be positive"),
         ("--low-threshold", "-1", "low_threshold must be non-negative"),
         (

@@ -238,8 +238,14 @@ def score_stress_frames(
 ) -> list[StressFrame]:
     """Assign robust composite texture-stress scores and quantile subsets."""
 
-    if quartiles < 2:
-        raise ValueError("texture-stress analysis requires at least two subsets")
+    quartile_value = finite_float(quartiles)
+    if (
+        quartile_value is None
+        or not quartile_value.is_integer()
+        or quartile_value < 2
+    ):
+        raise ValueError("quartiles must be an integer of at least two")
+    quartiles = int(quartile_value)
     feature_z: dict[str, dict[int, float]] = {}
     for feature in STRESS_FEATURES:
         values = {
