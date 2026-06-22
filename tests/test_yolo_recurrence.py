@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import numpy as np
 
-from beltmap.yolo_recurrence import parse_belt_region, patch_correlation, patch_excess, row_key
+from beltmap.yolo_recurrence import error_taxonomy, parse_belt_region, patch_correlation, patch_excess, row_key
 from beltmap.yolo_recurrence_key_patch import (
     correlation_supported_high_revisits,
     duplicate_safe_row_key,
@@ -51,6 +51,30 @@ def test_correlation_supported_high_revisits_counts_shape_supported_revisits() -
     }
 
     assert correlation_supported_high_revisits(row, threshold=0.4) == 2
+
+
+def test_error_taxonomy_ignores_uncorrelated_bright_revisits() -> None:
+    feature = {
+        "valid_revisits": "2",
+        "hard_reject": "False",
+        "max_recurrence_ratio": "1.4",
+        "belt_fixedness_score": "0.0",
+        "high_recurrence_revisits": "0",
+    }
+
+    assert error_taxonomy(feature, role="FP") == "fp_low_shape_supported_recurrence_evidence"
+
+
+def test_error_taxonomy_reports_shape_supported_recurrence() -> None:
+    feature = {
+        "valid_revisits": "2",
+        "hard_reject": "False",
+        "max_recurrence_ratio": "1.4",
+        "belt_fixedness_score": "0.45",
+        "high_recurrence_revisits": "1",
+    }
+
+    assert error_taxonomy(feature, role="TP") == "tp_shape_supported_recurrent_but_not_hard_rejected"
 
 
 def test_duplicate_safe_row_key_distinguishes_same_frame_same_label_boxes() -> None:
