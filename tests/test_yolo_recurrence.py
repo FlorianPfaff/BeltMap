@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from beltmap.yolo_recurrence import parse_belt_region, patch_correlation, patch_excess
+from beltmap.yolo_recurrence import parse_belt_region, patch_correlation, patch_excess, row_key
 from beltmap.yolo_recurrence_key_patch import duplicate_safe_row_key
 
 
@@ -44,3 +44,23 @@ def test_duplicate_safe_row_key_distinguishes_same_frame_same_label_boxes() -> N
     second.update({"bbox_left": "120", "bbox_right": "140", "x": "130"})
 
     assert duplicate_safe_row_key(base) != duplicate_safe_row_key(second)
+
+
+def test_direct_yolo_recurrence_row_key_is_duplicate_safe() -> None:
+    base = {
+        "frame_index": "12",
+        "label": "0",
+        "bbox_top": "10",
+        "bbox_left": "20",
+        "bbox_bottom": "30",
+        "bbox_right": "40",
+        "y": "20",
+        "x": "30",
+        "confidence": "0.9",
+        "source": "yolo11_raw",
+    }
+    second = dict(base)
+    second.update({"bbox_left": "120", "bbox_right": "140", "x": "130"})
+
+    assert row_key(base) != row_key(second)
+    assert row_key(base) == duplicate_safe_row_key(base)
