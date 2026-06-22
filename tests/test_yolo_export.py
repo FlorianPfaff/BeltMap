@@ -4,6 +4,7 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from beltmap.cli.yolo_export import main as yolo_export_main
@@ -82,6 +83,23 @@ def test_export_yolo_predictions_writes_beltmap_run(tmp_path: Path) -> None:
     metadata = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["mode"] == "yolo_export"
     assert metadata["n_detections"] == 2
+
+
+def test_export_yolo_predictions_rejects_duplicate_frame_indices(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    labels = tmp_path / "labels"
+    out = tmp_path / "run"
+    write_image(images / "raw" / "frame_000001.png")
+    write_image(images / "augmented" / "copy_000001.png")
+    labels.mkdir()
+
+    with pytest.raises(ValueError, match="duplicate image frame index 1"):
+        export_yolo_predictions_to_beltmap_run(
+            labels_dir=labels,
+            images_dir=images,
+            output_dir=out,
+            source="yolo11_raw",
+        )
 
 
 def test_export_yolo_predictions_allows_missing_labels_dir_for_empty_predictions(
