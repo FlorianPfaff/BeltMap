@@ -231,8 +231,13 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, object]], fieldnames: Seq
 
 
 def _label_files(labels_dir: Path) -> dict[str, Path]:
+    # Ultralytics may omit the prediction labels directory entirely when every
+    # evaluated image has zero detections.  That is a valid empty detector output,
+    # so export it as an empty BeltMap run instead of failing before comparison.
+    if not labels_dir.exists():
+        return {}
     if not labels_dir.is_dir():
-        raise FileNotFoundError(labels_dir)
+        raise NotADirectoryError(labels_dir)
     files: dict[str, Path] = {}
     for path in sorted(labels_dir.rglob("*.txt"), key=natural_key):
         files[path.stem] = path
