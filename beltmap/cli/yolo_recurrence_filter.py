@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 # Import for side effect: patch beltmap.yolo_recurrence.row_key so same-frame,
@@ -49,12 +50,20 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--frame-count must be positive")
         if args.hard_min_revisits < 1:
             raise ValueError("--hard-min-revisits must be positive")
-        if args.hard_ratio_threshold < 0:
-            raise ValueError("--hard-ratio-threshold must be non-negative")
+        if args.hard_ratio_threshold < 0 or not math.isfinite(args.hard_ratio_threshold):
+            raise ValueError("--hard-ratio-threshold must be finite and non-negative")
         if args.patch_margin_px < 0:
             raise ValueError("--patch-margin-px must be non-negative")
         if args.min_patch_size_px < 1:
             raise ValueError("--min-patch-size-px must be positive")
+        if args.excess_floor <= 0 or not math.isfinite(args.excess_floor):
+            raise ValueError("--excess-floor must be finite and positive")
+        if args.froc_max_thresholds < 1:
+            raise ValueError("--froc-max-thresholds must be positive")
+        if args.bootstrap_samples < 0:
+            raise ValueError("--bootstrap-samples must be non-negative")
+        if args.bootstrap_block_length_frames < 1:
+            raise ValueError("--bootstrap-block-length-frames must be positive")
         config = YoloRecurrenceConfig(
             frame_count=args.frame_count,
             belt_region=parse_belt_region(args.belt_region),
