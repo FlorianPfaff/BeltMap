@@ -227,6 +227,9 @@ def _label_files(labels_dir: Path) -> dict[str, Path]:
         raise NotADirectoryError(labels_dir)
     files: dict[str, Path] = {}
     for path in sorted(labels_dir.rglob("*.txt"), key=natural_key):
+        existing = files.get(path.stem)
+        if existing is not None:
+            raise ValueError(f"duplicate YOLO label stem {path.stem!r}: {existing} and {path}")
         files[path.stem] = path
     return files
 
