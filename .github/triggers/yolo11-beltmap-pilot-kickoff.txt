@@ -1,6 +1,0 @@
-YOLO11 BeltMap pilot kickoff trigger
-
-This file intentionally triggers .github/workflows/yolo11-beltmap-pilot-kickoff.yml.
-
-Triggered-at: 2026-06-21T00:30:00Z
-Purpose: dispatch yolo11-beltmap-pilot.yml with raw YOLO11n, prediction export, and beltmap-compare scoring enabled.

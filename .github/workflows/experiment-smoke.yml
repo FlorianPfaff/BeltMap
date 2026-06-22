@@ -1,0 +1,97 @@
+name: Experiment smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/experiment-smoke.yml"
+      - "beltmap/yolo_export.py"
+      - "beltmap/yolo_recurrence.py"
+      - "beltmap/yolo_recurrence_filter.py"
+      - "beltmap/cli/yolo_export.py"
+      - "beltmap/cli/yolo_recurrence.py"
+      - "beltmap/cli/yolo_recurrence_filter.py"
+      - "tests/test_yolo_export.py"
+      - "tests/test_yolo_recurrence*.py"
+      - "pyproject.toml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/experiment-smoke.yml"
+      - "beltmap/yolo_export.py"
+      - "beltmap/yolo_recurrence.py"
+      - "beltmap/yolo_recurrence_filter.py"
+      - "beltmap/cli/yolo_export.py"
+      - "beltmap/cli/yolo_recurrence.py"
+      - "beltmap/cli/yolo_recurrence_filter.py"
+      - "tests/test_yolo_export.py"
+      - "tests/test_yolo_recurrence*.py"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experiment-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MPLBACKEND: "Agg"
+
+jobs:
+  yolo-export-and-recurrence:
+    name: YOLO export/recurrence CLI smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package with test and speed extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[test,speed]"
+
+      - name: Run focused experiment smoke tests
+        run: |
+          set -euo pipefail
+          tests=()
+          for test_file in \
+            tests/test_yolo_export.py \
+            tests/test_yolo_recurrence.py \
+            tests/test_yolo_recurrence_filter.py
+          do
+            if [ -f "$test_file" ]; then
+              tests+=("$test_file")
+            fi
+          done
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "No experiment smoke tests were found." >&2
+            exit 1
+          fi
+          python -m pytest "${tests[@]}"
+
+      - name: Check supported experiment CLI help output
+        run: |
+          set -euo pipefail
+          for cli in \
+            beltmap-yolo-export \
+            beltmap-yolo-recurrence \
+            beltmap-yolo-recurrence-filter
+          do
+            if command -v "$cli" >/dev/null 2>&1; then
+              "$cli" --help >/dev/null
+              echo "help ok: $cli"
+            else
+              echo "skip missing optional CLI: $cli"
+            fi
+          done
