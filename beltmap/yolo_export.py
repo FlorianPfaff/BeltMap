@@ -94,19 +94,30 @@ def find_images(
         raise FileNotFoundError(images_dir)
 
     records: dict[str, ImageRecord] = {}
+    records_by_frame: dict[int, ImageRecord] = {}
     for path in sorted(images_dir.rglob("*"), key=natural_key):
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
         frame_index = infer_frame_index(path.stem, pattern=frame_index_pattern)
+        existing_stem = records.get(path.stem)
+        if existing_stem is not None:
+            raise ValueError(f"duplicate image stem {path.stem!r}: {existing_stem.path} and {path}")
+        existing_frame = records_by_frame.get(frame_index)
+        if existing_frame is not None:
+            raise ValueError(
+                f"duplicate image frame index {frame_index}: {existing_frame.path} and {path}"
+            )
         with Image.open(path) as image:
             width, height = image.size
-        records[path.stem] = ImageRecord(
+        record = ImageRecord(
             path=path,
             stem=path.stem,
             frame_index=frame_index,
             width=int(width),
             height=int(height),
         )
+        records[path.stem] = record
+        records_by_frame[frame_index] = record
     if not records:
         raise ValueError(f"no supported images found below {images_dir}")
     return records
