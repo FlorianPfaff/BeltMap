@@ -12,6 +12,7 @@ from beltmap.trust import (
     events_from_tracks,
     frame_quality_metrics,
     parse_region,
+    physical_validation_summary,
     plan_map_epochs,
     quality_report,
     run_drift_report,
@@ -77,6 +78,13 @@ def test_frame_quality_metrics_rejects_invalid_region_and_thresholds(tmp_path):
 def test_quality_report_rejects_nonpositive_sample_limit(tmp_path):
     with pytest.raises(ValueError, match="sample_limit"):
         quality_report(tmp_path, sample_limit=0)
+
+
+def test_quality_report_rejects_fractional_sample_limit(tmp_path):
+    Image.fromarray(np.zeros((4, 4), dtype=np.uint8)).save(tmp_path / "frame_000.png")
+
+    with pytest.raises(ValueError, match="sample_limit"):
+        quality_report(tmp_path, sample_limit=1.5)
 
 
 def test_edge_audit_flags_truncated_detection():
@@ -265,6 +273,20 @@ def test_plan_map_epochs_with_overlap():
     assert epochs[-1]["frame_stop"] == 100
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"frame_count": 100.5}, "frame_count"),
+        ({"frame_count": 100, "epoch_count": 2.5}, "epoch_count"),
+        ({"frame_count": 100, "epoch_length_frames": 10.5}, "epoch_length_frames"),
+        ({"frame_count": 100, "overlap_frames": 1.5}, "overlap_frames"),
+    ],
+)
+def test_plan_map_epochs_rejects_fractional_integer_config(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        plan_map_epochs(**kwargs)
+
+
 def test_run_drift_report_uses_aligned_phase_rows(tmp_path):
     out = tmp_path / "run"
     out.mkdir()
@@ -292,3 +314,28 @@ def test_scale_calibration_from_points():
 
     assert calibration.px_per_mm == 2.0
     assert calibration.mm_per_px == 0.5
+
+
+def test_scale_calibration_rejects_nonfinite_inputs():
+    with pytest.raises(ValueError, match="point_a"):
+        scale_calibration_from_points((0, float("nan")), (0, 100), known_distance_mm=50)
+
+    with pytest.raises(ValueError, match="known_distance_mm"):
+        scale_calibration_from_points((0, 0), (0, 100), known_distance_mm=float("nan"))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"frame_rate_hz": float("nan")}, "frame_rate_hz"),
+        ({"analysis_duration_s": -1.0}, "analysis_duration_s"),
+        ({"particle_mass_g": -0.1}, "particle_mass_g"),
+        ({"expected_particle_flux_per_s": -1.0}, "expected_particle_flux_per_s"),
+    ],
+)
+def test_physical_validation_rejects_invalid_numeric_inputs(tmp_path, kwargs, message):
+    out = tmp_path / "outputs"
+    out.mkdir()
+
+    with pytest.raises(ValueError, match=message):
+        physical_validation_summary(out, **kwargs)

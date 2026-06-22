@@ -175,6 +175,8 @@ def finite_float(value: Any) -> float | None:
 
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -209,6 +211,49 @@ def finite_nonnegative_int(value: Any) -> int | None:
     return parsed
 
 
+def _finite_float_value(value: Any, name: str) -> float:
+    parsed = finite_float(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _positive_float_value(value: Any, name: str) -> float:
+    parsed = _finite_float_value(value, name)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be positive")
+    return parsed
+
+
+def _nonnegative_float_value(value: Any, name: str) -> float:
+    parsed = _finite_float_value(value, name)
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return parsed
+
+
+def _optional_positive_float(value: Any, name: str) -> float | None:
+    return None if value is None else _positive_float_value(value, name)
+
+
+def _optional_nonnegative_float(value: Any, name: str) -> float | None:
+    return None if value is None else _nonnegative_float_value(value, name)
+
+
+def _positive_integer_value(value: Any, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(parsed)
+
+
+def _nonnegative_integer_value(value: Any, name: str) -> int:
+    parsed = _finite_float_value(value, name)
+    if not parsed.is_integer() or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return int(parsed)
+
+
 def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int] | None:
     """Parse ``top,left,height,width`` from text or sequence form."""
 
@@ -221,20 +266,10 @@ def parse_region(value: str | Sequence[int] | None) -> tuple[int, int, int, int]
     )
     if len(parts) != 4:
         raise ValueError("region must contain four values: top,left,height,width")
-    parsed = [finite_int(part) for part in parts]
-    if any(part is None for part in parsed):
-        raise ValueError("region values must be finite integers")
-    top, left, height, width = parsed
-    assert (
-        top is not None
-        and left is not None
-        and height is not None
-        and width is not None
-    )
-    if top < 0 or left < 0:
-        raise ValueError("region top and left must be non-negative")
-    if height <= 0 or width <= 0:
-        raise ValueError("region height and width must be positive")
+    top = _nonnegative_integer_value(parts[0], "region top")
+    left = _nonnegative_integer_value(parts[1], "region left")
+    height = _positive_integer_value(parts[2], "region height")
+    width = _positive_integer_value(parts[3], "region width")
     return top, left, height, width
 
 
@@ -391,8 +426,11 @@ def frame_quality_metrics(
 ) -> dict[str, Any]:
     """Compute blur, saturation, and dynamic-range metrics for one frame."""
 
-    if not math.isfinite(saturation_threshold) or not math.isfinite(dark_threshold):
-        raise ValueError("quality thresholds must be finite")
+    saturation_threshold = _finite_float_value(
+        saturation_threshold,
+        "saturation_threshold",
+    )
+    dark_threshold = _finite_float_value(dark_threshold, "dark_threshold")
     if saturation_threshold <= dark_threshold:
         raise ValueError("saturation_threshold must be greater than dark_threshold")
     gray = _load_gray(path, region=region)
@@ -449,8 +487,7 @@ def quality_report(
 ) -> dict[str, Any]:
     """Summarize image quality over a sampled subset of frames."""
 
-    if sample_limit < 1:
-        raise ValueError("sample_limit must be positive")
+    sample_limit = _positive_integer_value(sample_limit, "sample_limit")
     paths = image_paths(image_dir)
     if not paths:
         return {
@@ -677,6 +714,15 @@ def plan_map_epochs(
 ) -> list[dict[str, int | str]]:
     """Plan frame ranges for multi-epoch belt maps."""
 
+    frame_count = _positive_integer_value(frame_count, "frame_count")
+    overlap_frames = _nonnegative_integer_value(overlap_frames, "overlap_frames")
+    if epoch_count is not None:
+        epoch_count = _positive_integer_value(epoch_count, "epoch_count")
+    if epoch_length_frames is not None:
+        epoch_length_frames = _positive_integer_value(
+            epoch_length_frames,
+            "epoch_length_frames",
+        )
     if frame_count <= 0:
         raise ValueError("frame_count must be positive")
     if overlap_frames < 0:
@@ -722,10 +768,12 @@ def edge_audit_rows(
 ) -> list[dict[str, Any]]:
     """Annotate detections with crop-edge and truncation flags."""
 
-    if height <= 0 or width <= 0:
-        raise ValueError("height and width must be positive")
-    if margin_px < 0:
-        raise ValueError("margin_px must be non-negative")
+    try:
+        height = _positive_integer_value(height, "height")
+        width = _positive_integer_value(width, "width")
+    except ValueError as exc:
+        raise ValueError("height and width must be positive") from exc
+    margin_px = _nonnegative_integer_value(margin_px, "margin_px")
     rows: list[dict[str, Any]] = []
     for row in detections:
         top = finite_float(row.get("bbox_top"))
@@ -886,6 +934,20 @@ def physical_validation_summary(
 ) -> dict[str, Any]:
     """Compare image-derived counts or mass flux with independent measurements."""
 
+    expected_particle_flux_per_s = _optional_nonnegative_float(
+        expected_particle_flux_per_s,
+        "expected_particle_flux_per_s",
+    )
+    expected_mass_flux_g_s = _optional_nonnegative_float(
+        expected_mass_flux_g_s,
+        "expected_mass_flux_g_s",
+    )
+    particle_mass_g = _optional_positive_float(particle_mass_g, "particle_mass_g")
+    frame_rate_hz = _optional_positive_float(frame_rate_hz, "frame_rate_hz")
+    analysis_duration_s = _optional_positive_float(
+        analysis_duration_s,
+        "analysis_duration_s",
+    )
     metadata = read_json(output_dir / "metadata.json")
     events = read_csv_rows(output_dir / "events.csv")
     if not events:
@@ -1028,12 +1090,16 @@ def scale_calibration_from_points(
 ) -> ScaleCalibration:
     """Estimate pixel scale from two calibration-target points."""
 
-    if known_distance_mm <= 0:
-        raise ValueError("known_distance_mm must be positive")
     if len(point_a) != 2 or len(point_b) != 2:
         raise ValueError("point_a and point_b must contain two values each")
-    ay, ax = float(point_a[0]), float(point_a[1])
-    by, bx = float(point_b[0]), float(point_b[1])
+    known_distance_mm = _positive_float_value(
+        known_distance_mm,
+        "known_distance_mm",
+    )
+    ay = _finite_float_value(point_a[0], "point_a")
+    ax = _finite_float_value(point_a[1], "point_a")
+    by = _finite_float_value(point_b[0], "point_b")
+    bx = _finite_float_value(point_b[1], "point_b")
     distance_px = math.hypot(by - ay, bx - ax)
     if distance_px <= 0:
         raise ValueError("calibration points must be distinct")
