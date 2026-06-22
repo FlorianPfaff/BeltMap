@@ -69,7 +69,9 @@ def resolve_velocity_frame_unit(frame_stride: int) -> str:
     )
 
 
-def resolve_supplied_velocity(velocity_spec: str, frame_stride: int) -> tuple[float, str, float]:
+def resolve_supplied_velocity(
+    velocity_spec: str, frame_stride: int
+) -> tuple[float, str, float]:
     """Return effective selected-frame velocity, frame unit, and raw supplied value."""
 
     raw_velocity = float(velocity_spec)
@@ -105,10 +107,16 @@ def parse_region(first_frame: np.ndarray) -> tuple[int, int, int, int]:
     except ValueError as exc:
         raise ValueError(f"BELT_REGION values must be integers; got {value!r}") from exc
     if (
-        top < 0 or left < 0 or crop_height <= 0 or crop_width <= 0
-        or top + crop_height > height or left + crop_width > width
+        top < 0
+        or left < 0
+        or crop_height <= 0
+        or crop_width <= 0
+        or top + crop_height > height
+        or left + crop_width > width
     ):
-        raise ValueError(f"Invalid BELT_REGION={value!r} for image shape {(height, width)}")
+        raise ValueError(
+            f"Invalid BELT_REGION={value!r} for image shape {(height, width)}"
+        )
     return top, left, crop_height, crop_width
 
 
@@ -124,7 +132,9 @@ def validate_auto_velocity_region(
     region: tuple[int, int, int, int],
     frame_shape: tuple[int, int],
 ) -> None:
-    if is_full_frame_region(region, frame_shape) and not env_bool("ALLOW_FULL_FRAME_AUTO_VELOCITY"):
+    if is_full_frame_region(region, frame_shape) and not env_bool(
+        "ALLOW_FULL_FRAME_AUTO_VELOCITY"
+    ):
         raise ValueError(
             "BELT_VELOCITY_PX_PER_FRAME=auto is unsafe with a full-frame BELT_REGION. "
             "Set BELT_REGION to the belt crop, supply BELT_VELOCITY_PX_PER_FRAME explicitly, "
@@ -138,7 +148,9 @@ def validate_auto_velocity_estimate(
     *,
     max_shift: int,
 ) -> None:
-    min_abs_velocity = env_float("AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", 0.25, minimum=0.0)
+    min_abs_velocity = env_float(
+        "AUTO_VELOCITY_MIN_ABS_PX_PER_FRAME", 0.25, minimum=0.0
+    )
     if abs(velocity) < min_abs_velocity:
         raise ValueError(
             f"Auto-estimated belt velocity {velocity:.6g} px/frame is below "
@@ -157,13 +169,16 @@ def validate_auto_velocity_estimate(
             )
 
 
-def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int) -> float:
+def correlation_shift(
+    previous: np.ndarray, current: np.ndarray, max_shift: int
+) -> float:
     if previous.shape != current.shape:
         raise ValueError(
             "previous and current frames must have the same shape for velocity estimation"
         )
     if previous.ndim == 0:
         raise ValueError("previous and current frames must be non-scalar arrays")
+    max_shift = _positive_integer_value(max_shift, "max_shift")
     if max_shift >= previous.shape[0]:
         raise ValueError(
             "max_shift must be smaller than the image height for velocity estimation; "
@@ -201,7 +216,9 @@ def correlation_shift(previous: np.ndarray, current: np.ndarray, max_shift: int)
     return best_shift
 
 
-def estimate_velocity(paths: list, region: tuple[int, int, int, int]) -> tuple[float, list[float]]:
+def estimate_velocity(
+    paths: list, region: tuple[int, int, int, int]
+) -> tuple[float, list[float]]:
     max_shift = env_int("VELOCITY_SEARCH_RADIUS_PX", 50, minimum=1)
     _, _, crop_height, _crop_width = region
     if max_shift >= crop_height:
@@ -209,11 +226,18 @@ def estimate_velocity(paths: list, region: tuple[int, int, int, int]) -> tuple[f
             "VELOCITY_SEARCH_RADIUS_PX must be smaller than the BELT_REGION height; "
             f"got VELOCITY_SEARCH_RADIUS_PX={max_shift}, BELT_REGION height={crop_height}"
         )
-    pair_count = min(len(paths) - 1, env_int("VELOCITY_ESTIMATION_PAIRS", 100, minimum=1))
+    pair_count = min(
+        len(paths) - 1, env_int("VELOCITY_ESTIMATION_PAIRS", 100, minimum=1)
+    )
     progress_interval = env_int("PROGRESS_INTERVAL_FRAMES", 25, minimum=1)
     if pair_count < 1:
         raise ValueError("Automatic velocity estimation requires at least two frames")
-    emit("velocity", "estimating belt velocity", pair_count=pair_count, max_shift_px=max_shift)
+    emit(
+        "velocity",
+        "estimating belt velocity",
+        pair_count=pair_count,
+        max_shift_px=max_shift,
+    )
     shifts: list[float] = []
     previous = crop(read_gray(paths[0]), region)
     for index in range(1, pair_count + 1):
@@ -221,7 +245,19 @@ def estimate_velocity(paths: list, region: tuple[int, int, int, int]) -> tuple[f
         shifts.append(correlation_shift(previous, current, max_shift))
         previous = current
         if index == 1 or index == pair_count or index % progress_interval == 0:
-            emit("velocity", f"estimated {index}/{pair_count} shifts", current_shift_px=shifts[-1], median_shift_px=float(np.median(shifts)))
+            emit(
+                "velocity",
+                f"estimated {index}/{pair_count} shifts",
+                current_shift_px=shifts[-1],
+                median_shift_px=float(np.median(shifts)),
+            )
     velocity = float(np.median(shifts))
     validate_auto_velocity_estimate(velocity, shifts, max_shift=max_shift)
     return velocity, shifts
+
+
+def _positive_integer_value(value: int, name: str) -> int:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a finite positive integer")
+    return int(parsed)

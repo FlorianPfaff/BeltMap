@@ -148,12 +148,12 @@ def test_registration_quality_inflates_low_quality_residual_noise():
     np.testing.assert_allclose(inflated.normalized, residual.normalized / 4.0)
 
 
-@pytest.mark.parametrize("factor", [float("nan"), float("inf"), True, "2.0", 0.5])
+@pytest.mark.parametrize("factor", [float("nan"), float("inf"), True, "2.0", 0.5, 0.0])
 def test_residual_with_inflated_noise_rejects_invalid_factor(factor):
     estimate = PhaseEstimate(phase_px=0.0, frame_index=0.0, predicted_phase_px=0.0)
     residual = make_residual(estimate)
 
-    with pytest.raises(ValueError, match="factor"):
+    with pytest.raises(ValueError, match="inflation factor"):
         residual_with_inflated_noise(residual, factor)
 
 

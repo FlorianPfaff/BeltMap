@@ -224,9 +224,12 @@ def registration_quality_inflation_factor(
 def residual_with_inflated_noise(residual: ResidualImage, factor: float) -> ResidualImage:
     """Return a residual whose normalized signal is divided by ``factor``."""
 
-    factor_value = _require_finite(factor, "factor")
+    try:
+        factor_value = _require_finite(factor, "factor")
+    except ValueError as exc:
+        raise ValueError("noise inflation factor must be finite and positive") from exc
     if factor_value < 1.0:
-        raise ValueError("factor must be at least 1")
+        raise ValueError("noise inflation factor must be at least 1")
     if factor_value == 1.0:
         return residual
     if (
