@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass
+from numbers import Real
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -88,6 +90,8 @@ def render_expected_clean_belt(
     """
 
     belt = _as_float_image(belt_map, name="belt_map")
+    fill = _finite_or_nan_config_value(fill_value, "fill_value")
+    frame_index_value = _finite_config_value(frame_index, "frame_index")
     if belt.ndim != 2:
         raise ValueError("belt_map must be a 2-D array")
 
@@ -124,13 +128,14 @@ def render_expected_clean_belt(
         frame_crop = observed[region.y_slice, region.x_slice] if observed is not None else None
         mask_crop = _resolve_registration_mask(registration_mask, output_shape, region)
         phase = estimate_phase(
-            frame_index,
+            frame_index_value,
             motion_model,
             frame=frame_crop,
             belt_map=belt if frame_crop is not None else None,
             config=registration_config,
             mask=mask_crop,
         )
+    _validate_phase_estimate(phase)
 
     clean_crop = render_belt_view(
         belt,
@@ -138,7 +143,7 @@ def render_expected_clean_belt(
         region.height,
         periodic=render_periodic,
     )
-    clean = np.full(output_shape, fill_value, dtype=np.float64)
+    clean = np.full(output_shape, fill, dtype=np.float64)
     valid = np.zeros(output_shape, dtype=bool)
     clean[region.y_slice, region.x_slice] = clean_crop
     valid[region.y_slice, region.x_slice] = np.isfinite(clean_crop)
@@ -156,6 +161,7 @@ def _resolve_periodic_rendering(
     motion_model: BeltMotionModel | None,
 ) -> bool:
     if periodic is not None:
+        _validate_bool_value(periodic, "periodic")
         return bool(periodic)
     if motion_model is not None:
         return motion_model.period_px is not None
@@ -186,6 +192,8 @@ def _resolve_belt_region(
             height=_integer_config_value(belt_region.height, "belt_region height"),
             width=_integer_config_value(belt_region.width, "belt_region width"),
         )
+    if not _is_sequence_value(belt_region):
+        raise ValueError("belt_region must be a BeltRegion or (top, left, height, width)")
     if len(belt_region) != 4:
         raise ValueError("belt_region tuple must be (top, left, height, width)")
     top, left, height, width = belt_region
@@ -213,6 +221,8 @@ def _resolve_output_shape(
 
 
 def _resolve_shape(output_shape: tuple[int, int]) -> tuple[int, int]:
+    if not _is_sequence_value(output_shape):
+        raise ValueError("output_shape must be (height, width)")
     if len(output_shape) != 2:
         raise ValueError("output_shape must be (height, width)")
     return (
@@ -222,10 +232,60 @@ def _resolve_shape(output_shape: tuple[int, int]) -> tuple[int, int]:
 
 
 def _integer_config_value(value: int, name: str) -> int:
-    parsed = float(value)
+    parsed = _finite_config_value(value, name)
     if not np.isfinite(parsed) or not parsed.is_integer():
         raise ValueError(f"{name} must be a finite integer")
     return int(parsed)
+
+
+def _finite_config_value(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _optional_finite_config_value(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    return _finite_config_value(value, name)
+
+
+def _finite_or_nan_config_value(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric or NaN, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric or NaN")
+    parsed = float(value)
+    if not np.isfinite(parsed) and not np.isnan(parsed):
+        raise ValueError(f"{name} must be finite or NaN")
+    return parsed
+
+
+def _validate_bool_value(value: bool, name: str) -> None:
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be boolean")
+
+
+def _is_sequence_value(value: object) -> bool:
+    return isinstance(value, SequenceABC) and not isinstance(value, (str, bytes))
+
+
+def _validate_phase_estimate(phase: PhaseEstimate) -> None:
+    _finite_config_value(phase.phase_px, "phase_estimate.phase_px")
+    _finite_config_value(phase.frame_index, "phase_estimate.frame_index")
+    _finite_config_value(
+        phase.predicted_phase_px,
+        "phase_estimate.predicted_phase_px",
+    )
+    _finite_config_value(phase.correction_px, "phase_estimate.correction_px")
+    _optional_finite_config_value(phase.loss, "phase_estimate.loss")
+    _optional_finite_config_value(phase.score, "phase_estimate.score")
+    _finite_config_value(phase.drift_px, "phase_estimate.drift_px")
 
 
 def _validate_region(region: BeltRegion, output_shape: tuple[int, int]) -> None:

@@ -10,6 +10,19 @@ from .residual import ResidualImage
 
 DETECTION_MODES = {"positive", "negative", "absolute"}
 DETECTION_MODE_ALIASES = {
+    "bright": "positive",
+    "bright_particle": "positive",
+    "bright_particles": "positive",
+    "light": "positive",
+    "light_on_dark": "positive",
+    "dark": "negative",
+    "dark_particle": "negative",
+    "dark_particles": "negative",
+    "dark_on_light": "negative",
+    "both": "absolute",
+    "signed": "absolute",
+    "two_sided": "absolute",
+    "twosided": "absolute",
     "threshold": "positive",
     "hysteresis": "positive",
     "hysteresis_abs": "absolute",
@@ -24,7 +37,7 @@ def normalize_detection_mode(mode: str) -> str:
     config files, and public API calls share the same normalization path.
     """
 
-    normalized = str(mode).strip().lower()
+    normalized = str(mode).strip().lower().replace("-", "_").replace(" ", "_")
     normalized = DETECTION_MODE_ALIASES.get(normalized, normalized)
     if normalized in DETECTION_MODES:
         return normalized

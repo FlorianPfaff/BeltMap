@@ -92,13 +92,19 @@ def test_extract_particle_detections_applies_shape_gates():
     ("config", "message"),
     [
         (ParticleComponentConfig(min_area_px=float("nan")), "min_area_px"),
+        (ParticleComponentConfig(min_area_px=1.5), "min_area_px"),
         (ParticleComponentConfig(max_area_px=float("nan")), "max_area_px"),
+        (ParticleComponentConfig(max_area_px=3.5), "max_area_px"),
         (ParticleComponentConfig(min_bbox_width_px=float("nan")), "min_bbox_width_px"),
+        (ParticleComponentConfig(min_bbox_width_px=1.5), "min_bbox_width_px"),
         (ParticleComponentConfig(min_bbox_height_px=float("nan")), "min_bbox_height_px"),
+        (ParticleComponentConfig(min_bbox_height_px=1.5), "min_bbox_height_px"),
         (ParticleComponentConfig(max_bbox_aspect_ratio=float("nan")), "max_bbox_aspect_ratio"),
         (ParticleComponentConfig(min_bbox_extent=float("nan")), "min_bbox_extent"),
         (ParticleComponentConfig(split_min_projection_gap_px=float("nan")), "split_min_projection_gap_px"),
+        (ParticleComponentConfig(split_min_projection_gap_px=1.5), "split_min_projection_gap_px"),
         (ParticleComponentConfig(split_min_component_area_px=float("nan")), "split_min_component_area_px"),
+        (ParticleComponentConfig(split_min_component_area_px=1.5), "split_min_component_area_px"),
     ],
 )
 def test_extract_particle_detections_rejects_nonfinite_component_config(config, message):

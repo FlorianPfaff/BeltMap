@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Real
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -49,6 +50,7 @@ def generate_residual_image(
     """Return ``(image - expected_background) / local_noise``."""
 
     cfg = config or ResidualConfig()
+    fill_value = _finite_or_nan_config_value(cfg.fill_value, "fill_value")
     observed = _as_float_image(image, name="image")
     clean_render = (
         expected_background
@@ -62,6 +64,8 @@ def generate_residual_image(
     )
     if observed.shape != expected.shape:
         raise ValueError("image and expected_background must have the same shape")
+    if clean_render is not None and clean_render.mask.shape != observed.shape:
+        raise ValueError("CleanBeltRender mask must have the same shape as image")
 
     valid = np.isfinite(observed) & np.isfinite(expected)
     if clean_render is not None:
@@ -74,8 +78,8 @@ def generate_residual_image(
 
     raw_values = observed - expected
     local_noise = estimate_local_noise(raw_values, mask=valid, config=cfg)
-    raw = np.full(observed.shape, cfg.fill_value, dtype=np.float64)
-    normalized = np.full(observed.shape, cfg.fill_value, dtype=np.float64)
+    raw = np.full(observed.shape, fill_value, dtype=np.float64)
+    normalized = np.full(observed.shape, fill_value, dtype=np.float64)
     raw[valid] = raw_values[valid]
     normalized[valid] = raw_values[valid] / local_noise[valid]
     return ResidualImage(
@@ -154,6 +158,7 @@ def estimate_local_noise(
         "noise_exclusion_radius_px",
     )
     noise_exclusion_mode = _validate_noise_exclusion_mode(cfg.noise_exclusion_mode)
+    fill_value = _finite_or_nan_config_value(cfg.fill_value, "fill_value")
 
     values = _as_float_image(residual, name="residual")
     valid = np.isfinite(values)
@@ -202,7 +207,7 @@ def estimate_local_noise(
         global_sigma * global_sigma,
     )
     local_noise = np.sqrt(np.maximum(local_var, min_noise * min_noise))
-    local_noise[~valid] = cfg.fill_value
+    local_noise[~valid] = fill_value
     return local_noise
 
 
@@ -210,6 +215,8 @@ def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
     arr = np.asarray(image, dtype=np.float64)
     if arr.size == 0:
         raise ValueError(f"{name} must not be empty")
+    if arr.ndim != 2:
+        raise ValueError(f"{name} must be a 2-D array")
     return arr
 
 
@@ -222,6 +229,8 @@ def _robust_sigma(values: FloatArray, *, center: float, min_noise: float) -> flo
 
 
 def _validate_noise_exclusion_mode(mode: str) -> str:
+    if not isinstance(mode, str):
+        raise ValueError("ResidualConfig.noise_exclusion_mode must be a string")
     normalized = mode.strip().lower()
     if normalized in NOISE_EXCLUSION_MODES:
         return normalized
@@ -233,7 +242,7 @@ def _validate_noise_exclusion_mode(mode: str) -> str:
 
 
 def _positive_config_value(value: float, name: str) -> float:
-    parsed = float(value)
+    parsed = _finite_config_value(value, name)
     if not np.isfinite(parsed) or parsed <= 0:
         raise ValueError(f"{name} must be finite and positive")
     return parsed
@@ -246,10 +255,32 @@ def _optional_positive_config_value(value: float | None, name: str) -> float | N
 
 
 def _nonnegative_integer_config_value(value: int, name: str) -> int:
-    parsed = float(value)
+    parsed = _finite_config_value(value, name)
     if not np.isfinite(parsed) or parsed < 0 or not parsed.is_integer():
         raise ValueError(f"{name} must be a finite non-negative integer")
     return int(parsed)
+
+
+def _finite_config_value(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
+
+
+def _finite_or_nan_config_value(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric or NaN, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric or NaN")
+    parsed = float(value)
+    if not np.isfinite(parsed) and not np.isnan(parsed):
+        raise ValueError(f"{name} must be finite or NaN")
+    return parsed
 
 
 def _particle_noise_exclusion_mask(

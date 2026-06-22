@@ -10,8 +10,15 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from beltmap._driver_map import (
+    MAP_PARTICLE_MASK_MODE_ALIASES,
+    MAP_PARTICLE_MASK_MODES,
+    validate_map_particle_mask_mode,
+)
 
-MAP_PARTICLE_MASK_MODES = ("positive", "negative", "absolute", "hysteresis_abs")
+MAP_PARTICLE_MASK_MODE_CHOICES = tuple(
+    sorted({*MAP_PARTICLE_MASK_MODES, *MAP_PARTICLE_MASK_MODE_ALIASES})
+)
 PHASE_ESTIMATION_MODES = ("motion_model", "registration", "smoothed_registration")
 
 CASES = {
@@ -171,9 +178,7 @@ def write_config(
     phase_refinement_max_abs_correction_px: float = 0.0,
     phase_smoothing_window_frames: int = 0,
 ) -> Path:
-    if map_particle_mask_mode not in MAP_PARTICLE_MASK_MODES:
-        choices = ", ".join(MAP_PARTICLE_MASK_MODES)
-        raise ValueError(f"map_particle_mask_mode must be one of {choices}")
+    map_particle_mask_mode = validate_map_particle_mask_mode(map_particle_mask_mode)
     if map_particle_mask_grow_threshold < 0:
         raise ValueError("map_particle_mask_grow_threshold must be non-negative")
     if map_particle_mask_margin_px < 0:
@@ -263,7 +268,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=64)
     parser.add_argument("--period", type=int, default=64)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--map-particle-mask-mode", choices=MAP_PARTICLE_MASK_MODES, default="positive")
+    parser.add_argument(
+        "--map-particle-mask-mode",
+        choices=MAP_PARTICLE_MASK_MODE_CHOICES,
+        default="positive",
+    )
     parser.add_argument("--map-particle-mask-grow-threshold", type=float, default=2.0)
     parser.add_argument("--map-particle-mask-margin-px", type=int, default=1)
     parser.add_argument("--map-local-illumination-correction", action="store_true")
@@ -286,6 +295,7 @@ def case_or_arg(params: dict, args, key: str, default):
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    map_particle_mask_mode = validate_map_particle_mask_mode(args.map_particle_mask_mode)
     cases = args.case or sorted(CASES)
     manifest = []
     for case in cases:
@@ -312,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.map_local_illumination_tile_px,
                 )
             ),
-            map_particle_mask_mode=args.map_particle_mask_mode,
+            map_particle_mask_mode=map_particle_mask_mode,
             map_particle_mask_grow_threshold=args.map_particle_mask_grow_threshold,
             map_particle_mask_margin_px=args.map_particle_mask_margin_px,
             phase_estimation_mode=str(
@@ -347,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
                 "root": str(root),
                 "config": str(config_path),
                 "truth": str(root / "synthetic_metadata.json"),
-                "map_particle_mask_mode": args.map_particle_mask_mode,
+                "map_particle_mask_mode": map_particle_mask_mode,
                 "map_particle_mask_grow_threshold": args.map_particle_mask_grow_threshold,
                 "map_particle_mask_margin_px": args.map_particle_mask_margin_px,
                 "map_local_illumination_correction": (

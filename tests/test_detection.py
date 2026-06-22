@@ -6,6 +6,7 @@ from beltmap import (
     detect_particles_from_residual,
     detect_particles_from_residual_hysteresis,
     detection_signal_from_residual,
+    normalize_detection_mode,
 )
 
 
@@ -133,6 +134,14 @@ def test_detect_particles_from_residual_supports_absolute_particles():
             ]
         ),
     )
+
+
+def test_detection_mode_accepts_particle_polarity_aliases():
+    assert normalize_detection_mode("bright") == "positive"
+    assert normalize_detection_mode("dark") == "negative"
+    assert normalize_detection_mode("dark-on-light") == "negative"
+    assert normalize_detection_mode("signed") == "absolute"
+    assert normalize_detection_mode("two sided") == "absolute"
 
 
 def test_detect_particles_from_residual_grows_hysteresis_regions_from_strong_seeds():

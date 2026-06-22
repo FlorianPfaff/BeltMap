@@ -1,3 +1,6 @@
+import csv
+import json
+
 import numpy as np
 from PIL import Image
 
@@ -8,6 +11,7 @@ from beltmap.trust import (
     plan_map_epochs,
     scale_calibration_from_points,
     sequence_report,
+    write_run_trust_artifacts,
 )
 
 
@@ -86,6 +90,33 @@ def test_confidence_rows_penalizes_truncation_and_artifacts():
     scored = confidence_rows(rows, threshold=5.0)
 
     assert scored[0]["detection_confidence"] > scored[1]["detection_confidence"]
+
+
+def test_write_run_trust_artifacts_preserves_zero_detection_threshold(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps(
+            {
+                "detection_threshold": 0.0,
+                "belt_region": {"top": 0, "left": 0, "height": 10, "width": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right,area_px,peak_signal\n"
+        "0,2,2,4,4,20,0\n",
+        encoding="utf-8",
+    )
+
+    write_run_trust_artifacts(output_dir=out)
+
+    with (out / "detection_confidence.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert len(rows) == 1
+    assert float(rows[0]["detection_confidence"]) == 0.5
 
 
 def test_plan_map_epochs_with_overlap():

@@ -123,7 +123,7 @@ REQUIRED_CSV_COLUMNS = {
 }
 
 TRUTH_CONTAINER_KEYS = ("particles", "annotations", "labels", "detections")
-TRUTH_FRAME_KEYS = ("frame", "image_index")
+TRUTH_FRAME_KEYS = ("frame_index", "frame", "image_index")
 TRUTH_FRAME_SET_KEYS = (
     "scored_frames",
     "frames",
@@ -157,6 +157,7 @@ FROC_SCORE_FIELDS = (
 )
 FROC_FP_PER_FRAME_LIMITS = (0.1, 0.5, 1.0)
 FROC_AUC_FP_PER_FRAME_LIMIT = 1.0
+DEFAULT_FROC_MAX_THRESHOLDS = 256
 
 
 @dataclass(frozen=True)
@@ -254,6 +255,8 @@ def finite_float(value: Any) -> float | None:
 
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:
@@ -270,6 +273,42 @@ def finite_int(value: Any) -> int | None:
     if parsed is None or not parsed.is_integer():
         return None
     return int(parsed)
+
+
+def validated_unit_interval(value: Any, name: str) -> float:
+    """Parse a finite numeric value in the closed interval [0, 1]."""
+
+    parsed = finite_float(value)
+    if parsed is None or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be a finite number in [0, 1]")
+    return parsed
+
+
+def validated_open_unit_interval(value: Any, name: str) -> float:
+    """Parse a finite numeric value in the open interval (0, 1)."""
+
+    parsed = finite_float(value)
+    if parsed is None or not 0.0 < parsed < 1.0:
+        raise ValueError(f"{name} must be a finite number in (0, 1)")
+    return parsed
+
+
+def validated_nonnegative_int(value: Any, name: str) -> int:
+    """Parse a non-negative integer without boolean coercion."""
+
+    parsed = finite_int(value)
+    if parsed is None or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return parsed
+
+
+def validated_positive_int(value: Any, name: str) -> int:
+    """Parse a positive integer without boolean coercion."""
+
+    parsed = validated_nonnegative_int(value, name)
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
 
 
 def nonempty_value(row: dict[str, Any], key: str) -> Any | None:
@@ -391,6 +430,16 @@ def row_frame_index(row: dict[str, Any]) -> int | None:
     return None
 
 
+def label_frame_index(row: dict[str, Any]) -> int | None:
+    """Infer a truth-label frame index, preferring explicit reviewed metadata."""
+
+    for key in TRUTH_FRAME_KEYS:
+        frame_index = finite_int(nonempty_value(row, key))
+        if frame_index is not None:
+            return frame_index
+    return source_frame_index(row)
+
+
 def parse_frame_set(value: Any) -> set[int]:
     """Parse a JSON scalar/list of scored frame indices."""
 
@@ -404,7 +453,7 @@ def parse_frame_set(value: Any) -> set[int]:
         values = [value]
     frames: set[int] = set()
     for item in values:
-        frame_index = row_frame_index(item) if isinstance(item, dict) else finite_int(item)
+        frame_index = label_frame_index(item) if isinstance(item, dict) else finite_int(item)
         if frame_index is not None:
             frames.add(frame_index)
     return frames
@@ -446,7 +495,7 @@ def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
     for frame in frames:
         if not isinstance(frame, dict):
             raise ValueError("truth frame entries must be objects")
-        frame_index = row_frame_index(frame)
+        frame_index = label_frame_index(frame)
         if frame_index is None:
             raise ValueError(
                 "truth frame entries must contain a finite integer frame_index"
@@ -459,7 +508,7 @@ def label_rows_from_frame_objects(frames: list[Any]) -> list[dict[str, Any]]:
                 if not isinstance(box, dict):
                     continue
                 row = dict(box)
-                if frame_index is not None and row_frame_index(row) is None:
+                if frame_index is not None and label_frame_index(row) is None:
                     row["frame_index"] = frame_index
                 rows.append(row)
             break
@@ -505,7 +554,7 @@ def label_rows_from_json(data: Any) -> tuple[list[dict[str, Any]], set[int]]:
 def truth_particle_from_label_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Convert one real-data label row to the benchmark truth-box schema."""
 
-    frame_index = row_frame_index(row)
+    frame_index = label_frame_index(row)
     if frame_index is None:
         return None
 
@@ -571,7 +620,7 @@ def load_labeled_detection_truth(path: Path) -> dict[str, Any]:
     particles: list[dict[str, Any]] = []
     skipped_rows = 0
     for row in rows:
-        frame_index = row_frame_index(row)
+        frame_index = label_frame_index(row)
         if frame_index is not None:
             scored_frames.add(frame_index)
         particle = truth_particle_from_label_row(row)
@@ -650,13 +699,11 @@ def detection_score_field(
     *,
     score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
 ) -> str | None:
-    """Return the first score field with finite values for every row."""
+    """Return the first finite per-detection score field available in rows."""
 
     buffered_rows = list(rows)
-    if not buffered_rows:
-        return None
     for field in score_fields:
-        if all(finite_float(row.get(field)) is not None for row in buffered_rows):
+        if any(finite_float(row.get(field)) is not None for row in buffered_rows):
             return field
     return None
 
@@ -795,6 +842,29 @@ def froc_auc_up_to_fp_per_frame(
     return float(area / max_fp_per_frame)
 
 
+def bounded_froc_thresholds(
+    scores: Iterable[float],
+    *,
+    max_thresholds: int | None,
+) -> tuple[list[float], int]:
+    """Return a bounded high-score-preserving threshold grid."""
+
+    unique = sorted({float(score) for score in scores if np.isfinite(score)}, reverse=True)
+    threshold_count = len(unique)
+    if max_thresholds is None or max_thresholds <= 0 or threshold_count <= max_thresholds:
+        return unique, threshold_count
+    if max_thresholds == 1:
+        return unique[:1], threshold_count
+
+    head_count = min(threshold_count, max(1, max_thresholds // 2))
+    indices = set(range(head_count))
+    remaining_slots = max_thresholds - len(indices)
+    if remaining_slots > 0 and head_count < threshold_count:
+        tail_indices = np.linspace(head_count, threshold_count - 1, remaining_slots)
+        indices.update(int(round(index)) for index in tail_indices)
+    return [unique[index] for index in sorted(indices)], threshold_count
+
+
 def detection_froc_curve(
     detection_rows: list[dict[str, str]],
     truth: dict[str, Any],
@@ -802,6 +872,7 @@ def detection_froc_curve(
     scored_frames: set[int] | None = None,
     iou_threshold: float = 0.25,
     score_fields: tuple[str, ...] = FROC_SCORE_FIELDS,
+    max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
 ) -> dict[str, Any]:
     """Compute a detection FROC curve by sweeping a per-detection score.
 
@@ -825,11 +896,6 @@ def detection_froc_curve(
         }
 
     score_field = detection_score_field(detection_rows, score_fields=score_fields)
-    skipped_score_rows = (
-        0
-        if score_field is not None or not detection_rows
-        else incomplete_score_row_count(detection_rows, score_fields=score_fields)
-    )
     empty_metrics = detection_metrics(
         [],
         truth,
@@ -845,19 +911,32 @@ def detection_froc_curve(
         )
     ]
 
-    thresholds: list[float] = []
+    skipped_score_rows = 0
+    scores: list[float] = []
+    unscored_rows: list[dict[str, str]] = []
+    available_thresholds = 0
+    evaluated_thresholds = 0
     if score_field is not None:
         for row in detection_rows:
             score = finite_float(row.get(score_field))
-            assert score is not None
-            thresholds.append(score)
-        for threshold in sorted(set(thresholds), reverse=True):
-            kept_rows = [
+            if score is None:
+                skipped_score_rows += 1
+                unscored_rows.append(row)
+                continue
+            scores.append(score)
+        thresholds, available_thresholds = bounded_froc_thresholds(
+            scores,
+            max_thresholds=max_thresholds,
+        )
+        evaluated_thresholds = len(thresholds)
+        for threshold in thresholds:
+            scored_kept_rows = [
                 row
                 for row in detection_rows
                 if (score := finite_float(row.get(score_field))) is not None
                 and score >= threshold
             ]
+            kept_rows = [*unscored_rows, *scored_kept_rows]
             metrics = detection_metrics(
                 kept_rows,
                 truth,
@@ -895,10 +974,7 @@ def detection_froc_curve(
     if truth_boxes == 0:
         reason = "no truth boxes on scored frames"
     elif score_field is None and detection_rows:
-        reason = (
-            "no per-detection score field is finite for every scored detection; "
-            "partial-score FROC sweeps would ignore unscored detections"
-        )
+        reason = "no finite per-detection score field available for threshold sweep"
     if not available:
         recall_limits = {limit: None for limit in FROC_FP_PER_FRAME_LIMITS}
 
@@ -910,6 +986,9 @@ def detection_froc_curve(
         "evaluated_frames": evaluated_frames,
         "truth_boxes": truth_boxes,
         "skipped_score_rows": skipped_score_rows,
+        "available_thresholds": available_thresholds,
+        "evaluated_thresholds": evaluated_thresholds,
+        "max_thresholds": max_thresholds,
         "points": points,
         "point_count": len(points),
         "auc_fp_per_frame_le_1": (
@@ -1028,6 +1107,7 @@ def summarize_run(
     *,
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
     bootstrap_samples: int = 0,
     bootstrap_confidence_level: float = 0.95,
     bootstrap_seed: int | None = 0,
@@ -1159,6 +1239,7 @@ def summarize_run(
             labeled_truth,
             scored_frames=scored_frames,
             iou_threshold=truth_iou_threshold,
+            max_thresholds=froc_max_thresholds,
         )
         row.update(
             {
@@ -1332,17 +1413,20 @@ def draw_labeled_froc_plot(
     *,
     labeled_truth: dict[str, Any],
     truth_iou_threshold: float,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
 ) -> None:
     """Draw labeled detection FROC curves for the comparison report."""
 
     scored_frames = truth_frame_indices(labeled_truth)
     labeled_series: list[tuple[str, list[float], list[float]]] = []
     for run in runs:
+        scored_detections = restrict_detection_rows_to_frames(run.detections, scored_frames)
         froc = detection_froc_curve(
-            run.detections,
+            scored_detections,
             labeled_truth,
             scored_frames=scored_frames,
             iou_threshold=truth_iou_threshold,
+            max_thresholds=froc_max_thresholds,
         )
         points = monotone_froc_points(list(froc.get("points") or []))
         labeled_series.append(
@@ -1498,6 +1582,7 @@ def write_plots(
     *,
     labeled_truth: dict[str, Any] | None = None,
     truth_iou_threshold: float = 0.25,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
     make_metric_plots: bool = True,
     make_contact_sheets: bool = True,
 ) -> tuple[dict[str, Path], dict[str, Path]]:
@@ -1536,6 +1621,7 @@ def write_plots(
                 runs,
                 labeled_truth=labeled_truth,
                 truth_iou_threshold=truth_iou_threshold,
+                froc_max_thresholds=froc_max_thresholds,
             )
 
     images: dict[str, Path] = {}
@@ -1850,6 +1936,7 @@ def generate_comparison_report(
     frames: list[int] | None = None,
     truth_path: Path | None = None,
     truth_iou_threshold: float = 0.25,
+    froc_max_thresholds: int | None = DEFAULT_FROC_MAX_THRESHOLDS,
     bootstrap_samples: int = 0,
     bootstrap_confidence_level: float = 0.95,
     bootstrap_seed: int | None = 0,
@@ -1859,14 +1946,28 @@ def generate_comparison_report(
 ) -> ComparisonArtifacts:
     """Generate summary CSV, comparison plots, and a Markdown report."""
 
-    if len(specs) < 2:
-        raise ValueError("at least two runs are required for comparison")
-    if bootstrap_samples < 0:
-        raise ValueError("bootstrap samples must be non-negative")
-    if not 0.0 < bootstrap_confidence_level < 1.0:
-        raise ValueError("bootstrap confidence level must be between 0 and 1")
-    if bootstrap_block_length_frames < 1:
-        raise ValueError("bootstrap block length must be at least 1 frame")
+    if not specs:
+        raise ValueError("at least one run is required")
+    if len(specs) < 2 and truth_path is None:
+        raise ValueError("at least two runs are required when no truth labels are supplied")
+    truth_iou_threshold = validated_unit_interval(
+        truth_iou_threshold,
+        "truth_iou_threshold",
+    )
+    bootstrap_samples = validated_nonnegative_int(
+        bootstrap_samples,
+        "bootstrap_samples",
+    )
+    bootstrap_confidence_level = validated_open_unit_interval(
+        bootstrap_confidence_level,
+        "bootstrap_confidence_level",
+    )
+    bootstrap_block_length_frames = validated_positive_int(
+        bootstrap_block_length_frames,
+        "bootstrap_block_length_frames",
+    )
+    if bootstrap_seed is not None:
+        bootstrap_seed = validated_nonnegative_int(bootstrap_seed, "bootstrap_seed")
     report_dir.mkdir(parents=True, exist_ok=True)
     labeled_truth = (
         None if truth_path is None else load_labeled_detection_truth(truth_path)
@@ -1880,6 +1981,7 @@ def generate_comparison_report(
                 run,
                 labeled_truth=labeled_truth,
                 truth_iou_threshold=truth_iou_threshold,
+                froc_max_thresholds=froc_max_thresholds,
                 bootstrap_samples=bootstrap_samples,
                 bootstrap_confidence_level=bootstrap_confidence_level,
                 bootstrap_seed=bootstrap_seed_for_run,
@@ -1893,6 +1995,7 @@ def generate_comparison_report(
         runs,
         labeled_truth=labeled_truth,
         truth_iou_threshold=truth_iou_threshold,
+        froc_max_thresholds=froc_max_thresholds,
         make_metric_plots=make_metric_plots,
         make_contact_sheets=make_contact_sheets,
     )
