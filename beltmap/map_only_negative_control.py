@@ -328,6 +328,7 @@ def load_phase_samples(
     if not path.is_file():
         return []
     samples: list[PhaseSample] = []
+    seen_frames: set[float] = set()
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None or "phase_px" not in reader.fieldnames:
@@ -346,18 +347,18 @@ def load_phase_samples(
                 frame_index = _finite_int(raw_frame)
                 if frame_index is None:
                     raise ValueError(
-                        f"non-integer frame_index in {path} row {row_number + 2}"
+                        f"invalid frame_index in {path} row {row_number + 2}"
                     )
                 if frame_index < 0:
                     raise ValueError(
-                        f"negative frame_index in {path} row {row_number + 2}"
+                        f"invalid frame_index: negative frame_index in {path} row {row_number + 2}"
                     )
-            if frame_index in seen_frames:
+            frame = float(frame_index)
+            if frame in seen_frames:
                 raise ValueError(
                     f"duplicate frame_index {frame_index} in {path} row {row_number + 2}"
                 )
-            seen_frames.add(frame_index)
-            frame = float(frame_index)
+            seen_frames.add(frame)
             image = (
                 row.get("image", "").strip() or f"map_only_frame_{len(samples):06d}.png"
             )
@@ -374,12 +375,12 @@ def load_phase_samples(
 def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
     normalize_detection_mode(config.mode)
     _require_finite(config.threshold, "threshold")
-    if config.threshold < 0:
-        raise ValueError("threshold must be non-negative")
+    if config.threshold <= 0:
+        raise ValueError("threshold must be positive")
     if config.low_threshold is not None:
         _require_finite(config.low_threshold, "low_threshold")
         if config.low_threshold < 0:
-            raise ValueError("low_threshold must be non-negative when set")
+            raise ValueError("low_threshold must be non-negative")
         if config.low_threshold > config.threshold:
             raise ValueError("low_threshold must be less than or equal to threshold")
     min_area_px = _positive_int_value(config.min_area_px, "min_area_px")
@@ -399,6 +400,13 @@ def _validate_config(config: MapOnlyNegativeControlConfig) -> None:
     ):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
     _nonnegative_int_value(config.highpass_radius_px, "highpass_radius_px")
+    if config.split_min_projection_gap_px < 1:
+        raise ValueError("split_min_projection_gap_px must be positive")
+    if (
+        config.split_min_component_area_px is not None
+        and config.split_min_component_area_px < 1
+    ):
+        raise ValueError("split_min_component_area_px must be positive when set")
     if config.highpass_min_scale_gray <= 0 or not math.isfinite(
         config.highpass_min_scale_gray
     ):
@@ -898,6 +906,8 @@ def _finite_float(value: Any) -> float | None:
 
 
 def _finite_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
     parsed = _finite_float(value)
     if parsed is None or not parsed.is_integer():
         return None
@@ -924,6 +934,13 @@ def _optional_positive_int_value(value: Any, name: str) -> int | None:
     return _positive_int_value(value, name)
 
 
+def _finite_nonnegative_int(value: Any) -> int | None:
+    parsed = _finite_int(value)
+    if parsed is None or parsed < 0:
+        return None
+    return parsed
+
+
 def _finite_or_none(value: Any) -> float | None:
     return _finite_float(value)
 
@@ -948,7 +965,8 @@ def _write_csv(
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(_json_ready(payload), indent=2, sort_keys=True), encoding="utf-8"
+        json.dumps(_json_ready(payload), indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
     )
 
 
@@ -960,7 +978,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
     if isinstance(value, np.generic):
-        return value.item()
+        return _json_ready(value.item())
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return value

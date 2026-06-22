@@ -8,6 +8,7 @@ import pytest
 from beltmap.cli import map_only_negative_control as cli_map_only_negative_control
 from beltmap.map_only_negative_control import (
     MapOnlyNegativeControlConfig,
+    _json_ready,
     generate_map_only_negative_control_report,
     load_phase_samples,
 )
@@ -108,7 +109,30 @@ def test_load_phase_samples_rejects_fractional_frame_indices(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="non-integer frame_index"):
+    with pytest.raises(ValueError, match="invalid frame_index"):
+        load_phase_samples(phase_path)
+
+
+@pytest.mark.parametrize("frame_index", ["-1", "true"])
+def test_load_phase_samples_rejects_invalid_frame_indices(tmp_path, frame_index):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(
+        f"frame_index,image,phase_px\n{frame_index},frame_000000.png,0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid frame_index"):
+        load_phase_samples(phase_path)
+
+
+def test_load_phase_samples_rejects_duplicate_frame_indices(tmp_path):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(
+        "frame_index,image,phase_px\n0,frame_000000.png,0\n0,frame_000001.png,1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate frame_index"):
         load_phase_samples(phase_path)
 
 
@@ -180,9 +204,10 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
 @pytest.mark.parametrize(
     ("config_kwargs", "message"),
     [
-        ({"period_px": float("nan")}, "period_px must be positive"),
-        ({"threshold": -1.0}, "threshold must be non-negative"),
+        ({"threshold": 0.0}, "threshold must be positive"),
+        ({"threshold": -1.0}, "threshold must be positive"),
         ({"low_threshold": -0.5}, "low_threshold must be non-negative"),
+        ({"period_px": float("nan")}, "period_px must be positive"),
         ({"min_area_px": 1.5}, "min_area_px must be a positive integer"),
         (
             {"highpass_radius_px": 1.5},
@@ -203,6 +228,14 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
         (
             {"highpass_min_scale_gray": float("nan")},
             "highpass_min_scale_gray must be positive",
+        ),
+        (
+            {"split_min_projection_gap_px": 0},
+            "split_min_projection_gap_px must be positive",
+        ),
+        (
+            {"split_min_component_area_px": -1},
+            "split_min_component_area_px must be positive",
         ),
         (
             {"track_filter_min_velocity_ratio_y": float("nan")},
@@ -246,6 +279,17 @@ def test_map_only_cli_rejects_fractional_integer_config_options():
         )
 
 
+def test_map_only_cli_rejects_boolean_integer_config_options():
+    with pytest.raises(ValueError, match="min_track_length must be an integer"):
+        cli_map_only_negative_control._int_option(
+            None,
+            {"options": {"min_track_length": {"value": True}}},
+            "min_track_length",
+            ("tracking", "min_track_length"),
+            2,
+        )
+
+
 def test_map_only_cli_rejects_nonfinite_float_config_options():
     with pytest.raises(ValueError, match="detection_threshold must be finite"):
         cli_map_only_negative_control._float_option(
@@ -272,6 +316,18 @@ def test_map_only_cli_ignores_fractional_crop_region_height():
         ("--long-track-length", "0", "long_track_length must be a positive integer"),
         ("--frame-count", "-1", "frame_count must be a positive integer"),
         ("--crop-height-px", "0", "crop_height_px must be a positive integer"),
+        ("--threshold", "-1", "threshold must be positive"),
+        ("--low-threshold", "-1", "low_threshold must be non-negative"),
+        (
+            "--split-min-projection-gap-px",
+            "0",
+            "split_min_projection_gap_px must be positive",
+        ),
+        (
+            "--split-min-component-area-px",
+            "-1",
+            "split_min_component_area_px must be positive",
+        ),
         ("--threshold", "nan", "detection_threshold must be finite"),
     ],
 )
@@ -295,3 +351,9 @@ def test_map_only_cli_rejects_explicit_invalid_integer_values(
 
     assert exc_info.value.code == 2
     assert message in capsys.readouterr().err
+
+
+def test_json_ready_sanitizes_numpy_nonfinite_scalars():
+    payload = _json_ready({"bad": np.float64(float("nan"))})
+
+    assert payload == {"bad": None}

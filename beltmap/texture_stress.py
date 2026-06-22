@@ -26,6 +26,7 @@ from .compare_runs import (
     truth_frame_indices,
 )
 
+
 FRAME_FIELDS = [
     "frame_index",
     "subset",
@@ -189,9 +190,7 @@ def image_texture_metrics(path: Path) -> dict[str, float | None]:
     }
 
 
-def collect_reference_features(
-    reference: RunData,
-) -> dict[int, dict[str, float | None]]:
+def collect_reference_features(reference: RunData) -> dict[int, dict[str, float | None]]:
     """Collect stress features from one reference run without rerunning BeltMap."""
 
     counts = frame_indexed_float(reference.detections_per_frame, "n_detections")
@@ -239,9 +238,14 @@ def score_stress_frames(
 ) -> list[StressFrame]:
     """Assign robust composite texture-stress scores and quantile subsets."""
 
-    parsed_quartiles = _positive_integer_value(quartiles, "quartiles")
-    if parsed_quartiles < 2:
-        raise ValueError("texture-stress analysis requires at least two subsets")
+    quartile_value = finite_float(quartiles)
+    if (
+        quartile_value is None
+        or not quartile_value.is_integer()
+        or quartile_value < 2
+    ):
+        raise ValueError("quartiles must be an integer of at least two")
+    quartiles = int(quartile_value)
     feature_z: dict[str, dict[int, float]] = {}
     for feature in STRESS_FEATURES:
         values = {
@@ -255,11 +259,7 @@ def score_stress_frames(
 
     scores: dict[int, float | None] = {}
     for frame in sorted(features):
-        values = [
-            z_by_frame[frame]
-            for z_by_frame in feature_z.values()
-            if frame in z_by_frame
-        ]
+        values = [z_by_frame[frame] for z_by_frame in feature_z.values() if frame in z_by_frame]
         scores[frame] = None if not values else float(np.mean(values))
 
     finite_frames = [frame for frame, score in scores.items() if score is not None]
@@ -267,14 +267,7 @@ def score_stress_frames(
     subset_by_frame: dict[int, str] = {}
     total = len(finite_frames)
     for rank, frame in enumerate(finite_frames):
-        subset_index = (
-            min(
-                parsed_quartiles - 1,
-                int(rank * parsed_quartiles / total),
-            )
-            if total
-            else 0
-        )
+        subset_index = min(quartiles - 1, int(rank * quartiles / total)) if total else 0
         subset_by_frame[frame] = f"Q{subset_index + 1}"
 
     result: list[StressFrame] = []
@@ -291,9 +284,7 @@ def score_stress_frames(
                 residual_p95_abs=row.get("residual_p95_abs"),
                 registration_loss=row.get("registration_loss"),
                 registration_score=row.get("registration_score"),
-                reference_detections_per_frame=row.get(
-                    "reference_detections_per_frame"
-                ),
+                reference_detections_per_frame=row.get("reference_detections_per_frame"),
             )
         )
     return result
@@ -305,13 +296,6 @@ def subset_rank(label: str) -> int:
         if parsed is not None:
             return parsed
     return 9999
-
-
-def _positive_integer_value(value: int, name: str) -> int:
-    parsed = float(value)
-    if not np.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
-        raise ValueError(f"{name} must be a finite positive integer")
-    return int(parsed)
 
 
 def mean_or_none(values: Iterable[float]) -> float | None:
@@ -330,9 +314,7 @@ def count_detections_in_frames(rows: Iterable[dict[str, Any]], frames: set[int])
     return sum(1 for row in rows if row_frame_index(row) in frames)
 
 
-def velocity_rows_in_frames(
-    rows: Iterable[dict[str, Any]], frames: set[int]
-) -> list[dict[str, Any]]:
+def velocity_rows_in_frames(rows: Iterable[dict[str, Any]], frames: set[int]) -> list[dict[str, Any]]:
     """Assign velocity rows to stress subsets by track midpoint/start/end when available."""
 
     selected: list[dict[str, Any]] = []
@@ -349,9 +331,7 @@ def velocity_rows_in_frames(
     return selected
 
 
-def subset_labeled_truth(
-    labeled_truth: dict[str, Any], frames: set[int]
-) -> dict[str, Any]:
+def subset_labeled_truth(labeled_truth: dict[str, Any], frames: set[int]) -> dict[str, Any]:
     scored_frames = truth_frame_indices(labeled_truth) & frames
     particles = [
         particle
@@ -392,17 +372,12 @@ def summarize_run_subset(
     counts = [
         float(value)
         for row in run.detections_per_frame
-        if row_frame_index(row) in frames
-        and (value := finite_float(row.get("n_detections"))) is not None
+        if row_frame_index(row) in frames and (value := finite_float(row.get("n_detections"))) is not None
     ]
     detections = count_detections_in_frames(run.detections, frames)
-    filtered_track_rows = [
-        row for row in run.filtered_tracks if row_frame_index(row) in frames
-    ]
+    filtered_track_rows = [row for row in run.filtered_tracks if row_frame_index(row) in frames]
     filtered_track_ids = {
-        str(row.get("track_id"))
-        for row in filtered_track_rows
-        if str(row.get("track_id", "")).strip()
+        str(row.get("track_id")) for row in filtered_track_rows if str(row.get("track_id", "")).strip()
     }
     velocity_rows = velocity_rows_in_frames(run.velocities, frames)
     velocity_ratios = [
@@ -432,9 +407,7 @@ def summarize_run_subset(
     if labeled_truth is not None:
         scoped_truth = subset_labeled_truth(labeled_truth, frames)
         scored_frames = truth_frame_indices(scoped_truth)
-        scored_detections = restrict_detection_rows_to_frames(
-            run.detections, scored_frames
-        )
+        scored_detections = restrict_detection_rows_to_frames(run.detections, scored_frames)
         metrics = detection_metrics(
             scored_detections,
             scoped_truth,
@@ -458,9 +431,7 @@ def summarize_run_subset(
     return row
 
 
-def grouped_stress_frames(
-    stress_frames: Iterable[StressFrame],
-) -> dict[str, list[StressFrame]]:
+def grouped_stress_frames(stress_frames: Iterable[StressFrame]) -> dict[str, list[StressFrame]]:
     groups: dict[str, list[StressFrame]] = {}
     for frame in stress_frames:
         if frame.stress_score is None or frame.subset == "unscored":
@@ -481,11 +452,7 @@ def summarize_texture_stress(
     for run in runs:
         for subset, frames_in_subset in groups.items():
             frames = {frame.frame_index for frame in frames_in_subset}
-            scores = [
-                float(frame.stress_score)
-                for frame in frames_in_subset
-                if frame.stress_score is not None
-            ]
+            scores = [float(frame.stress_score) for frame in frames_in_subset if frame.stress_score is not None]
             rows.append(
                 summarize_run_subset(
                     run,
@@ -504,27 +471,21 @@ def write_csv_dicts(path: Path, rows: list[dict[str, Any]], fields: list[str]) -
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(
-            {field: row.get(field, "") for field in fields} for row in rows
-        )
+        writer.writerows({field: row.get(field, "") for field in fields} for row in rows)
 
 
-def write_texture_stress_plots(
-    report_dir: Path, rows: list[dict[str, Any]]
-) -> dict[str, Path]:
-    plots = {
-        "detections_by_texture_stress": report_dir / "detections_by_texture_stress.png"
-    }
+def write_texture_stress_plots(report_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Path]:
+    plots = {"detections_by_texture_stress": report_dir / "detections_by_texture_stress.png"}
     series: list[tuple[str, list[float], list[float]]] = []
     labels = sorted({str(row.get("run")) for row in rows})
     for label in labels:
         run_rows = [row for row in rows if row.get("run") == label]
-        run_rows.sort(key=lambda row: finite_float(row.get("stress_rank")) or math.inf)
-        xs = [
-            float(row["stress_rank"])
-            for row in run_rows
-            if finite_float(row.get("stress_rank")) is not None
-        ]
+        def stress_rank_sort_key(row: dict[str, Any]) -> float:
+            rank = finite_float(row.get("stress_rank"))
+            return math.inf if rank is None else float(rank)
+
+        run_rows.sort(key=stress_rank_sort_key)
+        xs = [float(row["stress_rank"]) for row in run_rows if finite_float(row.get("stress_rank")) is not None]
         ys = [
             float(value)
             for row in run_rows
@@ -634,9 +595,7 @@ def build_texture_stress_markdown(
         for row in rows:
             lines.append(
                 "| "
-                + " | ".join(
-                    format_value(row.get(field)) for field, _label in labeled_fields
-                )
+                + " | ".join(format_value(row.get(field)) for field, _label in labeled_fields)
                 + " |"
             )
     lines.extend(
@@ -663,15 +622,10 @@ def select_reference_run(runs: list[RunData], reference_label: str | None) -> Ru
     if reference_label is None:
         return runs[0]
     for run in runs:
-        if (
-            run.spec.label == reference_label
-            or str(run.spec.output_dir) == reference_label
-        ):
+        if run.spec.label == reference_label or str(run.spec.output_dir) == reference_label:
             return run
     labels = ", ".join(run.spec.label for run in runs)
-    raise ValueError(
-        f"reference run {reference_label!r} not found; available labels: {labels}"
-    )
+    raise ValueError(f"reference run {reference_label!r} not found; available labels: {labels}")
 
 
 def generate_texture_stress_report(
@@ -687,7 +641,6 @@ def generate_texture_stress_report(
 
     if not specs:
         raise ValueError("at least one run is required")
-    quartiles = _positive_integer_value(quartiles, "quartiles")
     if quartiles < 2:
         raise ValueError("quartiles must be at least 2")
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -704,9 +657,7 @@ def generate_texture_stress_report(
         raise ValueError(
             f"reference run {reference.spec.label!r} did not contain enough varying stress features"
         )
-    labeled_truth = (
-        None if truth_path is None else load_labeled_detection_truth(truth_path)
-    )
+    labeled_truth = None if truth_path is None else load_labeled_detection_truth(truth_path)
     rows = summarize_texture_stress(
         runs,
         stress_frames,
@@ -715,9 +666,7 @@ def generate_texture_stress_report(
     )
     frames_csv = report_dir / "texture_stress_frames.csv"
     summary_csv = report_dir / "texture_stress_summary.csv"
-    write_csv_dicts(
-        frames_csv, [frame.as_row() for frame in stress_frames], FRAME_FIELDS
-    )
+    write_csv_dicts(frames_csv, [frame.as_row() for frame in stress_frames], FRAME_FIELDS)
     write_csv_dicts(summary_csv, rows, SUMMARY_FIELDS)
     plots = write_texture_stress_plots(report_dir, rows)
     report = report_dir / "texture_stress_report.md"

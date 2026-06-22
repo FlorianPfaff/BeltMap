@@ -67,6 +67,8 @@ SWEEP_METRIC_FIELDS = [
 
 def parse_scalar(value: str) -> Any:
     text = value.strip()
+    if text == "":
+        raise ValueError("sweep parameter values must not be empty")
     if text.lower() in {"true", "false"}:
         return text.lower() == "true"
     if text.lower() in {"none", "null"}:
@@ -76,21 +78,48 @@ def parse_scalar(value: str) -> Any:
     except ValueError:
         pass
     try:
-        return float(text)
+        parsed = float(text)
     except ValueError:
         return text
+    if not math.isfinite(parsed):
+        raise ValueError("numeric sweep parameter values must be finite")
+    return parsed
+
+
+def dotted_key_parts(dotted_key: str) -> list[str]:
+    parts = [part.strip() for part in dotted_key.split(".")]
+    if not parts or any(part == "" for part in parts):
+        raise ValueError("dotted keys must contain non-empty path components")
+    return parts
+
+
+def parse_iou_threshold(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "IoU threshold must be finite and in [0, 1]"
+        ) from exc
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("IoU threshold must be finite and in [0, 1]")
+    return parsed
 
 
 def parse_param(value: str) -> tuple[str, list[Any]]:
     if "=" not in value:
         raise ValueError("parameters must be KEY=VALUE1,VALUE2")
     key, raw_values = value.split("=", 1)
-    values = [parse_scalar(item) for item in raw_values.split(",")]
-    return key.strip(), values
+    key = key.strip()
+    dotted_key_parts(key)
+    raw_items = raw_values.split(",")
+    if not raw_items:
+        raise ValueError("parameters must include at least one value")
+    values = [parse_scalar(item) for item in raw_items]
+    return key, values
 
 
 def set_dotted(data: dict[str, Any], dotted_key: str, value: Any) -> None:
-    keys = dotted_key.split(".")
+    keys = dotted_key_parts(dotted_key)
     target = data
     for key in keys[:-1]:
         child = target.setdefault(key, {})
@@ -102,7 +131,7 @@ def set_dotted(data: dict[str, Any], dotted_key: str, value: Any) -> None:
 
 def get_dotted(data: dict[str, Any], dotted_key: str) -> Any:
     target: Any = data
-    for key in dotted_key.split("."):
+    for key in dotted_key_parts(dotted_key):
         if not isinstance(target, dict) or key not in target:
             return None
         target = target[key]
@@ -111,10 +140,12 @@ def get_dotted(data: dict[str, Any], dotted_key: str) -> Any:
 
 def toml_value(value: Any) -> str:
     if value is None:
-        return '""'
+        raise ValueError("TOML output cannot represent None sweep values")
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            raise ValueError("TOML numeric values must be finite")
         return str(value)
     if isinstance(value, list):
         return "[" + ", ".join(toml_value(v) for v in value) + "]"
@@ -123,7 +154,9 @@ def toml_value(value: Any) -> str:
 
 def write_toml(data: dict[str, Any], path: Path) -> None:
     lines: list[str] = []
-    flat_items = [(key, value) for key, value in data.items() if not isinstance(value, dict)]
+    flat_items = [
+        (key, value) for key, value in data.items() if not isinstance(value, dict)
+    ]
     for key, value in flat_items:
         lines.append(f"{key} = {toml_value(value)}")
     for section, values in data.items():
@@ -160,14 +193,39 @@ def section_value(metrics: dict[str, Any], section: str, key: str) -> Any:
     return data.get(key)
 
 
+def nonnegative_metric(metrics: dict[str, Any], section: str, key: str) -> float | None:
+    value = finite_number(section_value(metrics, section, key))
+    return value if value is not None and value >= 0.0 else None
+
+
+def nonnegative_count_metric(
+    metrics: dict[str, Any], section: str, key: str
+) -> int | None:
+    value = nonnegative_metric(metrics, section, key)
+    if value is None or not value.is_integer():
+        return None
+    return int(value)
+
+
+def unit_interval_metric(
+    metrics: dict[str, Any], section: str, key: str
+) -> float | None:
+    value = finite_number(section_value(metrics, section, key))
+    return value if value is not None and 0.0 <= value <= 1.0 else None
+
+
+def finite_metric(metrics: dict[str, Any], section: str, key: str) -> float | None:
+    return finite_number(section_value(metrics, section, key))
+
+
 def false_positives_per_frame(metrics: dict[str, Any]) -> float | None:
-    false_positives = finite_number(section_value(metrics, "detections", "false_positives"))
+    false_positives = nonnegative_metric(metrics, "detections", "false_positives")
     frame_count = finite_number(section_value(metrics, "case", "frames"))
     if frame_count in (None, 0):
         frame_count = finite_number(section_value(metrics, "runtime", "frames"))
     if frame_count in (None, 0):
         frame_count = finite_number(section_value(metrics, "run", "n_images"))
-    if false_positives is None or frame_count in (None, 0):
+    if false_positives is None or frame_count is None or frame_count <= 0:
         return None
     return float(false_positives / frame_count)
 
@@ -190,114 +248,128 @@ def benchmark_summary_row(
         "overrides": compact_json(overrides),
         "detection_threshold": get_dotted(config, "detection.threshold"),
         "detection_low_threshold": get_dotted(config, "detection.low_threshold"),
-        "detection_precision": section_value(metrics, "detections", "precision"),
-        "detection_recall": section_value(metrics, "detections", "recall"),
-        "detection_f1": section_value(metrics, "detections", "f1"),
+        "detection_precision": unit_interval_metric(metrics, "detections", "precision"),
+        "detection_recall": unit_interval_metric(metrics, "detections", "recall"),
+        "detection_f1": unit_interval_metric(metrics, "detections", "f1"),
         "false_positives_per_frame": false_positives_per_frame(metrics),
-        "event_precision": section_value(metrics, "events", "precision"),
-        "event_recall": section_value(metrics, "events", "recall"),
-        "event_f1": section_value(metrics, "events", "f1"),
-        "filtered_event_precision": section_value(metrics, "filtered_events", "precision"),
-        "filtered_event_recall": section_value(metrics, "filtered_events", "recall"),
-        "filtered_event_f1": section_value(metrics, "filtered_events", "f1"),
-        "mean_track_length": section_value(metrics, "tracks", "mean_track_length"),
-        "median_track_length": section_value(metrics, "tracks", "median_track_length"),
-        "single_frame_tracks": section_value(metrics, "tracks", "single_frame_tracks"),
-        "single_frame_track_fraction": section_value(
+        "event_precision": unit_interval_metric(metrics, "events", "precision"),
+        "event_recall": unit_interval_metric(metrics, "events", "recall"),
+        "event_f1": unit_interval_metric(metrics, "events", "f1"),
+        "filtered_event_precision": unit_interval_metric(
+            metrics, "filtered_events", "precision"
+        ),
+        "filtered_event_recall": unit_interval_metric(
+            metrics, "filtered_events", "recall"
+        ),
+        "filtered_event_f1": unit_interval_metric(metrics, "filtered_events", "f1"),
+        "mean_track_length": nonnegative_metric(metrics, "tracks", "mean_track_length"),
+        "median_track_length": nonnegative_metric(
+            metrics, "tracks", "median_track_length"
+        ),
+        "single_frame_tracks": nonnegative_count_metric(
+            metrics, "tracks", "single_frame_tracks"
+        ),
+        "single_frame_track_fraction": unit_interval_metric(
             metrics,
             "tracks",
             "single_frame_track_fraction",
         ),
-        "filtered_mean_track_length": section_value(
+        "filtered_mean_track_length": nonnegative_metric(
             metrics,
             "filtered_tracks",
             "mean_track_length",
         ),
-        "filtered_median_track_length": section_value(
+        "filtered_median_track_length": nonnegative_metric(
             metrics,
             "filtered_tracks",
             "median_track_length",
         ),
-        "filtered_single_frame_tracks": section_value(
+        "filtered_single_frame_tracks": nonnegative_count_metric(
             metrics,
             "filtered_tracks",
             "single_frame_tracks",
         ),
-        "filtered_single_frame_track_fraction": section_value(
+        "filtered_single_frame_track_fraction": unit_interval_metric(
             metrics,
             "filtered_tracks",
             "single_frame_track_fraction",
         ),
-        "track_fragmentation": section_value(metrics, "events", "track_fragmentation"),
-        "filtered_track_fragmentation": section_value(
+        "track_fragmentation": nonnegative_metric(
+            metrics, "events", "track_fragmentation"
+        ),
+        "filtered_track_fragmentation": nonnegative_metric(
             metrics,
             "filtered_events",
             "track_fragmentation",
         ),
-        "fragmented_truth_events": section_value(metrics, "events", "fragmented_truth_events"),
-        "mean_fragments_per_truth_event": section_value(
+        "fragmented_truth_events": nonnegative_count_metric(
+            metrics, "events", "fragmented_truth_events"
+        ),
+        "mean_fragments_per_truth_event": nonnegative_metric(
             metrics,
             "events",
             "mean_fragments_per_truth_event",
         ),
-        "birth_false_positive_rate": section_value(
+        "birth_false_positive_rate": nonnegative_metric(
             metrics,
             "events",
             "birth_false_positive_rate",
         ),
-        "missed_event_rate": section_value(metrics, "events", "missed_event_rate"),
-        "velocity_y_error_px_per_frame": section_value(
+        "missed_event_rate": unit_interval_metric(
+            metrics, "events", "missed_event_rate"
+        ),
+        "velocity_y_error_px_per_frame": finite_metric(
             metrics,
             "velocity",
             "velocity_y_error_px_per_frame",
         ),
-        "velocity_y_mean_abs_error_px_per_frame": section_value(
+        "velocity_y_mean_abs_error_px_per_frame": nonnegative_metric(
             metrics,
             "velocity",
             "velocity_y_mean_abs_error_px_per_frame",
         ),
-        "velocity_y_bias_px_per_frame": section_value(
+        "velocity_y_bias_px_per_frame": finite_metric(
             metrics,
             "velocity",
             "velocity_y_bias_px_per_frame",
         ),
-        "velocity_y_error_std_px_per_frame": section_value(
+        "velocity_y_error_std_px_per_frame": nonnegative_metric(
             metrics,
             "velocity",
             "velocity_y_error_std_px_per_frame",
         ),
-        "truth_matched_velocity_y_error_px_per_frame": section_value(
+        "truth_matched_velocity_y_error_px_per_frame": finite_metric(
             metrics,
             "velocity",
             "truth_matched_velocity_y_error_px_per_frame",
         ),
-        "filtered_velocity_y_error_px_per_frame": section_value(
+        "filtered_velocity_y_error_px_per_frame": finite_metric(
             metrics,
             "filtered_velocity",
             "velocity_y_error_px_per_frame",
         ),
-        "filtered_velocity_y_mean_abs_error_px_per_frame": section_value(
+        "filtered_velocity_y_mean_abs_error_px_per_frame": nonnegative_metric(
             metrics,
             "filtered_velocity",
             "velocity_y_mean_abs_error_px_per_frame",
         ),
-        "filtered_velocity_y_bias_px_per_frame": section_value(
+        "filtered_velocity_y_bias_px_per_frame": finite_metric(
             metrics,
             "filtered_velocity",
             "velocity_y_bias_px_per_frame",
         ),
-        "filtered_velocity_y_error_std_px_per_frame": section_value(
+        "filtered_velocity_y_error_std_px_per_frame": nonnegative_metric(
             metrics,
             "filtered_velocity",
             "velocity_y_error_std_px_per_frame",
         ),
-        "filtered_truth_matched_velocity_y_error_px_per_frame": section_value(
+        "filtered_truth_matched_velocity_y_error_px_per_frame": finite_metric(
             metrics,
             "filtered_velocity",
             "truth_matched_velocity_y_error_px_per_frame",
         ),
-        "phase_rmse_px": section_value(metrics, "phase", "rmse_px"),
-        "map_rmse_gray": section_value(metrics, "belt_map", "rmse_gray"),
+        "phase_rmse_px": nonnegative_metric(metrics, "phase", "rmse_px"),
+        "map_rmse_gray": nonnegative_metric(metrics, "belt_map", "rmse_gray"),
     }
 
 
@@ -311,7 +383,9 @@ def write_summary_csv(rows: list[dict[str, Any]], path: Path) -> None:
         writer = csv.DictWriter(handle, fieldnames=SWEEP_METRIC_FIELDS)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: csv_value(row.get(field)) for field in SWEEP_METRIC_FIELDS})
+            writer.writerow(
+                {field: csv_value(row.get(field)) for field in SWEEP_METRIC_FIELDS}
+            )
 
 
 def write_summary_json(rows: list[dict[str, Any]], path: Path) -> None:
@@ -323,6 +397,8 @@ def markdown_value(value: Any) -> str:
     if value is None or value == "":
         return "n/a"
     if isinstance(value, float):
+        if not math.isfinite(value):
+            return "n/a"
         return f"{value:.4f}".rstrip("0").rstrip(".")
     return str(value)
 
@@ -343,6 +419,8 @@ def sweep_froc_points(rows: list[dict[str, Any]]) -> list[tuple[float, float, st
         false_positives_per_frame = finite_number(row.get("false_positives_per_frame"))
         recall = finite_number(row.get("detection_recall"))
         if false_positives_per_frame is None or recall is None:
+            continue
+        if false_positives_per_frame < 0.0 or not 0.0 <= recall <= 1.0:
             continue
         threshold = row.get("detection_threshold")
         label = "" if threshold in (None, "") else str(threshold)
@@ -392,7 +470,7 @@ def write_froc_curve_svg(rows: list[dict[str, Any]], path: Path) -> None:
             "</text>"
         )
 
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
   <rect width="100%" height="100%" fill="white" />
   <text x="{left}" y="24" font-size="18" font-weight="bold">Detection FROC</text>
   <line x1="{left}" y1="{baseline}" x2="{left + plot_width}" y2="{baseline}" stroke="black" />
@@ -407,7 +485,7 @@ def write_froc_curve_svg(rows: list[dict[str, Any]], path: Path) -> None:
   {threshold_labels}
   {no_data}
 </svg>
-'''
+"""
     path.write_text(svg, encoding="utf-8")
 
 
@@ -439,8 +517,8 @@ def write_summary_report(
         )
     lines.extend(
         [
-        "| Run | Threshold | Precision | Recall | F1 | FP/frame | Event F1 | Single-frame tracks | Median track length | Track fragmentation | Velocity bias | Map RMSE |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Run | Threshold | Precision | Recall | F1 | FP/frame | Event F1 | Single-frame tracks | Median track length | Track fragmentation | Velocity bias | Map RMSE |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for row in rows:
@@ -472,27 +550,70 @@ def build_parser() -> argparse.ArgumentParser:
         prog="beltmap-sweep",
         description="Generate or execute BeltMap parameter sweep configurations.",
     )
-    parser.add_argument("--base-config", type=Path, required=True, help="Base TOML config.")
-    parser.add_argument("--param", action="append", default=[], help="Dotted key and comma-separated values, e.g. detection.threshold=3.5,4.0.")
-    parser.add_argument("--output-root", type=Path, default=Path("outputs/sweeps"), help="Directory for generated run configs and outputs.")
-    parser.add_argument("--execute", action="store_true", help="Run beltmap-apply and beltmap-validate for each generated config.")
-    parser.add_argument("--benchmark-truth-path", type=Path, help="Synthetic truth JSON. When set, benchmark each run and write sweep metrics.")
-    parser.add_argument("--benchmark-iou-threshold", type=float, default=0.25, help="IoU threshold for synthetic benchmark matching. Default: 0.25.")
-    parser.add_argument("--summary-csv", type=Path, help="Benchmark sweep CSV path. Default: OUTPUT_ROOT/sweep_metrics.csv.")
-    parser.add_argument("--summary-json", type=Path, help="Benchmark sweep JSON path. Default: OUTPUT_ROOT/sweep_metrics.json.")
-    parser.add_argument("--summary-report", type=Path, help="Benchmark sweep Markdown report path. Default: OUTPUT_ROOT/sweep_report.md.")
+    parser.add_argument(
+        "--base-config", type=Path, required=True, help="Base TOML config."
+    )
+    parser.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        help="Dotted key and comma-separated values, e.g. detection.threshold=3.5,4.0.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path("outputs/sweeps"),
+        help="Directory for generated run configs and outputs.",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Run beltmap-apply and beltmap-validate for each generated config.",
+    )
+    parser.add_argument(
+        "--benchmark-truth-path",
+        type=Path,
+        help="Synthetic truth JSON. When set, benchmark each run and write sweep metrics.",
+    )
+    parser.add_argument(
+        "--benchmark-iou-threshold",
+        type=parse_iou_threshold,
+        default=0.25,
+        help="IoU threshold for synthetic benchmark matching. Default: 0.25.",
+    )
+    parser.add_argument(
+        "--summary-csv",
+        type=Path,
+        help="Benchmark sweep CSV path. Default: OUTPUT_ROOT/sweep_metrics.csv.",
+    )
+    parser.add_argument(
+        "--summary-json",
+        type=Path,
+        help="Benchmark sweep JSON path. Default: OUTPUT_ROOT/sweep_metrics.json.",
+    )
+    parser.add_argument(
+        "--summary-report",
+        type=Path,
+        help="Benchmark sweep Markdown report path. Default: OUTPUT_ROOT/sweep_report.md.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    base = tomllib.loads(args.base_config.read_text(encoding="utf-8"))
-    params = [parse_param(item) for item in args.param]
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        base = tomllib.loads(args.base_config.read_text(encoding="utf-8"))
+        params = [parse_param(item) for item in args.param]
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+        parser.error(str(exc))
     args.output_root.mkdir(parents=True, exist_ok=True)
     manifest: list[dict[str, Any]] = []
     summary_rows: list[dict[str, Any]] = []
     keys = [key for key, _values in params]
-    value_grid = itertools.product(*(values for _key, values in params)) if params else [()]
+    value_grid = (
+        itertools.product(*(values for _key, values in params)) if params else [()]
+    )
     for run_index, values in enumerate(value_grid):
         config = json.loads(json.dumps(base))
         run_dir = args.output_root / f"run_{run_index:03d}"
@@ -502,12 +623,33 @@ def main(argv: list[str] | None = None) -> int:
             set_dotted(config, key, value)
         run_dir.mkdir(parents=True, exist_ok=True)
         config_path = run_dir / "beltmap.toml"
-        write_toml(config, config_path)
-        manifest.append({"run_index": run_index, "config": str(config_path), "output_dir": str(run_dir), "overrides": overrides})
+        try:
+            write_toml(config, config_path)
+        except ValueError as exc:
+            parser.error(str(exc))
+        manifest.append(
+            {
+                "run_index": run_index,
+                "config": str(config_path),
+                "output_dir": str(run_dir),
+                "overrides": overrides,
+            }
+        )
         if args.execute:
-            subprocess.run([sys.executable, "-m", "beltmap.cli.apply", "--config", str(config_path)], check=True)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "beltmap.cli.apply",
+                    "--config",
+                    str(config_path),
+                ],
+                check=True,
+            )
             if shutil.which("beltmap-validate"):
-                subprocess.run(["beltmap-validate", "--output-dir", str(run_dir)], check=True)
+                subprocess.run(
+                    ["beltmap-validate", "--output-dir", str(run_dir)], check=True
+                )
         if args.benchmark_truth_path is not None:
             artifacts = generate_benchmark_report(
                 output_dir=run_dir,

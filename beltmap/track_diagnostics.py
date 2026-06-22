@@ -14,6 +14,8 @@ def finite_float(value: Any) -> float | None:
 
     if value is None:
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     if isinstance(value, str) and value.strip() == "":
         return None
     try:

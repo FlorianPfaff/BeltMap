@@ -52,7 +52,7 @@ jobs:
           .poetry-bootstrap/bin/poetry --version
 
       - name: Install BeltMap and test dependencies
-        run: poetry install --with test
+        run: poetry install --extras test
 
       - name: Generate synthetic belt sequence
         run: |
