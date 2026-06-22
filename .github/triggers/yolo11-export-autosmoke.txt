@@ -1,6 +1,0 @@
-YOLO export autosmoke trigger
-
-This file exists so a file-only change can trigger .github/workflows/yolo11-export-autosmoke.yml after the workflow is present on main.
-
-Triggered-at: 2026-06-21T00:00:00Z
-Purpose: verify the YOLO-to-BeltMap export CLI and tests on GitHub Actions.
