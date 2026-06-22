@@ -4,6 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
+# Import for side effect: patch beltmap.yolo_recurrence.row_key so same-frame,
+# same-class YOLO detections do not overwrite each other's recurrence features.
+import beltmap.yolo_recurrence_key_patch  # noqa: F401
 from beltmap.yolo_recurrence import (
     YoloRecurrenceConfig,
     parse_belt_region,
