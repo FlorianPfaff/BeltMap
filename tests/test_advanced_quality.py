@@ -558,3 +558,19 @@ def test_quality_flags_preserve_zero_detection_metadata_for_recurrent_filtering(
     flag = next(flag for flag in payload["flags"] if flag["code"] == "heavy_recurrent_filtering")
     assert flag["rejected"] == 5
     assert flag["share"] == 1.0
+
+
+def test_quality_flags_rejects_zero_registration_search_step_metadata(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps({"registration_search_radius_px": 4.0, "registration_search_step_px": 0.0}),
+        encoding="utf-8",
+    )
+    (out / "phase_estimates.csv").write_text(
+        "frame_index,correction_px,score\n0,4.0,0.8\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="registration_search_step_px must be positive"):
+        quality_flags(out)

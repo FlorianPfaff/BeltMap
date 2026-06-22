@@ -89,6 +89,15 @@ def test_reused_period_state_rejects_incompatible_metadata_height():
         )
 
 
+def test_reused_period_state_rejects_fractional_metadata_height():
+    with pytest.raises(ValueError, match="positive integer"):
+        reused_period_state(
+            map_height_px=120,
+            supplied_period_px=None,
+            metadata={"belt_map_height_px": 120.5},
+        )
+
+
 def test_reused_period_state_rejects_incompatible_metadata_period():
     with pytest.raises(ValueError, match="must match reused belt-map height"):
         reused_period_state(

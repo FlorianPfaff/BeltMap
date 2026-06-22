@@ -96,14 +96,20 @@ def estimate_xy_shift_diagnostics(
     if not belt_map_path.is_file() or not phase_path.is_file() or not metadata_path.is_file():
         return {}
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    region_data = metadata.get("belt_region") or {}
-    try:
-        top = int(region_data["top"])
-        left = int(region_data["left"])
-        height = int(region_data["height"])
-        width = int(region_data["width"])
-    except (KeyError, TypeError, ValueError):
+    region_data = metadata.get("belt_region")
+    if not isinstance(region_data, dict):
         return {}
+    try:
+        top = _required_int(region_data["top"], name="belt_region.top")
+        left = _required_int(region_data["left"], name="belt_region.left")
+        height = _required_int(region_data["height"], name="belt_region.height")
+        width = _required_int(region_data["width"], name="belt_region.width")
+    except (KeyError, TypeError):
+        return {}
+    if top < 0 or left < 0 or height <= 0 or width <= 0:
+        raise ValueError(
+            "belt_region top and left must be non-negative and height and width must be positive"
+        )
 
     with phase_path.open(newline="", encoding="utf-8") as handle:
         phase_rows = list(csv.DictReader(handle))
@@ -175,6 +181,13 @@ def estimate_xy_shift_diagnostics(
 def _read_gray(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         return np.asarray(image.convert("L"), dtype=np.float64)
+
+
+def _required_int(value: Any, *, name: str) -> int:
+    parsed = finite_int(value)
+    if parsed is None:
+        raise ValueError(f"{name} must be an integer")
+    return parsed
 
 
 if __name__ == "__main__":  # pragma: no cover
