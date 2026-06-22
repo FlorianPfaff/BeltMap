@@ -102,6 +102,31 @@ def test_export_yolo_predictions_rejects_duplicate_frame_indices(tmp_path: Path)
         )
 
 
+def test_export_yolo_predictions_rejects_duplicate_label_stems(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    labels = tmp_path / "labels"
+    out = tmp_path / "run"
+    write_image(images / "frame_000001.png")
+    (labels / "a").mkdir(parents=True)
+    (labels / "b").mkdir(parents=True)
+    (labels / "a" / "frame_000001.txt").write_text(
+        "0 0.5 0.5 0.2 0.2 0.7\n",
+        encoding="utf-8",
+    )
+    (labels / "b" / "frame_000001.txt").write_text(
+        "0 0.4 0.4 0.2 0.2 0.6\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate YOLO label stem 'frame_000001'"):
+        export_yolo_predictions_to_beltmap_run(
+            labels_dir=labels,
+            images_dir=images,
+            output_dir=out,
+            source="yolo11_raw",
+        )
+
+
 def test_export_yolo_predictions_allows_missing_labels_dir_for_empty_predictions(
     tmp_path: Path,
 ) -> None:
