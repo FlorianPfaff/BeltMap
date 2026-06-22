@@ -5,6 +5,9 @@ from typing import Any, Mapping
 
 from beltmap import yolo_recurrence as _yolo_recurrence
 
+_PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
+_ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original"
+
 
 def _required(row: Mapping[str, Any], key: str) -> Any:
     value = row.get(key)
@@ -51,6 +54,19 @@ def _bool_value(value: Any) -> bool:
 
 def _recurrence_strength(ratio: float, correlation: float) -> float:
     return max(0.0, min(1.0, ratio)) * max(0.0, correlation)
+
+
+def _unwrap_patched_callable(func: Any) -> Any:
+    """Return the original unpatched callable behind our wrapper, if present.
+
+    This module is imported for side effects from ``beltmap.__init__`` and from
+    the YOLO recurrence CLI.  A normal second import is cached, but test suites
+    and notebooks can reload modules.  Without unwrapping, a reload would store
+    the previous wrapper as ``_original_score_detection_recurrence`` and the new
+    wrapper would recursively call itself.
+    """
+
+    return getattr(func, _ORIGINAL_ATTR, func)
 
 
 def correlation_supported_high_revisits(
@@ -109,7 +125,9 @@ def duplicate_safe_row_key(row: Mapping[str, Any]) -> tuple[object, ...]:
     )
 
 
-_original_score_detection_recurrence = _yolo_recurrence.score_detection_recurrence
+_original_score_detection_recurrence = _unwrap_patched_callable(
+    _yolo_recurrence.score_detection_recurrence
+)
 
 
 def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -125,6 +143,10 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
     result["high_recurrence_revisits"] = high_revisits
     result["hard_reject"] = high_revisits >= min_revisits
     return result
+
+
+setattr(correlation_gated_score_detection_recurrence, _PATCHED_ATTR, True)
+setattr(correlation_gated_score_detection_recurrence, _ORIGINAL_ATTR, _original_score_detection_recurrence)
 
 
 def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
@@ -161,7 +183,8 @@ def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -
 # imports this module before running the recurrence scorer.  The underlying
 # scorer also needs these fixes when used directly; ``beltmap.__init__`` imports
 # this module for that side effect until ``beltmap.yolo_recurrence`` is updated
-# in place.
+# in place.  The wrapper is idempotent, so reloading this module cannot wrap a
+# previous wrapper and recurse.
 _yolo_recurrence.row_key = duplicate_safe_row_key
 _yolo_recurrence.score_detection_recurrence = correlation_gated_score_detection_recurrence
 _yolo_recurrence.error_taxonomy = correlation_gated_error_taxonomy

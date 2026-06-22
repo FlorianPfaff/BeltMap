@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 import numpy as np
 
@@ -166,3 +168,20 @@ def test_direct_yolo_recurrence_row_key_is_duplicate_safe() -> None:
 
     assert row_key(base) != row_key(second)
     assert row_key(base) == duplicate_safe_row_key(base)
+
+
+def test_yolo_recurrence_patch_reload_is_idempotent() -> None:
+    import beltmap.yolo_recurrence as yolo_recurrence
+    import beltmap.yolo_recurrence_key_patch as key_patch
+
+    before = yolo_recurrence.score_detection_recurrence
+    before_original = getattr(before, "_beltmap_yolo_recurrence_original", before)
+
+    importlib.reload(key_patch)
+
+    after = yolo_recurrence.score_detection_recurrence
+    after_original = getattr(after, "_beltmap_yolo_recurrence_original", after)
+
+    assert getattr(after, "_beltmap_yolo_recurrence_patched", False)
+    assert after_original is before_original
+    assert after_original is not after
