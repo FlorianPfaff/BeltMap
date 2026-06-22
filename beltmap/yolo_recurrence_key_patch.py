@@ -31,7 +31,9 @@ def duplicate_safe_row_key(row: Mapping[str, Any]) -> tuple[object, ...]:
     )
 
 
-# Patch the legacy helper at import time.  The public CLI imports this module
-# before invoking beltmap.yolo_recurrence.run_yolo_recurrence_filter, so all
-# dictionary lookups inside the existing scorer use the duplicate-safe key.
+# Backwards-compatible safety patch for older imports.  The production CLI
+# imports this module before running the recurrence scorer.  The underlying
+# scorer also needs this duplicate-safe key when used directly; keep this module
+# small so it can be removed once ``beltmap.yolo_recurrence.row_key`` is updated
+# in place.
 _yolo_recurrence.row_key = duplicate_safe_row_key
