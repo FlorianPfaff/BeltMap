@@ -4,7 +4,10 @@ import pytest
 import numpy as np
 
 from beltmap.yolo_recurrence import parse_belt_region, patch_correlation, patch_excess, row_key
-from beltmap.yolo_recurrence_key_patch import duplicate_safe_row_key
+from beltmap.yolo_recurrence_key_patch import (
+    correlation_supported_high_revisits,
+    duplicate_safe_row_key,
+)
 
 
 def test_parse_belt_region() -> None:
@@ -26,6 +29,28 @@ def test_patch_excess_reports_positive_excess() -> None:
     background_patch = np.full((5, 5), 10.0)
     raw_patch[2, 2] = 50.0
     assert patch_excess(raw_patch, background_patch) == 40.0
+
+
+def test_correlation_supported_high_revisits_ignores_uncorrelated_bright_revisits() -> None:
+    row = {
+        "recurrence_ratio_prev": "1.4",
+        "patch_correlation_prev": "0.0",
+        "recurrence_ratio_next": "1.2",
+        "patch_correlation_next": "-0.5",
+    }
+
+    assert correlation_supported_high_revisits(row, threshold=0.4) == 0
+
+
+def test_correlation_supported_high_revisits_counts_shape_supported_revisits() -> None:
+    row = {
+        "recurrence_ratio_prev": "0.9",
+        "patch_correlation_prev": "0.7",
+        "recurrence_ratio_next": "0.8",
+        "patch_correlation_next": "0.6",
+    }
+
+    assert correlation_supported_high_revisits(row, threshold=0.4) == 2
 
 
 def test_duplicate_safe_row_key_distinguishes_same_frame_same_label_boxes() -> None:
