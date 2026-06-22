@@ -35,6 +35,9 @@ SUMMARY_FIELDS = [
     "map_only_false_accepted_tracks",
     "map_only_proxy_ghost_penalty",
     "full100_labeled_metrics_status",
+    "repair_role",
+    "paper_status",
+    "texture_plausibility_status",
 ]
 
 TRACK_FIELDS = [
@@ -50,11 +53,42 @@ TRACK_FIELDS = [
     "causal_ghost_score",
 ]
 
+REPAIR_MODE_POLICY = {
+    "original": {
+        "repair_role": "baseline_map",
+        "paper_status": "reference_only",
+        "texture_plausibility_status": "unchanged_original_map",
+    },
+    "local_inpaint": {
+        "repair_role": "prototype_control",
+        "paper_status": "diagnostic_only_not_final_repair",
+        "texture_plausibility_status": "not_texture_preserving_without_extra_checks",
+    },
+    "rebuild_masked": {
+        "repair_role": "preferred_raw_frame_rebuild",
+        "paper_status": "candidate_repair_requires_map_only_and_labeled_rerun",
+        "texture_plausibility_status": "requires_texture_plausibility_checks",
+    },
+}
+
+LOCAL_INPAINT_WARNING = (
+    "local_inpaint is a prototype/control mode. It can suppress map-only ghost "
+    "detections by editing the learned map, but it is not a paper-default repair "
+    "unless texture plausibility and real-label metrics are rerun. Prefer "
+    "rebuild_masked or a future clean-observation/revolution rebuild for final "
+    "GhostRepair claims."
+)
+
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="beltmap-ghost-repair",
-        description="Prototype GhostRepair: localize and repair map-only ghost artifacts in belt_map.npy.",
+        description=(
+            "Diagnostic GhostRepair: localize map-only ghost artifacts in belt_map.npy. "
+            "local_inpaint is emitted as a prototype/control; rebuild_masked is the "
+            "preferred raw-frame rebuild path for paper-facing repair claims."
+        ),
     )
     parser.add_argument("--input-dir", type=Path, required=True, help="BeltMap output directory.")
     parser.add_argument("--output-dir", type=Path, required=True, help="Separate GhostRepair output directory.")
@@ -66,7 +100,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--map-only-velocities-path", type=Path, help="Map-only velocities CSV.")
     parser.add_argument("--map-only-metrics-path", type=Path, help="Map-only metrics JSON.")
     parser.add_argument("--mask-margin-px", type=int, default=2)
-    parser.add_argument("--inpaint-radius-px", type=int, default=16)
+    parser.add_argument(
+        "--inpaint-radius-px",
+        type=int,
+        default=16,
+        help=(
+            "Radius for the prototype local_inpaint control. This mode is not texture-"
+            "preserving and is not the preferred paper-facing repair path."
+        ),
+    )
     parser.add_argument(
         "--run-rebuild-masked",
         action="store_true",
@@ -92,12 +134,84 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
 def default_map_only_path(output_dir: Path, stem: str, suffix: str) -> Path:
     preferred = output_dir / f"map_only_negative_control_{stem}.{suffix}"
     if preferred.exists():
         return preferred
     fallback = output_dir / f"{stem}.{suffix}"
     return fallback
+
+
+
+def annotate_mode_row(row: dict[str, object], map_variant: str) -> dict[str, object]:
+    payload = dict(row)
+    policy = REPAIR_MODE_POLICY.get(map_variant, {})
+    payload.setdefault("repair_role", policy.get("repair_role", ""))
+    payload.setdefault("paper_status", policy.get("paper_status", ""))
+    payload.setdefault("texture_plausibility_status", policy.get("texture_plausibility_status", ""))
+    return payload
+
+
+
+def write_mode_policy(
+    output_dir: Path,
+    *,
+    local_repaired_path: Path,
+    legacy_repaired_alias_path: Path,
+    rebuild_mask_path: Path,
+    rebuild_map_path: Path | None,
+) -> None:
+    payload = {
+        "purpose": "GhostRepair mode status and citation policy.",
+        "local_inpaint_warning": LOCAL_INPAINT_WARNING,
+        "modes": REPAIR_MODE_POLICY,
+        "outputs": {
+            "local_inpaint_repaired_belt_map": str(local_repaired_path),
+            "legacy_repaired_belt_map_alias": str(legacy_repaired_alias_path),
+            "ghost_defect_mask": str(rebuild_mask_path),
+            "rebuild_masked_map": "" if rebuild_map_path is None else str(rebuild_map_path),
+        },
+        "paper_guidance": [
+            "Use local_inpaint only as a defect-localization/prototype control unless texture metrics and labeled metrics are rerun.",
+            "Use rebuild_masked, or a future rebuild from clean same-belt-coordinate observations, for paper-facing GhostRepair claims.",
+            "Map-only 0/0/0 is necessary for repair safety but is not sufficient to prove texture-plausible repair.",
+        ],
+    }
+    (output_dir / "ghost_repair_mode_policy.json").write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    readme = [
+        "# GhostRepair mode policy",
+        "",
+        f"> {LOCAL_INPAINT_WARNING}",
+        "",
+        "## Modes",
+        "",
+        "| mode | role | paper status | texture plausibility status |",
+        "| --- | --- | --- | --- |",
+    ]
+    for mode, policy in REPAIR_MODE_POLICY.items():
+        readme.append(
+            "| "
+            f"{mode} | {policy['repair_role']} | {policy['paper_status']} | "
+            f"{policy['texture_plausibility_status']} |"
+        )
+    readme.extend(
+        [
+            "",
+            "`repaired_belt_map.npy` is kept as a legacy alias for the local inpaint output.",
+            "Do not cite that alias as a final repaired map without additional texture and labeled-quality checks.",
+            "",
+        ]
+    )
+    (output_dir / "local_inpaint_PROTOTYPE_README.md").write_text(
+        "\n".join(readme),
+        encoding="utf-8",
+    )
+
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -157,9 +271,9 @@ def main(argv: list[str] | None = None) -> int:
             radius_px=args.inpaint_radius_px,
         )
         local_repaired_path = output_dir / "local_inpaint_repaired_belt_map.npy"
-        final_repaired_path = output_dir / "repaired_belt_map.npy"
+        legacy_repaired_alias_path = output_dir / "repaired_belt_map.npy"
         np.save(local_repaired_path, repaired)
-        np.save(final_repaired_path, repaired)
+        np.save(legacy_repaired_alias_path, repaired)
         write_before_after(output_dir / "ghost_repair_before_after.png", belt_map, repaired, mask)
 
         rebuild_output_dir = args.rebuild_masked_output_dir or output_dir / "rebuild_masked_apply"
@@ -177,6 +291,14 @@ def main(argv: list[str] | None = None) -> int:
         elif rebuild_map_path is not None:
             rebuild_status = "provided_existing_map"
 
+        write_mode_policy(
+            output_dir,
+            local_repaired_path=local_repaired_path,
+            legacy_repaired_alias_path=legacy_repaired_alias_path,
+            rebuild_mask_path=rebuild_mask_path,
+            rebuild_map_path=rebuild_map_path,
+        )
+
         rebuild_manifest = {
             "status": rebuild_status,
             "ghost_defect_mask": str(rebuild_mask_path),
@@ -184,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
             "resolved_config_path": str(rebuild_config_path),
             "rebuild_output_dir": str(rebuild_output_dir),
             "rebuild_masked_map_path": "" if rebuild_map_path is None else str(rebuild_map_path),
+            "preferred_for_paper_claims": True,
+            "local_inpaint_status": "prototype_control_not_final_repair",
             "how_to_run": (
                 "beltmap-ghost-repair --input-dir INPUT --output-dir OUTPUT "
                 "--run-rebuild-masked"
@@ -197,39 +321,48 @@ def main(argv: list[str] | None = None) -> int:
         summary_rows = []
         if args.skip_map_only_rerun:
             summary_rows = [
-                {
-                    "map_variant": "original",
-                    "belt_map_path": str(belt_map_path),
-                    "map_only_false_detections": "",
-                    "map_only_false_tracks": "",
-                    "map_only_false_long_tracks": "",
-                    "map_only_false_accepted_tracks": "",
-                    "map_only_proxy_ghost_penalty": "",
-                    "full100_labeled_metrics_status": "not_rerun",
-                },
-                {
-                    "map_variant": "local_inpaint",
-                    "belt_map_path": str(final_repaired_path),
-                    "map_only_false_detections": "",
-                    "map_only_false_tracks": "",
-                    "map_only_false_long_tracks": "",
-                    "map_only_false_accepted_tracks": "",
-                    "map_only_proxy_ghost_penalty": "",
-                    "full100_labeled_metrics_status": "not_rerun",
-                },
-            ]
-            if rebuild_map_path is not None:
-                summary_rows.append(
+                annotate_mode_row(
                     {
-                        "map_variant": "rebuild_masked",
-                        "belt_map_path": str(rebuild_map_path),
+                        "map_variant": "original",
+                        "belt_map_path": str(belt_map_path),
                         "map_only_false_detections": "",
                         "map_only_false_tracks": "",
                         "map_only_false_long_tracks": "",
                         "map_only_false_accepted_tracks": "",
                         "map_only_proxy_ghost_penalty": "",
                         "full100_labeled_metrics_status": "not_rerun",
-                    }
+                    },
+                    "original",
+                ),
+                annotate_mode_row(
+                    {
+                        "map_variant": "local_inpaint",
+                        "belt_map_path": str(legacy_repaired_alias_path),
+                        "map_only_false_detections": "",
+                        "map_only_false_tracks": "",
+                        "map_only_false_long_tracks": "",
+                        "map_only_false_accepted_tracks": "",
+                        "map_only_proxy_ghost_penalty": "",
+                        "full100_labeled_metrics_status": "not_rerun",
+                    },
+                    "local_inpaint",
+                ),
+            ]
+            if rebuild_map_path is not None:
+                summary_rows.append(
+                    annotate_mode_row(
+                        {
+                            "map_variant": "rebuild_masked",
+                            "belt_map_path": str(rebuild_map_path),
+                            "map_only_false_detections": "",
+                            "map_only_false_tracks": "",
+                            "map_only_false_long_tracks": "",
+                            "map_only_false_accepted_tracks": "",
+                            "map_only_proxy_ghost_penalty": "",
+                            "full100_labeled_metrics_status": "not_rerun",
+                        },
+                        "rebuild_masked",
+                    )
                 )
         else:
             config = config_from_map_only_metrics(metrics)
@@ -245,13 +378,20 @@ def main(argv: list[str] | None = None) -> int:
                 label="local_inpaint",
                 output_dir=output_dir,
                 base_output_dir=input_dir,
-                belt_map_path=final_repaired_path,
+                belt_map_path=legacy_repaired_alias_path,
                 phase_estimates_path=phase_path if phase_path.exists() else None,
                 config=config,
             )
             summary_rows = [
-                map_only_metric_row("original", original_metrics, belt_map_path),
-                map_only_metric_row("local_inpaint", repaired_metrics, final_repaired_path),
+                annotate_mode_row(map_only_metric_row("original", original_metrics, belt_map_path), "original"),
+                annotate_mode_row(
+                    map_only_metric_row(
+                        "local_inpaint",
+                        repaired_metrics,
+                        legacy_repaired_alias_path,
+                    ),
+                    "local_inpaint",
+                ),
             ]
             if rebuild_map_path is not None:
                 rebuild_metrics = run_map_only_for_map(
@@ -263,20 +403,26 @@ def main(argv: list[str] | None = None) -> int:
                     config=config,
                 )
                 summary_rows.append(
-                    map_only_metric_row("rebuild_masked", rebuild_metrics, rebuild_map_path)
+                    annotate_mode_row(
+                        map_only_metric_row("rebuild_masked", rebuild_metrics, rebuild_map_path),
+                        "rebuild_masked",
+                    )
                 )
         if rebuild_map_path is None:
             summary_rows.append(
-                {
-                    "map_variant": "rebuild_masked",
-                    "belt_map_path": "",
-                    "map_only_false_detections": "",
-                    "map_only_false_tracks": "",
-                    "map_only_false_long_tracks": "",
-                    "map_only_false_accepted_tracks": "",
-                    "map_only_proxy_ghost_penalty": "",
-                    "full100_labeled_metrics_status": "not_run_available_via_map_exclusion_mask",
-                }
+                annotate_mode_row(
+                    {
+                        "map_variant": "rebuild_masked",
+                        "belt_map_path": "",
+                        "map_only_false_detections": "",
+                        "map_only_false_tracks": "",
+                        "map_only_false_long_tracks": "",
+                        "map_only_false_accepted_tracks": "",
+                        "map_only_proxy_ghost_penalty": "",
+                        "full100_labeled_metrics_status": "not_run_available_via_map_exclusion_mask",
+                    },
+                    "rebuild_masked",
+                )
             )
         write_csv_rows(output_dir / "ghost_repair_summary.csv", summary_rows, SUMMARY_FIELDS)
         write_report(
@@ -294,7 +440,12 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "output_dir": str(args.output_dir),
-                    "repaired_belt_map": str(args.output_dir / "repaired_belt_map.npy"),
+                    "local_inpaint_repaired_belt_map": str(
+                        args.output_dir / "local_inpaint_repaired_belt_map.npy"
+                    ),
+                    "legacy_repaired_belt_map_alias": str(args.output_dir / "repaired_belt_map.npy"),
+                    "local_inpaint_status": "prototype_control_not_final_repair",
+                    "mode_policy": str(args.output_dir / "ghost_repair_mode_policy.json"),
                     "summary": str(args.output_dir / "ghost_repair_summary.csv"),
                     "report": str(args.output_dir / "ghost_repair_report.md"),
                 },
