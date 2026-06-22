@@ -30,7 +30,6 @@ from beltmap import (
 )
 from beltmap.compare_runs import RunSpec, generate_comparison_report
 
-
 EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 DETECTION_FIELDS = [
@@ -114,17 +113,38 @@ def list_images(image_dir: Path) -> list[Path]:
 
 
 def parse_region(value: str) -> tuple[int, int, int, int]:
-    parts = [int(part.strip()) for part in value.split(",")]
+    parts = []
+    for part in value.split(","):
+        text = part.strip()
+        try:
+            parsed = float(text)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                "region values must be finite integers"
+            ) from exc
+        if not math.isfinite(parsed) or not parsed.is_integer():
+            raise argparse.ArgumentTypeError("region values must be finite integers")
+        parts.append(int(parsed))
     if len(parts) != 4:
         raise argparse.ArgumentTypeError("region must be top,left,height,width")
     top, left, height, width = parts
     if top < 0 or left < 0 or height <= 0 or width <= 0:
-        raise argparse.ArgumentTypeError("region values must be non-negative with positive height/width")
+        raise argparse.ArgumentTypeError(
+            "region values must be non-negative with positive height/width"
+        )
     return top, left, height, width
 
 
 def crop(frame: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
     top, left, height, width = region
+    if frame.ndim < 2:
+        raise ValueError("frame must be at least 2-D")
+    if top < 0 or left < 0 or height <= 0 or width <= 0:
+        raise ValueError("crop region must be non-negative with positive height/width")
+    if top + height > frame.shape[0] or left + width > frame.shape[1]:
+        raise ValueError(
+            f"crop region {region} exceeds frame shape {tuple(frame.shape[:2])}"
+        )
     return frame[top : top + height, left : left + width]
 
 
@@ -134,6 +154,10 @@ def read_gray(path: Path) -> np.ndarray:
 
 
 def sample_indices(count: int, sample_count: int) -> list[int]:
+    if count < 1:
+        raise ValueError("count must be positive")
+    if sample_count < 1:
+        raise ValueError("sample_count must be positive")
     sample_count = max(1, min(count, sample_count))
     return sorted(set(int(index) for index in np.linspace(0, count - 1, sample_count)))
 
@@ -150,7 +174,10 @@ def learn_average_background(
         frame = crop(read_gray(paths[index]), region).astype(np.float64, copy=False)
         total = frame.copy() if total is None else total + frame
         if number == 1 or number == len(samples) or number % 25 == 0:
-            print(f"average_background: sampled {number}/{len(samples)} frame={index}", flush=True)
+            print(
+                f"average_background: sampled {number}/{len(samples)} frame={index}",
+                flush=True,
+            )
     if total is None:
         raise RuntimeError("No frames were sampled for the average background")
     return (total / len(samples)).astype(np.float32)
@@ -166,6 +193,15 @@ def robust_display_scale(
     *,
     percentiles: tuple[float, float] = (1.0, 99.0),
 ) -> tuple[float, float]:
+    if len(percentiles) != 2:
+        raise ValueError("percentiles must contain low and high values")
+    low_percentile, high_percentile = percentiles
+    if (
+        not math.isfinite(low_percentile)
+        or not math.isfinite(high_percentile)
+        or not 0.0 <= low_percentile < high_percentile <= 100.0
+    ):
+        raise ValueError("percentiles must be finite ordered values in [0, 100]")
     values = []
     for array in arrays:
         arr = display_values(array)
@@ -175,7 +211,7 @@ def robust_display_scale(
     if not values:
         return 0.0, 1.0
     joined = np.concatenate(values)
-    low, high = np.percentile(joined, percentiles)
+    low, high = np.percentile(joined, (low_percentile, high_percentile))
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
         return 0.0, 1.0
     return float(low), float(high)
@@ -191,7 +227,9 @@ def save_scaled_png(
     low, high = scale
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
         low, high = 0.0, 1.0
-    image = np.clip((arr - low) / (high - low) * 255.0, 0, 255).astype(np.uint8)
+    scaled = np.clip((arr - low) / (high - low) * 255.0, 0, 255)
+    scaled = np.nan_to_num(scaled, nan=0.0, posinf=255.0, neginf=0.0)
+    image = scaled.astype(np.uint8)
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(image).save(path)
 
@@ -212,7 +250,11 @@ def save_preview_set(
 ) -> tuple[float, float]:
     display_scale = scale or robust_display_scale(list(arrays_by_frame.values()))
     for frame_index, array in sorted(arrays_by_frame.items()):
-        save_scaled_png(array, output_dir / f"{prefix}_frame_{frame_index:06d}.png", scale=display_scale)
+        save_scaled_png(
+            array,
+            output_dir / f"{prefix}_frame_{frame_index:06d}.png",
+            scale=display_scale,
+        )
     return display_scale
 
 
@@ -228,7 +270,9 @@ def optional_csv_value(value: Any) -> Any:
     return "" if value is None else value
 
 
-def detection_row(detection: Any, *, path: Path, image_dir: Path, frame_index: int) -> dict[str, Any]:
+def detection_row(
+    detection: Any, *, path: Path, image_dir: Path, frame_index: int
+) -> dict[str, Any]:
     row = {
         "frame_index": frame_index,
         "image": str(path.relative_to(image_dir)),
@@ -255,7 +299,9 @@ def detection_row(detection: Any, *, path: Path, image_dir: Path, frame_index: i
     return row
 
 
-def track_detection_rows(tracks: list[Any], paths: list[Path], *, image_dir: Path) -> list[dict[str, Any]]:
+def track_detection_rows(
+    tracks: list[Any], paths: list[Path], *, image_dir: Path
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for track in tracks:
         for detection_index, detection in enumerate(track.detections):
@@ -292,7 +338,9 @@ def detections_to_rows(
     return rows
 
 
-def raw_zscore_residual(frame: np.ndarray, _: np.ndarray | None, config: ResidualConfig) -> ResidualImage:
+def raw_zscore_residual(
+    frame: np.ndarray, _: np.ndarray | None, config: ResidualConfig
+) -> ResidualImage:
     center = float(np.median(frame[np.isfinite(frame)]))
     expected = np.full(frame.shape, center, dtype=np.float32)
     return generate_residual_image(frame, expected, config=config)
@@ -352,22 +400,51 @@ def required_int(row: dict[str, Any], field: str) -> int:
     return int(rounded)
 
 
+def required_nonnegative_int(row: dict[str, Any], field: str) -> int:
+    parsed = required_int(row, field)
+    if parsed < 0:
+        raise ValueError(f"Expected non-negative {field!r}, got {parsed!r}")
+    return parsed
+
+
+def required_positive_int(row: dict[str, Any], field: str) -> int:
+    parsed = required_int(row, field)
+    if parsed < 1:
+        raise ValueError(f"Expected positive {field!r}, got {parsed!r}")
+    return parsed
+
+
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
+    frame_index = required_nonnegative_int(row, "frame_index")
+    label = required_positive_int(row, "label")
+    area_px = required_positive_int(row, "area_px")
+    bbox_top = required_int(row, "bbox_top")
+    bbox_left = required_int(row, "bbox_left")
+    bbox_bottom = required_int(row, "bbox_bottom")
+    bbox_right = required_int(row, "bbox_right")
+    if bbox_bottom <= bbox_top or bbox_right <= bbox_left:
+        raise ValueError(f"Detection bbox must have positive area: {row}")
     return ParticleDetection(
-        frame_index=required_float(row, "frame_index"),
-        label=required_int(row, "label"),
+        frame_index=float(frame_index),
+        label=label,
         y=required_float(row, "y"),
         x=required_float(row, "x"),
-        area_px=required_int(row, "area_px"),
-        bbox_top=required_int(row, "bbox_top"),
-        bbox_left=required_int(row, "bbox_left"),
-        bbox_bottom=required_int(row, "bbox_bottom"),
-        bbox_right=required_int(row, "bbox_right"),
+        area_px=area_px,
+        bbox_top=bbox_top,
+        bbox_left=bbox_left,
+        bbox_bottom=bbox_bottom,
+        bbox_right=bbox_right,
         mean_signal=optional_float(row, "mean_signal"),
         peak_signal=optional_float(row, "peak_signal"),
-        recurrent_artifact_overlap_fraction=optional_float(row, "recurrent_artifact_overlap_fraction"),
-        recurrent_artifact_probability=optional_float(row, "recurrent_artifact_probability"),
-        recurrent_artifact_required_peak_signal=optional_float(row, "recurrent_artifact_required_peak_signal"),
+        recurrent_artifact_overlap_fraction=optional_float(
+            row, "recurrent_artifact_overlap_fraction"
+        ),
+        recurrent_artifact_probability=optional_float(
+            row, "recurrent_artifact_probability"
+        ),
+        recurrent_artifact_required_peak_signal=optional_float(
+            row, "recurrent_artifact_required_peak_signal"
+        ),
     )
 
 
@@ -392,17 +469,28 @@ def selected_image_name(path: Path, *, image_dir: Path) -> str:
         return str(path)
 
 
-def infer_run_frame_count(run_dir: Path, detection_rows: list[dict[str, str]], metadata: dict[str, Any]) -> int | None:
+def infer_run_frame_count(
+    run_dir: Path, detection_rows: list[dict[str, str]], metadata: dict[str, Any]
+) -> int | None:
     value = metadata.get("n_images")
+    if isinstance(value, bool):
+        raise ValueError("n_images must be a non-negative integer, not boolean")
     if isinstance(value, int) and value >= 0:
         return value
     if isinstance(value, float) and value >= 0 and value.is_integer():
         return int(value)
+    if value is not None:
+        raise ValueError("n_images must be a non-negative integer")
     per_frame = read_csv_rows(run_dir / "detections_per_frame.csv", required=False)
     if per_frame:
-        return max(required_int(row, "frame_index") for row in per_frame) + 1
+        return (
+            max(required_nonnegative_int(row, "frame_index") for row in per_frame) + 1
+        )
     if detection_rows:
-        return max(required_int(row, "frame_index") for row in detection_rows) + 1
+        return (
+            max(required_nonnegative_int(row, "frame_index") for row in detection_rows)
+            + 1
+        )
     return None
 
 
@@ -421,7 +509,9 @@ def load_existing_beltmap_detections(
 
     source_stride = metadata.get("frame_stride")
     if strict_frame_match and source_stride is not None:
-        source_stride_int = required_int({"frame_stride": source_stride}, "frame_stride")
+        source_stride_int = required_int(
+            {"frame_stride": source_stride}, "frame_stride"
+        )
         if source_stride_int != current_frame_stride:
             raise ValueError(
                 f"{run_dir} was produced with frame_stride={source_stride_int}, "
@@ -429,7 +519,11 @@ def load_existing_beltmap_detections(
                 "Re-run the BeltMap output with the same frame selection or pass "
                 "--allow-beltmap-frame-mismatch for an explicitly non-strict diagnostic run."
             )
-    if strict_frame_match and source_n_images is not None and source_n_images < len(paths):
+    if (
+        strict_frame_match
+        and source_n_images is not None
+        and source_n_images < len(paths)
+    ):
         raise ValueError(
             f"{run_dir} contains {source_n_images} processed frames, "
             f"but this comparison selected {len(paths)} frames."
@@ -446,7 +540,9 @@ def load_existing_beltmap_detections(
             continue
         observed_image = str(row.get("image", "")).strip()
         if strict_frame_match and observed_image:
-            expected_image = selected_image_name(paths[frame_index], image_dir=image_dir)
+            expected_image = selected_image_name(
+                paths[frame_index], image_dir=image_dir
+            )
             if observed_image != expected_image:
                 raise ValueError(
                     f"{run_dir} frame {frame_index} image mismatch: "
@@ -529,17 +625,29 @@ def run_existing_beltmap_same_tracker(
     velocity_rows = [asdict(velocity) for velocity in velocity_objects]
     write_csv(method_dir / "velocities.csv", velocity_rows, VELOCITY_FIELDS)
 
-    track_scores = score_particle_velocities(velocity_objects, config=track_filter_config)
+    track_scores = score_particle_velocities(
+        velocity_objects, config=track_filter_config
+    )
     accepted_track_ids = {score.track_id for score in track_scores if score.accepted}
     filtered_velocity_rows = [
         asdict(velocity)
         for velocity in velocity_objects
         if velocity.track_id in accepted_track_ids
     ]
-    filtered_track_rows = [row for row in tracks_rows if row["track_id"] in accepted_track_ids]
-    write_csv(method_dir / "track_scores.csv", [asdict(score) for score in track_scores], TRACK_SCORE_FIELDS)
-    write_csv(method_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
-    write_csv(method_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
+    filtered_track_rows = [
+        row for row in tracks_rows if row["track_id"] in accepted_track_ids
+    ]
+    write_csv(
+        method_dir / "track_scores.csv",
+        [asdict(score) for score in track_scores],
+        TRACK_SCORE_FIELDS,
+    )
+    write_csv(
+        method_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS
+    )
+    write_csv(
+        method_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS
+    )
 
     areas = np.asarray([row["area_px"] for row in detection_rows], dtype=np.float64)
     elapsed_s = time.perf_counter() - start
@@ -557,19 +665,25 @@ def run_existing_beltmap_same_tracker(
         "detection_low_threshold": source_metadata.get("detection_low_threshold"),
         "detection_mode": source_metadata.get("detection_mode"),
         "min_area_px": source_metadata.get("min_area_px"),
-        "detection_area_median_px": None if areas.size == 0 else float(np.median(areas)),
+        "detection_area_median_px": (
+            None if areas.size == 0 else float(np.median(areas))
+        ),
         "detections_per_frame": None if not paths else len(detection_rows) / len(paths),
         "elapsed_s": elapsed_s,
         **load_metadata,
     }
-    (method_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (method_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
     return {"label": label, "output_dir": str(method_dir), **metadata}
 
 
 def run_method(
     *,
     label: str,
-    residual_factory: Callable[[np.ndarray, np.ndarray | None, ResidualConfig], ResidualImage],
+    residual_factory: Callable[
+        [np.ndarray, np.ndarray | None, ResidualConfig], ResidualImage
+    ],
     average_background: np.ndarray | None,
     paths: list[Path],
     image_dir: Path,
@@ -600,7 +714,9 @@ def run_method(
         residual = residual_factory(frame, average_background, residual_config)
         if frame_index in preview_frames:
             raw_previews[frame_index] = frame.copy()
-            residual_previews[frame_index] = np.asarray(residual.normalized, dtype=np.float32)
+            residual_previews[frame_index] = np.asarray(
+                residual.normalized, dtype=np.float32
+            )
             save_png(residual, method_dir / f"residual_frame_{frame_index:06d}.png")
         mask = detect_particles_from_residual(
             residual,
@@ -617,7 +733,11 @@ def run_method(
         )
         detections_by_frame.append(detections)
         processed = frame_index + 1
-        if processed == 1 or processed == len(paths) or processed % progress_interval == 0:
+        if (
+            processed == 1
+            or processed == len(paths)
+            or processed % progress_interval == 0
+        ):
             print(
                 f"{label}: processed {processed}/{len(paths)} "
                 f"detections={sum(len(items) for items in detections_by_frame)}",
@@ -634,7 +754,11 @@ def run_method(
             scale=residual_preview_range,
         )
         preview_scales = {
-            "raw": {"low": raw_scale[0], "high": raw_scale[1], "mode": "shared_preview_percentile_1_99"},
+            "raw": {
+                "low": raw_scale[0],
+                "high": raw_scale[1],
+                "mode": "shared_preview_percentile_1_99",
+            },
             "residual_fixed": {
                 "low": fixed_residual_scale[0],
                 "high": fixed_residual_scale[1],
@@ -674,7 +798,9 @@ def run_method(
     velocity_rows = [asdict(velocity) for velocity in velocity_objects]
     write_csv(method_dir / "velocities.csv", velocity_rows, VELOCITY_FIELDS)
 
-    track_scores = score_particle_velocities(velocity_objects, config=track_filter_config)
+    track_scores = score_particle_velocities(
+        velocity_objects, config=track_filter_config
+    )
     accepted_track_ids = {score.track_id for score in track_scores if score.accepted}
     filtered_velocity_rows = [
         asdict(velocity)
@@ -684,9 +810,17 @@ def run_method(
     filtered_track_rows = [
         row for row in tracks_rows if row["track_id"] in accepted_track_ids
     ]
-    write_csv(method_dir / "track_scores.csv", [asdict(score) for score in track_scores], TRACK_SCORE_FIELDS)
-    write_csv(method_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS)
-    write_csv(method_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS)
+    write_csv(
+        method_dir / "track_scores.csv",
+        [asdict(score) for score in track_scores],
+        TRACK_SCORE_FIELDS,
+    )
+    write_csv(
+        method_dir / "filtered_velocities.csv", filtered_velocity_rows, VELOCITY_FIELDS
+    )
+    write_csv(
+        method_dir / "filtered_tracks.csv", filtered_track_rows, TRACK_DETECTION_FIELDS
+    )
 
     areas = np.asarray([row["area_px"] for row in detection_rows], dtype=np.float64)
     elapsed_s = time.perf_counter() - start
@@ -704,17 +838,23 @@ def run_method(
         "detection_low_threshold": low_threshold,
         "detection_mode": mode,
         "min_area_px": component_config.min_area_px,
-        "detection_area_median_px": None if areas.size == 0 else float(np.median(areas)),
+        "detection_area_median_px": (
+            None if areas.size == 0 else float(np.median(areas))
+        ),
         "detections_per_frame": None if not paths else len(detection_rows) / len(paths),
         "preview_scales": preview_scales,
         "elapsed_s": elapsed_s,
     }
-    (method_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (method_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
     return {"label": label, "output_dir": str(method_dir), **metadata}
 
 
 def parse_optional_float(value: str) -> float | None:
     parsed = float(value)
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("value must be finite")
     if parsed <= 0:
         return None
     return parsed
@@ -726,7 +866,9 @@ def parse_range(value: str) -> tuple[float, float]:
         raise argparse.ArgumentTypeError("range must be low,high")
     low, high = parts
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
-        raise argparse.ArgumentTypeError("range must contain finite values with high > low")
+        raise argparse.ArgumentTypeError(
+            "range must contain finite values with high > low"
+        )
     return low, high
 
 
@@ -735,7 +877,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Compare raw-image and raw-minus-average baselines with the BeltMap detector/tracker stack."
     )
     parser.add_argument("--image-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/raw_baseline_comparison"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs/raw_baseline_comparison")
+    )
     parser.add_argument(
         "--beltmap-run",
         action="append",
@@ -762,14 +906,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-frames", type=int, default=1000)
     parser.add_argument("--frame-stride", type=int, default=1)
-    parser.add_argument("--belt-region", type=parse_region, default=parse_region("0,220,1330,1800"))
+    parser.add_argument(
+        "--belt-region", type=parse_region, default=parse_region("0,220,1330,1800")
+    )
     parser.add_argument("--belt-velocity-px-per-frame", type=float, default=59.16)
     parser.add_argument("--average-sample-frames", type=int, default=400)
     parser.add_argument("--average-source", choices=("all", "selected"), default="all")
-    parser.add_argument("--method", action="append", choices=("raw_zscore", "raw_minus_average"), default=None)
+    parser.add_argument(
+        "--method",
+        action="append",
+        choices=("raw_zscore", "raw_minus_average"),
+        default=None,
+    )
     parser.add_argument("--threshold", type=float, default=5.0)
     parser.add_argument("--low-threshold", type=parse_optional_float, default=None)
-    parser.add_argument("--mode", choices=("positive", "negative", "absolute"), default="positive")
+    parser.add_argument(
+        "--mode", choices=("positive", "negative", "absolute"), default="positive"
+    )
     parser.add_argument("--min-area-px", type=int, default=4)
     parser.add_argument("--max-area-px", type=parse_optional_float, default=None)
     parser.add_argument("--min-bbox-width-px", type=int, default=3)
@@ -781,11 +934,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split-min-component-area-px", type=int, default=4)
     parser.add_argument("--min-track-length", type=int, default=2)
     parser.add_argument("--tracking-max-frame-gap", type=float, default=2.0)
-    parser.add_argument("--velocity-fit-method", choices=("linear", "theil_sen"), default="theil_sen")
+    parser.add_argument(
+        "--velocity-fit-method", choices=("linear", "theil_sen"), default="theil_sen"
+    )
     parser.add_argument("--track-filter-min-length", type=int, default=5)
     parser.add_argument("--track-filter-min-velocity-ratio-y", type=float, default=0.0)
     parser.add_argument("--track-filter-max-velocity-ratio-y", type=float, default=1.1)
-    parser.add_argument("--track-filter-max-abs-x-velocity-px-per-frame", type=parse_optional_float, default=None)
+    parser.add_argument(
+        "--track-filter-max-abs-x-velocity-px-per-frame",
+        type=parse_optional_float,
+        default=None,
+    )
     parser.add_argument("--preview-frames", default="0,248,496,744,992")
     parser.add_argument(
         "--residual-preview-range",
@@ -798,12 +957,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_preview_frames(value: str, *, frame_count: int) -> set[int]:
+    if frame_count < 0:
+        raise ValueError("frame_count must be non-negative")
     frames = set()
     for part in value.split(","):
         part = part.strip()
         if not part:
             continue
-        frame = int(part)
+        try:
+            parsed = float(part)
+        except ValueError as exc:
+            raise ValueError("preview frame indices must be integers") from exc
+        if not math.isfinite(parsed) or not parsed.is_integer():
+            raise ValueError("preview frame indices must be integers")
+        frame = int(parsed)
+        if frame < 0:
+            raise ValueError("preview frame indices must be non-negative")
         if 0 <= frame < frame_count:
             frames.add(frame)
     return frames
@@ -822,7 +991,9 @@ def validate_numeric_args(args: argparse.Namespace) -> None:
     if args.low_threshold is not None:
         require_finite(args.low_threshold, "--low-threshold")
         if args.low_threshold > args.threshold:
-            raise SystemExit("--low-threshold must be less than or equal to --threshold")
+            raise SystemExit(
+                "--low-threshold must be less than or equal to --threshold"
+            )
     if args.min_area_px < 1:
         raise SystemExit("--min-area-px must be positive")
     if args.max_area_px is not None and args.max_area_px < args.min_area_px:
@@ -848,8 +1019,12 @@ def validate_numeric_args(args: argparse.Namespace) -> None:
         raise SystemExit("--tracking-max-frame-gap must be positive")
     if args.track_filter_min_length < 1:
         raise SystemExit("--track-filter-min-length must be positive")
-    require_finite(args.track_filter_min_velocity_ratio_y, "--track-filter-min-velocity-ratio-y")
-    require_finite(args.track_filter_max_velocity_ratio_y, "--track-filter-max-velocity-ratio-y")
+    require_finite(
+        args.track_filter_min_velocity_ratio_y, "--track-filter-min-velocity-ratio-y"
+    )
+    require_finite(
+        args.track_filter_max_velocity_ratio_y, "--track-filter-max-velocity-ratio-y"
+    )
     if args.track_filter_min_velocity_ratio_y > args.track_filter_max_velocity_ratio_y:
         raise SystemExit(
             "--track-filter-min-velocity-ratio-y must be less than or equal to "
@@ -861,7 +1036,9 @@ def validate_numeric_args(args: argparse.Namespace) -> None:
             "--track-filter-max-abs-x-velocity-px-per-frame",
         )
         if args.track_filter_max_abs_x_velocity_px_per_frame < 0:
-            raise SystemExit("--track-filter-max-abs-x-velocity-px-per-frame must be non-negative")
+            raise SystemExit(
+                "--track-filter-max-abs-x-velocity-px-per-frame must be non-negative"
+            )
 
 
 def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
@@ -905,11 +1082,17 @@ def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
                 n_tracks=row["n_tracks"],
                 n_velocity_estimates=row["n_velocity_estimates"],
                 n_filtered_velocity_estimates=row["n_filtered_velocity_estimates"],
-                area="" if row["detection_area_median_px"] is None else f"{row['detection_area_median_px']:.3g}",
+                area=(
+                    ""
+                    if row["detection_area_median_px"] is None
+                    else f"{row['detection_area_median_px']:.3g}"
+                ),
                 elapsed=row["elapsed_s"],
             )
         )
-    (output_dir / "raw_baseline_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (output_dir / "raw_baseline_summary.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -939,14 +1122,17 @@ def main(argv: list[str] | None = None) -> int:
         "discovered_images": len(all_paths),
         "selected_images": len(selected_paths),
         "average_source_images": len(average_paths),
-        "arguments": vars(args) | {
+        "arguments": vars(args)
+        | {
             "image_dir": str(args.image_dir),
             "output_dir": str(args.output_dir),
             "belt_region": list(args.belt_region),
             "beltmap_run": [str(path) for path in args.beltmap_run],
         },
     }
-    (args.output_dir / "raw_baseline_config.json").write_text(json.dumps(config_payload, indent=2), encoding="utf-8")
+    (args.output_dir / "raw_baseline_config.json").write_text(
+        json.dumps(config_payload, indent=2), encoding="utf-8"
+    )
 
     methods = args.method or ["raw_zscore", "raw_minus_average"]
     average_background = None
@@ -982,7 +1168,9 @@ def main(argv: list[str] | None = None) -> int:
         max_velocity_ratio_y=args.track_filter_max_velocity_ratio_y,
         max_abs_x_velocity_px_per_frame=args.track_filter_max_abs_x_velocity_px_per_frame,
     )
-    preview_frames = parse_preview_frames(args.preview_frames, frame_count=len(selected_paths))
+    preview_frames = parse_preview_frames(
+        args.preview_frames, frame_count=len(selected_paths)
+    )
 
     factories = {
         "raw_zscore": raw_zscore_residual,
@@ -1041,8 +1229,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_summary(summary_rows, args.output_dir)
     compare_runs = [
-        RunSpec(row["label"], Path(row["output_dir"]))
-        for row in summary_rows
+        RunSpec(row["label"], Path(row["output_dir"])) for row in summary_rows
     ]
     if args.include_original_beltmap_runs:
         for path in args.beltmap_run:

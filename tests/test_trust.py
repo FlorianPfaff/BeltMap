@@ -1,4 +1,5 @@
 import csv
+import json
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from beltmap.trust import (
     sequence_report,
     write_csv_rows,
     write_json,
+    write_run_trust_artifacts,
 )
 
 
@@ -225,6 +227,33 @@ def test_confidence_rows_rejects_invalid_threshold_and_clamps_overlap():
 
     assert negative_overlap == base
     assert overfull_overlap == 0.0
+
+
+def test_write_run_trust_artifacts_falls_back_for_zero_detection_threshold(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "metadata.json").write_text(
+        json.dumps(
+            {
+                "detection_threshold": 0.0,
+                "belt_region": {"top": 0, "left": 0, "height": 10, "width": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right,area_px,peak_signal\n"
+        "0,2,2,4,4,20,0\n",
+        encoding="utf-8",
+    )
+
+    write_run_trust_artifacts(output_dir=out)
+
+    with (out / "detection_confidence.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert len(rows) == 1
+    assert float(rows[0]["detection_confidence"]) == pytest.approx(0.26894142137)
 
 
 def test_plan_map_epochs_with_overlap():

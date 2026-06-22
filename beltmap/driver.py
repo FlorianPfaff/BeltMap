@@ -49,6 +49,7 @@ from ._driver_map import (
     expanded_detection_mask,
     map_sampling_strategy_from_env,
     sample_indices,
+    validate_map_particle_mask_mode,
 )
 from ._driver_motion import (
     estimate_velocity,
@@ -1324,6 +1325,7 @@ def main() -> None:
     rt.refresh_runtime_paths()
     reuse_belt_map_input_path = optional_path("REUSE_BELT_MAP_PATH")
     reuse_map_support_input_path = optional_path("REUSE_MAP_SUPPORT_PATH")
+    map_exclusion_mask_input_path = optional_path("MAP_EXCLUSION_MASK_PATH")
     if reuse_map_support_input_path is None and reuse_belt_map_input_path is not None:
         sibling_support = reuse_belt_map_input_path.with_name("belt_map_support.npy")
         if sibling_support.exists():
@@ -1336,6 +1338,7 @@ def main() -> None:
             optional_path("REUSE_STATIC_BACKGROUND_PATH"),
             optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH"),
             optional_path("REUSE_PHASE_ESTIMATES_PATH"),
+            map_exclusion_mask_input_path,
         )
         if path is not None
     ]
@@ -1453,9 +1456,9 @@ def main() -> None:
     map_mask_iterations = rt.env_int("MAP_MASK_ITERATIONS", 1, minimum=0)
     map_sampling_strategy = map_sampling_strategy_from_env()
     map_particle_mask_threshold = rt.env_float("MAP_PARTICLE_MASK_THRESHOLD", detection_threshold, minimum=0.0)
-    map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip().lower()
+    map_particle_mask_mode_value = os.getenv("MAP_PARTICLE_MASK_MODE", "").strip()
     if map_particle_mask_mode_value:
-        map_particle_mask_mode = map_particle_mask_mode_value
+        map_particle_mask_mode = validate_map_particle_mask_mode(map_particle_mask_mode_value)
     elif detection_mode in {"negative", "absolute"}:
         map_particle_mask_mode = detection_mode
     else:
@@ -1479,8 +1482,8 @@ def main() -> None:
     )
     detection_local_illumination_mask_mode_value = os.getenv(
         "DETECTION_LOCAL_ILLUMINATION_MASK_MODE", ""
-    ).strip().lower()
-    detection_local_illumination_mask_mode = (
+    ).strip()
+    detection_local_illumination_mask_mode = validate_map_particle_mask_mode(
         detection_local_illumination_mask_mode_value or map_particle_mask_mode
     )
     detection_local_illumination_mask_grow_threshold = rt.env_float(
@@ -1511,8 +1514,14 @@ def main() -> None:
     reuse_static_noise_path = optional_path("REUSE_STATIC_NOISE_PATH")
     reuse_static_background_path = optional_path("REUSE_STATIC_BACKGROUND_PATH")
     reuse_recurrent_artifact_map_path = optional_path("REUSE_RECURRENT_ARTIFACT_MAP_PATH")
+    map_exclusion_mask_path = optional_path("MAP_EXCLUSION_MASK_PATH")
     if reuse_phase_estimates_path is not None and reuse_belt_map_path is None:
         raise ValueError("REUSE_PHASE_ESTIMATES_PATH requires REUSE_BELT_MAP_PATH")
+    if map_exclusion_mask_path is not None and reuse_belt_map_path is not None:
+        raise ValueError(
+            "MAP_EXCLUSION_MASK_PATH applies to belt-map rebuilding and cannot "
+            "be combined with REUSE_BELT_MAP_PATH"
+        )
     static_noise_sample_frames = static_residual_sample_frames("STATIC_NOISE_SAMPLE_FRAMES", frame_count=len(paths))
     static_noise_min_scale = rt.env_float("STATIC_NOISE_MIN_SCALE", 0.0, minimum=0.0)
     static_noise_mask_threshold = optional_positive_float("STATIC_NOISE_MASK_THRESHOLD", detection_threshold)
@@ -1750,6 +1759,7 @@ def main() -> None:
         map_robust_iterations=map_robust_iterations,
         map_robust_huber_delta=map_robust_huber_delta,
         map_robust_min_scale=map_robust_min_scale,
+        map_exclusion_mask_path=map_exclusion_mask_path,
         map_risk_min_support=map_risk_min_support,
         map_risk_reject_max_mean=map_risk_reject_max_mean,
         map_risk_reject_max_interpolated_fraction=map_risk_reject_max_interpolated_fraction,
@@ -1880,6 +1890,9 @@ def main() -> None:
                 source_map_support_npy=reuse_map_support_path,
             )
     else:
+        map_exclusion_mask = (
+            None if map_exclusion_mask_path is None else np.load(map_exclusion_mask_path)
+        )
         build_result = build_belt_map_result(
             paths=paths,
             region=region,
@@ -1913,6 +1926,7 @@ def main() -> None:
                 if revolution_split is None
                 else revolution_split.train_frame_indices
             ),
+            map_exclusion_mask=map_exclusion_mask,
         )
         belt_map = build_result.belt_map
         reference_phase = build_result.reference_phase
@@ -1980,6 +1994,68 @@ def main() -> None:
             "skipping belt-map support/risk diagnostics for reused map without support",
             source_belt_map_npy=reuse_belt_map_path,
         )
+
+    if env_bool("BELTMAP_STOP_AFTER_BELT_MAP", False):
+        metadata = {
+            "n_images": len(paths),
+            "discovered_frame_count": discovered_frame_count,
+            "frame_stride": frame_stride,
+            "first_image_shape": list(first.shape),
+            "belt_region": {
+                "top": region[0],
+                "left": region[1],
+                "height": region[2],
+                "width": region[3],
+            },
+            "belt_velocity_source": belt_velocity_source,
+            "belt_velocity_frame_unit": belt_velocity_frame_unit,
+            "supplied_belt_velocity_px_per_frame": supplied_belt_velocity_px_per_frame,
+            "belt_velocity_px_per_frame": belt_velocity,
+            "belt_period_px_input": period_px,
+            "belt_map_height_px": map_height,
+            "reference_phase_px": reference_phase,
+            "map_sample_frame_indices": list(map_sample_frame_indices),
+            "map_sample_strategy": map_sampling_strategy,
+            "map_particle_mask_threshold": map_particle_mask_threshold,
+            "map_particle_mask_mode": map_particle_mask_mode,
+            "map_particle_mask_grow_threshold": map_particle_mask_grow_threshold,
+            "map_particle_mask_dilation_px": map_particle_mask_dilation_px,
+            "map_fractional_splat": map_fractional_splat,
+            "map_frame_median_offset_correction": map_frame_median_offset_correction,
+            "map_local_illumination_correction": map_local_illumination_correction,
+            "map_local_illumination_tile_px": map_local_illumination_tile_px,
+            "map_particle_mask_margin_px": map_particle_mask_margin_px,
+            "map_particle_mask_min_area_px": map_particle_mask_min_area_px,
+            "map_aggregation": map_aggregation,
+            "map_robust_iterations": map_robust_iterations,
+            "map_robust_huber_delta": map_robust_huber_delta,
+            "map_robust_min_scale": map_robust_min_scale,
+            "map_exclusion_mask_path": (
+                "" if map_exclusion_mask_path is None else str(map_exclusion_mask_path)
+            ),
+            "map_support_map_used": map_risk_maps is not None,
+            "reuse_map_support_path": (
+                "" if reuse_map_support_path is None else str(reuse_map_support_path)
+            ),
+            "map_risk_min_support": map_risk_min_support,
+            "map_risk_filter_enabled": map_risk_filter_enabled,
+            "map_risk_reject_max_mean": map_risk_reject_max_mean,
+            "map_risk_reject_max_interpolated_fraction": map_risk_reject_max_interpolated_fraction,
+            "map_risk_reject_max_low_support_fraction": map_risk_reject_max_low_support_fraction,
+            "map_risk_low_support_pixels": map_risk_low_support_pixels,
+            "map_risk_interpolated_pixels": map_risk_interpolated_pixels,
+            "stop_after_belt_map": True,
+            "elapsed_s": rt.elapsed_s(),
+        }
+        metadata_path = rt.OUT / "metadata.json"
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        rt.emit(
+            "done",
+            "stopped after belt-map outputs",
+            metadata_json=metadata_path,
+            belt_map_npy=rt.OUT / "belt_map.npy",
+        )
+        return
 
     motion_model = BeltMotionModel(
         image_velocity_px_per_frame=belt_velocity,
@@ -2840,6 +2916,7 @@ def main() -> None:
         "map_robust_iterations": map_robust_iterations,
         "map_robust_huber_delta": map_robust_huber_delta,
         "map_robust_min_scale": map_robust_min_scale,
+        "map_exclusion_mask_path": "" if map_exclusion_mask_path is None else str(map_exclusion_mask_path),
         "map_support_map_used": map_risk_maps is not None,
         "reuse_map_support_path": "" if reuse_map_support_path is None else str(reuse_map_support_path),
         "map_risk_min_support": map_risk_min_support,
