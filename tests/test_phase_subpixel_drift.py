@@ -113,51 +113,41 @@ def test_phase_drift_filter_smooths_accepted_registration_residuals():
 @pytest.mark.parametrize(
     ("config", "kwargs", "message"),
     [
-        (
-            PhaseDriftConfig(smoothing_alpha=float("nan")),
-            {},
-            "smoothing_alpha",
-        ),
-        (
-            PhaseDriftConfig(min_score=float("nan")),
-            {},
-            "min_score",
-        ),
-        (
-            PhaseDriftConfig(min_score=-0.1),
-            {},
-            "min_score",
-        ),
-        (
-            PhaseDriftConfig(max_abs_residual_correction_px=float("nan")),
-            {},
-            "max_abs_residual_correction_px",
-        ),
-        (
-            PhaseDriftConfig(max_abs_drift_px=float("nan")),
-            {},
-            "max_abs_drift_px",
-        ),
-        (
-            PhaseDriftConfig(),
-            {"initial_drift_px": float("nan")},
-            "initial_drift_px",
-        ),
-        (
-            PhaseDriftConfig(),
-            {"period_px": float("nan")},
-            "period_px",
-        ),
-        (
-            PhaseDriftConfig(),
-            {"period_px": 0.0},
-            "period_px",
-        ),
+        (PhaseDriftConfig(enabled="true"), {}, "enabled"),
+        (PhaseDriftConfig(smoothing_alpha=True), {}, "smoothing_alpha"),
+        (PhaseDriftConfig(smoothing_alpha="0.5"), {}, "smoothing_alpha"),
+        (PhaseDriftConfig(min_score=True), {}, "min_score"),
+        (PhaseDriftConfig(max_abs_residual_correction_px=True), {}, "max_abs_residual_correction_px"),
+        (PhaseDriftConfig(max_abs_drift_px=True), {}, "max_abs_drift_px"),
+        (PhaseDriftConfig(), {"initial_drift_px": True}, "initial_drift_px"),
+        (PhaseDriftConfig(), {"period_px": True}, "period_px"),
     ],
 )
-def test_phase_drift_filter_rejects_invalid_numeric_config(config, kwargs, message):
+def test_phase_drift_filter_rejects_coerced_numeric_config(config, kwargs, message):
     with pytest.raises(ValueError, match=message):
         PhaseDriftFilter(config, **kwargs)
+
+
+def test_phase_drift_filter_rejects_nonfinite_registration_score():
+    drift_filter = PhaseDriftFilter(
+        PhaseDriftConfig(enabled=True, smoothing_alpha=0.5, min_score=0.1),
+        period_px=100.0,
+    )
+    estimate = PhaseEstimate(
+        phase_px=13.0,
+        frame_index=0.0,
+        predicted_phase_px=10.0,
+        correction_px=3.0,
+        score=float("nan"),
+        method="registration",
+    )
+
+    returned = drift_filter.observe(estimate)
+
+    assert returned.drift_px == 0.0
+    assert drift_filter.drift_px == 0.0
+    assert drift_filter.accepted_updates == 0
+    assert drift_filter.rejected_updates == 1
 
 
 def test_smoothed_phase_estimates_preserve_applied_drift_metadata():

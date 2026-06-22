@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, replace
 from math import hypot, log
+from numbers import Real
 from typing import Any, Sequence
 
 import numpy as np
@@ -196,6 +197,7 @@ def extract_particle_detections(
 
     cfg = config or ParticleComponentConfig()
     _validate_component_config(cfg)
+    frame_index_value = _finite_config_value(frame_index, "frame_index")
 
     mask = np.asarray(particle_mask, dtype=bool)
     if mask.size == 0:
@@ -232,6 +234,11 @@ def extract_particle_detections(
             continue
 
         values = signal[rows, cols] if signal is not None else None
+        finite_values = (
+            None
+            if values is None
+            else values[np.isfinite(values)]
+        )
         y, x = _component_centroid(
             rows,
             cols,
@@ -240,7 +247,7 @@ def extract_particle_detections(
         )
         detections.append(
             ParticleDetection(
-                frame_index=float(frame_index),
+                frame_index=frame_index_value,
                 label=label,
                 y=y,
                 x=x,
@@ -249,8 +256,16 @@ def extract_particle_detections(
                 bbox_left=left,
                 bbox_bottom=bottom,
                 bbox_right=right,
-                mean_signal=None if values is None else float(np.mean(values)),
-                peak_signal=None if values is None else float(np.max(values)),
+                mean_signal=(
+                    None
+                    if finite_values is None or finite_values.size == 0
+                    else float(np.mean(finite_values))
+                ),
+                peak_signal=(
+                    None
+                    if finite_values is None or finite_values.size == 0
+                    else float(np.max(finite_values))
+                ),
             )
         )
     return detections
@@ -273,7 +288,7 @@ def track_particle_detections(
     effective_frame_indices = (
         [float(index) for index in range(len(detections_by_frame))]
         if frame_indices is None
-        else [float(index) for index in frame_indices]
+        else [_finite_config_value(index, "frame_indices") for index in frame_indices]
     )
     if len(effective_frame_indices) != len(detections_by_frame):
         raise ValueError("frame_indices must have the same length as detections_by_frame")
@@ -294,7 +309,13 @@ def track_particle_detections(
     for frame_number, detections in enumerate(detections_by_frame):
         frame_index = effective_frame_indices[frame_number]
         current = sorted(
-            (_with_frame_index(detection, frame_index) for detection in detections),
+            (
+                _with_frame_index(
+                    _validate_detection_for_tracking(detection),
+                    frame_index,
+                )
+                for detection in detections
+            ),
             key=lambda item: (item.frame_index, item.y, item.x),
         )
         if not current:
@@ -648,9 +669,11 @@ def estimate_particle_velocities_vs_belt(
 ) -> list[ParticleVelocity]:
     """Estimate particle velocities and compare them with belt image velocity."""
 
-    if not np.isfinite(belt_image_velocity_px_per_frame):
-        raise ValueError("belt_image_velocity_px_per_frame must be finite")
-    if belt_image_velocity_px_per_frame == 0:
+    belt_velocity = _finite_config_value(
+        belt_image_velocity_px_per_frame,
+        "belt_image_velocity_px_per_frame",
+    )
+    if belt_velocity == 0:
         raise ValueError("belt_image_velocity_px_per_frame must be non-zero")
     min_track_length_value = _finite_config_value(
         min_track_length,
@@ -686,10 +709,10 @@ def estimate_particle_velocities_vs_belt(
                 velocity_y_px_per_frame=vy,
                 velocity_x_px_per_frame=vx,
                 speed_px_per_frame=hypot(vy, vx),
-                belt_velocity_y_px_per_frame=float(belt_image_velocity_px_per_frame),
-                velocity_ratio_y=vy / belt_image_velocity_px_per_frame,
+                belt_velocity_y_px_per_frame=belt_velocity,
+                velocity_ratio_y=vy / belt_velocity,
                 belt_minus_particle_velocity_y_px_per_frame=(
-                    belt_image_velocity_px_per_frame - vy
+                    belt_velocity - vy
                 ),
             )
         )
@@ -724,6 +747,7 @@ def score_particle_velocities(
 
     scores: list[ParticleTrackScore] = []
     for velocity in velocities:
+        _validate_velocity_for_scoring(velocity)
         recurrent_summary = _track_recurrent_artifact_summary(
             tracks_by_id.get(velocity.track_id),
             config=cfg,
@@ -891,10 +915,16 @@ def extract_particle_velocities_vs_belt(
     masks = list(particle_masks)
     if not masks:
         return []
+    belt_velocity = _finite_config_value(
+        belt_image_velocity_px_per_frame,
+        "belt_image_velocity_px_per_frame",
+    )
+    if belt_velocity == 0:
+        raise ValueError("belt_image_velocity_px_per_frame must be non-zero")
     frames = (
         [float(index) for index in range(len(masks))]
         if frame_indices is None
-        else [float(index) for index in frame_indices]
+        else [_finite_config_value(index, "frame_indices") for index in frame_indices]
     )
     if len(frames) != len(masks):
         raise ValueError("frame_indices must have the same length as particle_masks")
@@ -917,8 +947,8 @@ def extract_particle_velocities_vs_belt(
         for mask, residual, frame_index in zip(masks, residual_values, frames)
     ]
     cfg = tracking_config or ParticleTrackingConfig(
-        max_match_distance_px=max(5.0, 1.5 * abs(belt_image_velocity_px_per_frame)),
-        velocity_prior_y_px_per_frame=0.8 * belt_image_velocity_px_per_frame,
+        max_match_distance_px=max(5.0, 1.5 * abs(belt_velocity)),
+        velocity_prior_y_px_per_frame=0.8 * belt_velocity,
     )
     tracks = track_particle_detections(
         detections_by_frame,
@@ -927,26 +957,29 @@ def extract_particle_velocities_vs_belt(
     )
     return estimate_particle_velocities_vs_belt(
         tracks,
-        belt_image_velocity_px_per_frame=belt_image_velocity_px_per_frame,
+        belt_image_velocity_px_per_frame=belt_velocity,
         min_track_length=min_track_length,
         fit_method=fit_method,
     )
 
 
 def _validate_component_config(config: ParticleComponentConfig) -> None:
-    min_area_px = _finite_config_value(config.min_area_px, "min_area_px")
+    min_area_px = _finite_integer_config_value(config.min_area_px, "min_area_px")
     if min_area_px < 1:
         raise ValueError("min_area_px must be positive")
-    max_area_px = _optional_finite_config_value(config.max_area_px, "max_area_px")
+    max_area_px = _optional_finite_integer_config_value(
+        config.max_area_px,
+        "max_area_px",
+    )
     if max_area_px is not None and max_area_px < min_area_px:
         raise ValueError("max_area_px must be greater than or equal to min_area_px")
-    min_bbox_width_px = _optional_finite_config_value(
+    min_bbox_width_px = _optional_finite_integer_config_value(
         config.min_bbox_width_px,
         "min_bbox_width_px",
     )
     if min_bbox_width_px is not None and min_bbox_width_px < 1:
         raise ValueError("min_bbox_width_px must be positive when set")
-    min_bbox_height_px = _optional_finite_config_value(
+    min_bbox_height_px = _optional_finite_integer_config_value(
         config.min_bbox_height_px,
         "min_bbox_height_px",
     )
@@ -967,15 +1000,18 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
     )
     if min_bbox_extent is not None and not (0.0 <= min_bbox_extent <= 1.0):
         raise ValueError("min_bbox_extent must be in [0, 1] when set")
-    if config.connectivity not in (4, 8):
+    connectivity = _finite_integer_config_value(config.connectivity, "connectivity")
+    if connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
-    split_min_projection_gap_px = _finite_config_value(
+    _validate_bool_config_value(config.weighted_centroid, "weighted_centroid")
+    _validate_bool_config_value(config.split_merged_components, "split_merged_components")
+    split_min_projection_gap_px = _finite_integer_config_value(
         config.split_min_projection_gap_px,
         "split_min_projection_gap_px",
     )
     if split_min_projection_gap_px < 1:
         raise ValueError("split_min_projection_gap_px must be positive")
-    split_min_component_area_px = _optional_finite_config_value(
+    split_min_component_area_px = _optional_finite_integer_config_value(
         config.split_min_component_area_px,
         "split_min_component_area_px",
     )
@@ -987,7 +1023,14 @@ def _validate_component_config(config: ParticleComponentConfig) -> None:
 
 
 def _finite_config_value(value: float, name: str) -> float:
-    parsed = float(value)
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
     if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
     return parsed
@@ -999,6 +1042,27 @@ def _optional_finite_config_value(value: float | None, name: str) -> float | Non
     return _finite_config_value(value, name)
 
 
+def _finite_integer_config_value(value: float, name: str) -> int:
+    parsed = _finite_config_value(value, name)
+    if not parsed.is_integer():
+        raise ValueError(f"{name} must be an integer")
+    return int(parsed)
+
+
+def _optional_finite_integer_config_value(
+    value: float | None,
+    name: str,
+) -> int | None:
+    if value is None:
+        return None
+    return _finite_integer_config_value(value, name)
+
+
+def _validate_bool_config_value(value: bool, name: str) -> None:
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be boolean")
+
+
 def _validate_velocity_fit_method(method: str) -> str:
     normalized = str(method).strip().lower()
     if normalized not in _VELOCITY_FIT_METHODS:
@@ -1008,14 +1072,78 @@ def _validate_velocity_fit_method(method: str) -> str:
 
 
 def _validate_tracking_config(config: ParticleTrackingConfig) -> None:
-    if not np.isfinite(config.max_match_distance_px) or config.max_match_distance_px <= 0:
+    max_match_distance_px = _finite_config_value(
+        config.max_match_distance_px,
+        "max_match_distance_px",
+    )
+    if max_match_distance_px <= 0:
         raise ValueError("max_match_distance_px must be positive")
-    if not np.isfinite(config.max_frame_gap) or config.max_frame_gap <= 0:
+    max_frame_gap = _finite_config_value(config.max_frame_gap, "max_frame_gap")
+    if max_frame_gap <= 0:
         raise ValueError("max_frame_gap must be positive")
-    if not np.isfinite(config.velocity_prior_y_px_per_frame):
-        raise ValueError("velocity_prior_y_px_per_frame must be finite")
-    if not np.isfinite(config.velocity_prior_x_px_per_frame):
-        raise ValueError("velocity_prior_x_px_per_frame must be finite")
+    _finite_config_value(
+        config.velocity_prior_y_px_per_frame,
+        "velocity_prior_y_px_per_frame",
+    )
+    _finite_config_value(
+        config.velocity_prior_x_px_per_frame,
+        "velocity_prior_x_px_per_frame",
+    )
+
+
+def _validate_detection_for_tracking(
+    detection: ParticleDetection,
+) -> ParticleDetection:
+    _finite_config_value(detection.y, "detection y")
+    _finite_config_value(detection.x, "detection x")
+    area = _finite_integer_config_value(detection.area_px, "detection area_px")
+    if area < 1:
+        raise ValueError("detection area_px must be positive")
+
+    top = _finite_integer_config_value(detection.bbox_top, "detection bbox_top")
+    left = _finite_integer_config_value(detection.bbox_left, "detection bbox_left")
+    bottom = _finite_integer_config_value(detection.bbox_bottom, "detection bbox_bottom")
+    right = _finite_integer_config_value(detection.bbox_right, "detection bbox_right")
+    if top < 0 or left < 0:
+        raise ValueError("detection bbox coordinates must be nonnegative")
+    if bottom <= top or right <= left:
+        raise ValueError("detection bbox must be half-open with positive area")
+    return detection
+
+
+def _validate_velocity_for_scoring(velocity: ParticleVelocity) -> None:
+    track_id = _finite_integer_config_value(velocity.track_id, "track_id")
+    if track_id < 0:
+        raise ValueError("track_id must be nonnegative")
+    n_detections = _finite_integer_config_value(
+        velocity.n_detections,
+        "n_detections",
+    )
+    if n_detections < 1:
+        raise ValueError("n_detections must be positive")
+    frame_start = _finite_config_value(velocity.frame_start, "frame_start")
+    frame_end = _finite_config_value(velocity.frame_end, "frame_end")
+    if frame_end < frame_start:
+        raise ValueError("frame_end must be greater than or equal to frame_start")
+    _finite_config_value(velocity.velocity_y_px_per_frame, "velocity_y_px_per_frame")
+    _finite_config_value(velocity.velocity_x_px_per_frame, "velocity_x_px_per_frame")
+    speed_px_per_frame = _finite_config_value(
+        velocity.speed_px_per_frame,
+        "speed_px_per_frame",
+    )
+    if speed_px_per_frame < 0:
+        raise ValueError("speed_px_per_frame must be nonnegative")
+    belt_velocity = _finite_config_value(
+        velocity.belt_velocity_y_px_per_frame,
+        "belt_velocity_y_px_per_frame",
+    )
+    if belt_velocity == 0:
+        raise ValueError("belt_velocity_y_px_per_frame must be non-zero")
+    _finite_config_value(velocity.velocity_ratio_y, "velocity_ratio_y")
+    _finite_config_value(
+        velocity.belt_minus_particle_velocity_y_px_per_frame,
+        "belt_minus_particle_velocity_y_px_per_frame",
+    )
 
 
 def _component_shape_passes(
@@ -1048,11 +1176,15 @@ def _validate_track_filter_config(config: TrackFilterConfig) -> None:
     )
     if min_track_length < 1 or not min_track_length.is_integer():
         raise ValueError("min_track_length must be positive")
-    if not np.isfinite(config.min_velocity_ratio_y):
-        raise ValueError("min_velocity_ratio_y must be finite")
-    if not np.isfinite(config.max_velocity_ratio_y):
-        raise ValueError("max_velocity_ratio_y must be finite")
-    if config.max_velocity_ratio_y < config.min_velocity_ratio_y:
+    min_velocity_ratio_y = _finite_config_value(
+        config.min_velocity_ratio_y,
+        "min_velocity_ratio_y",
+    )
+    max_velocity_ratio_y = _finite_config_value(
+        config.max_velocity_ratio_y,
+        "max_velocity_ratio_y",
+    )
+    if max_velocity_ratio_y < min_velocity_ratio_y:
         raise ValueError("max_velocity_ratio_y must be greater than or equal to min_velocity_ratio_y")
     max_abs_x_velocity_px_per_frame = _optional_finite_config_value(
         config.max_abs_x_velocity_px_per_frame,
@@ -1109,6 +1241,12 @@ def _residual_values(
     arr = np.asarray(values, dtype=np.float64)
     if arr.shape != shape:
         raise ValueError("residual must have the same shape as particle_mask")
+    if isinstance(residual, ResidualImage):
+        valid = np.asarray(residual.mask, dtype=bool)
+        if valid.shape != shape:
+            raise ValueError("ResidualImage mask must have the same shape as particle_mask")
+        arr = arr.copy()
+        arr[~valid] = np.nan
     if signal_mode is not None:
         arr = _orient_residual_signal(arr, signal_mode=signal_mode)
     return arr
@@ -1251,7 +1389,8 @@ def _component_centroid(
     weighted: bool,
 ) -> tuple[float, float]:
     if values is not None and weighted:
-        weights = np.clip(values, 0.0, None)
+        finite_values = np.where(np.isfinite(values), values, 0.0)
+        weights = np.clip(finite_values, 0.0, None)
         weight_sum = float(np.sum(weights))
         if weight_sum > 0:
             return (

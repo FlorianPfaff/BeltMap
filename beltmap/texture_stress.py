@@ -238,8 +238,14 @@ def score_stress_frames(
 ) -> list[StressFrame]:
     """Assign robust composite texture-stress scores and quantile subsets."""
 
-    if quartiles < 2:
-        raise ValueError("texture-stress analysis requires at least two subsets")
+    quartile_value = finite_float(quartiles)
+    if (
+        quartile_value is None
+        or not quartile_value.is_integer()
+        or quartile_value < 2
+    ):
+        raise ValueError("quartiles must be an integer of at least two")
+    quartiles = int(quartile_value)
     feature_z: dict[str, dict[int, float]] = {}
     for feature in STRESS_FEATURES:
         values = {
@@ -474,7 +480,11 @@ def write_texture_stress_plots(report_dir: Path, rows: list[dict[str, Any]]) -> 
     labels = sorted({str(row.get("run")) for row in rows})
     for label in labels:
         run_rows = [row for row in rows if row.get("run") == label]
-        run_rows.sort(key=lambda row: finite_float(row.get("stress_rank")) or math.inf)
+        def stress_rank_sort_key(row: dict[str, Any]) -> float:
+            rank = finite_float(row.get("stress_rank"))
+            return math.inf if rank is None else float(rank)
+
+        run_rows.sort(key=stress_rank_sort_key)
         xs = [float(row["stress_rank"]) for row in run_rows if finite_float(row.get("stress_rank")) is not None]
         ys = [
             float(value)

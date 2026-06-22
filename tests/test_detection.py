@@ -6,6 +6,7 @@ from beltmap import (
     detect_particles_from_residual,
     detect_particles_from_residual_hysteresis,
     detection_signal_from_residual,
+    normalize_detection_mode,
 )
 
 
@@ -135,6 +136,14 @@ def test_detect_particles_from_residual_supports_absolute_particles():
     )
 
 
+def test_detection_mode_accepts_particle_polarity_aliases():
+    assert normalize_detection_mode("bright") == "positive"
+    assert normalize_detection_mode("dark") == "negative"
+    assert normalize_detection_mode("dark-on-light") == "negative"
+    assert normalize_detection_mode("signed") == "absolute"
+    assert normalize_detection_mode("two sided") == "absolute"
+
+
 def test_detect_particles_from_residual_grows_hysteresis_regions_from_strong_seeds():
     residual = np.array(
         [
@@ -187,18 +196,29 @@ def test_detect_particles_from_residual_hysteresis_compatibility_wrapper():
     )
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"threshold": -1.0}, "threshold"),
-        ({"threshold": 1.0, "low_threshold": -0.5}, "low_threshold"),
-    ],
-)
-def test_detect_particles_from_residual_rejects_negative_thresholds(kwargs, message):
-    residual = np.ones((2, 2), dtype=float)
+@pytest.mark.parametrize("threshold", [0.0, -1.0, True, float("nan"), "bad"])
+def test_detect_particles_from_residual_rejects_invalid_high_threshold(threshold):
+    with pytest.raises(ValueError, match="threshold"):
+        detect_particles_from_residual(np.ones((2, 2)), threshold=threshold)
 
-    with pytest.raises(ValueError, match=message):
-        detect_particles_from_residual(residual, **kwargs)
+
+@pytest.mark.parametrize("low_threshold", [-1.0, True, float("nan"), "bad"])
+def test_detect_particles_from_residual_rejects_invalid_low_threshold(low_threshold):
+    with pytest.raises(ValueError, match="low_threshold"):
+        detect_particles_from_residual(
+            np.ones((2, 2)),
+            threshold=1.0,
+            low_threshold=low_threshold,
+        )
+
+
+def test_detect_particles_from_residual_rejects_low_threshold_above_threshold():
+    with pytest.raises(ValueError, match="low_threshold must be less than or equal"):
+        detect_particles_from_residual(
+            np.ones((2, 2)),
+            threshold=1.0,
+            low_threshold=2.0,
+        )
 
 
 def test_detection_signal_from_residual_matches_detection_mode_and_valid_mask():
@@ -230,3 +250,31 @@ def test_detection_signal_from_residual_matches_detection_mode_and_valid_mask():
         ]
     )
     np.testing.assert_allclose(signal, expected)
+
+
+def test_detection_signal_rejects_empty_residual_image():
+    empty = np.empty((0, 2), dtype=float)
+    residual = ResidualImage(
+        raw=empty,
+        local_noise=empty,
+        normalized=empty,
+        mask=np.empty((0, 2), dtype=bool),
+        expected_background=empty,
+    )
+
+    with pytest.raises(ValueError, match="residual must not be empty"):
+        detection_signal_from_residual(residual)
+
+
+def test_detection_signal_rejects_residual_image_mask_shape_mismatch():
+    normalized = np.ones((2, 2), dtype=float)
+    residual = ResidualImage(
+        raw=normalized,
+        local_noise=normalized,
+        normalized=normalized,
+        mask=np.ones((2, 3), dtype=bool),
+        expected_background=np.zeros_like(normalized),
+    )
+
+    with pytest.raises(ValueError, match="mask must have the same shape"):
+        detection_signal_from_residual(residual)

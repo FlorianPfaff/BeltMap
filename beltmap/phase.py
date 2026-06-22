@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from numbers import Real
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -21,14 +22,24 @@ class BeltMotionModel:
     reference_phase_px: float = 0.0
 
     def phase_at(self, frame_index: float) -> float:
-        phase = self.reference_phase_px - self.image_velocity_px_per_frame * (
-            frame_index - self.reference_frame
+        frame = _finite_float_value(frame_index, "frame_index")
+        velocity = _finite_float_value(
+            self.image_velocity_px_per_frame,
+            "image_velocity_px_per_frame",
+        )
+        reference_frame = _finite_float_value(self.reference_frame, "reference_frame")
+        reference_phase = _finite_float_value(
+            self.reference_phase_px,
+            "reference_phase_px",
+        )
+        phase = reference_phase - velocity * (
+            frame - reference_frame
         )
         return wrap_phase(phase, self.period_px)
 
     def coordinate_rows(self, frame_index: float, height: int) -> FloatArray:
-        height = _positive_integer_value(height, "height")
-        rows = np.arange(height, dtype=np.float64) + self.phase_at(frame_index)
+        height_value = _positive_integer_value(height, "height")
+        rows = np.arange(height_value, dtype=np.float64) + self.phase_at(frame_index)
         if self.period_px is not None:
             rows = np.mod(rows, self.period_px)
         return rows
@@ -74,6 +85,8 @@ class PhaseRegistrationConfig:
             self.highpass_radius_px,
             "highpass_radius_px",
         )
+        _validate_bool_value(self.subpixel_refinement, "subpixel_refinement")
+        _validate_bool_value(self.robust_normalization, "robust_normalization")
         if not 0 <= trim_fraction < 1:
             raise ValueError("trim_fraction must be in [0, 1)")
         return replace(
@@ -96,11 +109,14 @@ class PhaseTrajectorySmoothingConfig:
     min_support: int = 3
 
     def validate(self) -> None:
-        _nonnegative_integer_value(
+        self.normalized()
+
+    def normalized(self) -> PhaseTrajectorySmoothingConfig:
+        window_radius_frames = _nonnegative_integer_value(
             self.window_radius_frames,
             "window_radius_frames",
         )
-        _positive_integer_value(self.min_support, "min_support")
+        min_support = _positive_integer_value(self.min_support, "min_support")
         robust_sigma = _finite_float_value(self.robust_sigma, "robust_sigma")
         if robust_sigma <= 0:
             raise ValueError("robust_sigma must be positive")
@@ -113,6 +129,14 @@ class PhaseTrajectorySmoothingConfig:
         )
         if max_abs_correction_px is not None and max_abs_correction_px < 0:
             raise ValueError("max_abs_correction_px must be non-negative when set")
+        return replace(
+            self,
+            window_radius_frames=window_radius_frames,
+            min_support=min_support,
+            robust_sigma=robust_sigma,
+            min_score=min_score,
+            max_abs_correction_px=max_abs_correction_px,
+        )
 
 
 @dataclass(frozen=True)
@@ -155,21 +179,22 @@ class PhaseDriftFilter:
         initial_drift_px: float = 0.0,
         period_px: float | None = None,
     ) -> None:
-        raw_config = config or PhaseDriftConfig()
+        self.config = config or PhaseDriftConfig()
+        _validate_bool_value(self.config.enabled, "PhaseDriftConfig.enabled")
         smoothing_alpha = _finite_float_value(
-            raw_config.smoothing_alpha,
+            self.config.smoothing_alpha,
             "PhaseDriftConfig.smoothing_alpha",
         )
         if not 0.0 <= smoothing_alpha <= 1.0:
             raise ValueError("PhaseDriftConfig.smoothing_alpha must be in [0, 1]")
         min_score = _finite_float_value(
-            raw_config.min_score,
+            self.config.min_score,
             "PhaseDriftConfig.min_score",
         )
         if min_score < 0:
             raise ValueError("PhaseDriftConfig.min_score must be non-negative")
         max_abs_residual_correction_px = _optional_finite_float_value(
-            raw_config.max_abs_residual_correction_px,
+            self.config.max_abs_residual_correction_px,
             "max_abs_residual_correction_px",
         )
         if (
@@ -178,31 +203,30 @@ class PhaseDriftFilter:
         ):
             raise ValueError("max_abs_residual_correction_px must be non-negative")
         max_abs_drift_px = _optional_finite_float_value(
-            raw_config.max_abs_drift_px,
+            self.config.max_abs_drift_px,
             "max_abs_drift_px",
         )
         if max_abs_drift_px is not None and max_abs_drift_px < 0:
             raise ValueError("max_abs_drift_px must be non-negative")
+        if period_px is not None:
+            period_px = _finite_float_value(period_px, "period_px")
+            if period_px <= 0:
+                raise ValueError("period_px must be positive")
         self.config = replace(
-            raw_config,
+            self.config,
             smoothing_alpha=smoothing_alpha,
             min_score=min_score,
             max_abs_residual_correction_px=max_abs_residual_correction_px,
             max_abs_drift_px=max_abs_drift_px,
         )
-        if period_px is None:
-            self.period_px = None
-        else:
-            period = _finite_float_value(period_px, "period_px")
-            if period <= 0:
-                raise ValueError("period_px must be positive")
-            self.period_px = period
+        self.period_px = period_px
         self.drift_px = _finite_float_value(initial_drift_px, "initial_drift_px")
         self.accepted_updates = 0
         self.rejected_updates = 0
 
     def predict(self, nominal_phase_px: float) -> float:
-        return wrap_phase(float(nominal_phase_px) + self.drift_px, self.period_px)
+        nominal_phase = _finite_float_value(nominal_phase_px, "nominal_phase_px")
+        return wrap_phase(nominal_phase + self.drift_px, self.period_px)
 
     def observe(self, estimate: PhaseEstimate) -> PhaseEstimate:
         method = estimate.method
@@ -214,14 +238,11 @@ class PhaseDriftFilter:
         if not self._accepts(estimate):
             self.rejected_updates += 1
             return updated
-        proposed = self.drift_px + float(estimate.correction_px)
+        correction = _finite_float_value(estimate.correction_px, "correction_px")
+        proposed = self.drift_px + correction
         if self.config.max_abs_drift_px is not None:
             proposed = float(
-                np.clip(
-                    proposed,
-                    -self.config.max_abs_drift_px,
-                    self.config.max_abs_drift_px,
-                )
+                np.clip(proposed, -self.config.max_abs_drift_px, self.config.max_abs_drift_px)
             )
         alpha = self.config.smoothing_alpha
         self.drift_px = (1.0 - alpha) * self.drift_px + alpha * proposed
@@ -229,11 +250,21 @@ class PhaseDriftFilter:
         return updated
 
     def _accepts(self, estimate: PhaseEstimate) -> bool:
-        score = 0.0 if estimate.score is None else float(estimate.score)
+        if estimate.score is None:
+            score = 0.0
+        else:
+            try:
+                score = _finite_float_value(estimate.score, "score")
+            except ValueError:
+                return False
         if score < self.config.min_score:
             return False
+        try:
+            correction = _finite_float_value(estimate.correction_px, "correction_px")
+        except ValueError:
+            return False
         max_abs = self.config.max_abs_residual_correction_px
-        return max_abs is None or abs(float(estimate.correction_px)) <= max_abs
+        return max_abs is None or abs(correction) <= max_abs
 
 
 def wrap_phase(phase_px: float, period_px: float | None) -> float:
@@ -264,12 +295,13 @@ def render_belt_view(
     if belt.ndim != 2:
         raise ValueError("belt_map must be a 2-D array")
     phase = _finite_float_value(phase_px, "phase_px")
-    height = _positive_integer_value(height, "height")
+    height_value = _positive_integer_value(height, "height")
+    _validate_bool_value(periodic, "periodic")
     if x_slice is not None:
         belt = belt[:, x_slice]
 
     map_height = belt.shape[0]
-    rows = np.arange(height, dtype=np.float64) + phase
+    rows = np.arange(height_value, dtype=np.float64) + phase
     if periodic:
         rows = rows % map_height
         row0 = np.floor(rows).astype(np.int64)
@@ -296,18 +328,19 @@ def estimate_phase(
     config: PhaseRegistrationConfig | None = None,
     mask: ArrayLike | None = None,
 ) -> PhaseEstimate:
-    predicted = motion_model.phase_at(frame_index)
+    frame_index_value = _finite_float_value(frame_index, "frame_index")
+    predicted = motion_model.phase_at(frame_index_value)
     if frame is None or belt_map is None:
         return PhaseEstimate(
             phase_px=predicted,
-            frame_index=frame_index,
+            frame_index=frame_index_value,
             predicted_phase_px=predicted,
         )
     return refine_phase_by_registration(
         frame=frame,
         belt_map=belt_map,
         predicted_phase_px=predicted,
-        frame_index=frame_index,
+        frame_index=frame_index_value,
         period_px=motion_model.period_px,
         config=config,
         mask=mask,
@@ -327,6 +360,8 @@ def refine_phase_by_registration(
     cfg = (config or PhaseRegistrationConfig()).normalized()
     observed = _as_float_image(frame, name="frame")
     belt = _as_float_image(belt_map, name="belt_map")
+    frame_index_value = _finite_float_value(frame_index, "frame_index")
+    predicted_phase = _finite_float_value(predicted_phase_px, "predicted_phase_px")
     if observed.ndim != 2 or belt.ndim != 2:
         raise ValueError("frame and belt_map must be 2-D arrays")
     if observed.shape[1] != belt.shape[1]:
@@ -346,7 +381,7 @@ def refine_phase_by_registration(
     losses: list[tuple[float, float]] = []
     periodic = period_px is not None
     for offset in cfg.candidate_offsets():
-        phase = wrap_phase(predicted_phase_px + float(offset), period_px)
+        phase = wrap_phase(predicted_phase + float(offset), period_px)
         expected = render_belt_view(
             belt,
             phase,
@@ -378,7 +413,7 @@ def refine_phase_by_registration(
     best_loss, best_offset = losses[best_index]
     if cfg.subpixel_refinement:
         best_loss, best_offset = _refine_quadratic_offset(losses, best_index)
-    phase = wrap_phase(predicted_phase_px + best_offset, period_px)
+    phase = wrap_phase(predicted_phase + best_offset, period_px)
     score = _loss_to_score(best_loss, (loss for loss, _offset in losses))
     diagnostics = _registration_loss_diagnostics(
         losses,
@@ -387,8 +422,8 @@ def refine_phase_by_registration(
     )
     return PhaseEstimate(
         phase_px=phase,
-        frame_index=frame_index,
-        predicted_phase_px=predicted_phase_px,
+        frame_index=frame_index_value,
+        predicted_phase_px=predicted_phase,
         correction_px=best_offset,
         loss=best_loss,
         score=score,
@@ -403,28 +438,19 @@ def smooth_phase_estimates(
     period_px: float | None = None,
     config: PhaseTrajectorySmoothingConfig | None = None,
 ) -> list[PhaseEstimate]:
-    cfg = config or PhaseTrajectorySmoothingConfig()
-    cfg.validate()
+    cfg = (config or PhaseTrajectorySmoothingConfig()).normalized()
     if not estimates:
         return []
     if cfg.window_radius_frames == 0:
         return list(estimates)
 
-    frame_indices = np.asarray(
-        [estimate.frame_index for estimate in estimates], dtype=np.float64
-    )
+    frame_indices = np.asarray([estimate.frame_index for estimate in estimates], dtype=np.float64)
     corrections = np.asarray(
-        [
-            _phase_correction_from_estimate(estimate, period_px)
-            for estimate in estimates
-        ],
+        [_phase_correction_from_estimate(estimate, period_px) for estimate in estimates],
         dtype=np.float64,
     )
     scores = np.asarray(
-        [
-            np.nan if estimate.score is None else estimate.score
-            for estimate in estimates
-        ],
+        [np.nan if estimate.score is None else estimate.score for estimate in estimates],
         dtype=np.float64,
     )
 
@@ -470,20 +496,19 @@ def smooth_phase_estimates(
     return smoothed
 
 
-def _phase_correction_from_estimate(
-    estimate: PhaseEstimate, period_px: float | None
-) -> float:
+def _phase_correction_from_estimate(estimate: PhaseEstimate, period_px: float | None) -> float:
     if period_px is None:
         return float(estimate.correction_px)
     return _cyclic_difference(estimate.phase_px, estimate.predicted_phase_px, period_px)
 
 
 def _cyclic_difference(phase_px: float, reference_px: float, period_px: float) -> float:
-    if period_px <= 0:
+    phase = _finite_float_value(phase_px, "phase_px")
+    reference = _finite_float_value(reference_px, "reference_px")
+    period = _finite_float_value(period_px, "period_px")
+    if period <= 0:
         raise ValueError("period_px must be positive")
-    return float(
-        (phase_px - reference_px + 0.5 * period_px) % period_px - 0.5 * period_px
-    )
+    return float((phase - reference + 0.5 * period) % period - 0.5 * period)
 
 
 def _smooth_corrections(
@@ -496,22 +521,16 @@ def _smooth_corrections(
     result = np.full(corrections.shape, np.nan, dtype=np.float64)
     valid_indices = np.flatnonzero(valid)
     for output_index, center_frame in enumerate(frame_indices):
-        in_window = valid & (
-            np.abs(frame_indices - center_frame) <= config.window_radius_frames
-        )
+        in_window = valid & (np.abs(frame_indices - center_frame) <= config.window_radius_frames)
         selected = np.flatnonzero(in_window)
         if selected.size < min(config.min_support, valid_indices.size):
             order = np.argsort(np.abs(frame_indices[valid_indices] - center_frame))
-            selected = valid_indices[
-                order[: min(config.min_support, valid_indices.size)]
-            ]
+            selected = valid_indices[order[: min(config.min_support, valid_indices.size)]]
         if selected.size == 0:
             continue
         local_kernel = np.maximum(
             1e-6,
-            1.0
-            - np.abs(frame_indices[selected] - center_frame)
-            / (config.window_radius_frames + 1.0),
+            1.0 - np.abs(frame_indices[selected] - center_frame) / (config.window_radius_frames + 1.0),
         )
         result[output_index] = _robust_local_linear_prediction(
             frame_indices[selected],
@@ -545,9 +564,7 @@ def _robust_local_linear_prediction(
     keep = _median_outlier_mask(y - fitted, robust_sigma=robust_sigma)
     if int(np.count_nonzero(keep)) < min_support or np.all(keep):
         return prediction
-    refined_prediction, _ = _weighted_linear_fit(
-        x[keep], y[keep], weights[keep], center_x
-    )
+    refined_prediction, _ = _weighted_linear_fit(x[keep], y[keep], weights[keep], center_x)
     return refined_prediction
 
 
@@ -560,9 +577,7 @@ def _finite_weighted_samples(
     return x[finite], y[finite], weights[finite]
 
 
-def _median_outlier_mask(
-    values: FloatArray, *, robust_sigma: float
-) -> NDArray[np.bool_]:
+def _median_outlier_mask(values: FloatArray, *, robust_sigma: float) -> NDArray[np.bool_]:
     if values.size == 0:
         return np.zeros(0, dtype=bool)
     center = float(np.median(values))
@@ -611,6 +626,10 @@ def _as_float_image(image: ArrayLike, *, name: str) -> FloatArray:
 
 
 def _finite_float_value(value: float, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be numeric, not boolean")
+    if not isinstance(value, Real):
+        raise ValueError(f"{name} must be numeric")
     parsed = float(value)
     if not np.isfinite(parsed):
         raise ValueError(f"{name} must be finite")
@@ -637,9 +656,12 @@ def _positive_integer_value(value: int, name: str) -> int:
     return int(parsed)
 
 
-def _prepare_mask(
-    mask: ArrayLike | None, shape: tuple[int, int]
-) -> NDArray[np.bool_] | None:
+def _validate_bool_value(value: bool, name: str) -> None:
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be boolean")
+
+
+def _prepare_mask(mask: ArrayLike | None, shape: tuple[int, int]) -> NDArray[np.bool_] | None:
     if mask is None:
         return None
     arr = np.asarray(mask, dtype=bool)
@@ -669,6 +691,11 @@ def _prepare_for_registration(
     mask: NDArray[np.bool_] | None = None,
 ) -> FloatArray:
     values = np.asarray(image, dtype=np.float64)
+    highpass_radius = _nonnegative_integer_value(
+        highpass_radius_px,
+        "highpass_radius_px",
+    )
+    _validate_bool_value(robust_normalization, "robust_normalization")
     valid = np.isfinite(values)
     if mask is not None:
         if mask.shape != values.shape:
@@ -678,17 +705,9 @@ def _prepare_for_registration(
         raise ValueError("registration mask excludes all finite pixels")
     fill_value = float(np.median(values[valid]))
     sanitized = np.where(valid, values, fill_value)
-    prepared = (
-        sanitized.copy()
-        if highpass_radius_px <= 0
-        else sanitized - _box_blur(sanitized, radius=highpass_radius_px)
-    )
+    prepared = sanitized.copy() if highpass_radius <= 0 else sanitized - _box_blur(sanitized, radius=highpass_radius)
     scale_values = prepared[valid]
-    scale = (
-        _robust_scale(scale_values)
-        if robust_normalization
-        else float(np.std(scale_values))
-    )
+    scale = _robust_scale(scale_values) if robust_normalization else float(np.std(scale_values))
     if scale > 0:
         prepared = prepared / scale
     prepared[~valid] = np.nan
@@ -701,9 +720,7 @@ def _robust_scale(values: FloatArray) -> float:
     return 1.4826 * mad if mad > 0 else float(np.std(values))
 
 
-def _refine_quadratic_offset(
-    losses: list[tuple[float, float]], best_index: int
-) -> tuple[float, float]:
+def _refine_quadratic_offset(losses: list[tuple[float, float]], best_index: int) -> tuple[float, float]:
     if best_index <= 0 or best_index >= len(losses) - 1:
         return losses[best_index]
     window = losses[best_index - 1 : best_index + 2]
@@ -717,13 +734,9 @@ def _refine_quadratic_offset(
     if not np.isfinite(quadratic) or quadratic <= 0:
         return losses[best_index]
     refined_offset = float(-linear / (2.0 * quadratic))
-    if not np.isfinite(refined_offset) or not float(
-        np.min(offsets)
-    ) <= refined_offset <= float(np.max(offsets)):
+    if not np.isfinite(refined_offset) or not float(np.min(offsets)) <= refined_offset <= float(np.max(offsets)):
         return losses[best_index]
-    refined_loss = float(
-        quadratic * refined_offset * refined_offset + linear * refined_offset + constant
-    )
+    refined_loss = float(quadratic * refined_offset * refined_offset + linear * refined_offset + constant)
     best_loss, best_offset = losses[best_index]
     if np.isfinite(refined_loss) and refined_loss <= best_loss:
         return refined_loss, refined_offset
@@ -731,26 +744,26 @@ def _refine_quadratic_offset(
 
 
 def _box_blur(image: FloatArray, radius: int) -> FloatArray:
+    radius = _nonnegative_integer_value(radius, "radius")
     if radius <= 0:
         return image.copy()
-    return _uniform_filter_axis(
-        _uniform_filter_axis(image, radius=radius, axis=0), radius=radius, axis=1
-    )
+    return _uniform_filter_axis(_uniform_filter_axis(image, radius=radius, axis=0), radius=radius, axis=1)
 
 
 def _uniform_filter_axis(image: FloatArray, radius: int, axis: int) -> FloatArray:
+    radius = _nonnegative_integer_value(radius, "radius")
+    axis_value = _nonnegative_integer_value(axis, "axis")
+    if axis_value not in (0, 1):
+        raise ValueError("axis must be 0 or 1")
     pad_width = [(0, 0), (0, 0)]
-    pad_width[axis] = (radius, radius)
-    moved = np.moveaxis(np.pad(image, pad_width, mode="edge"), axis, 0)
+    pad_width[axis_value] = (radius, radius)
+    moved = np.moveaxis(np.pad(image, pad_width, mode="edge"), axis_value, 0)
     csum = np.concatenate(
-        [
-            np.zeros((1,) + moved.shape[1:], dtype=np.float64),
-            np.cumsum(moved, axis=0, dtype=np.float64),
-        ],
+        [np.zeros((1,) + moved.shape[1:], dtype=np.float64), np.cumsum(moved, axis=0, dtype=np.float64)],
         axis=0,
     )
     window = 2 * radius + 1
-    return np.moveaxis((csum[window:] - csum[:-window]) / window, 0, axis)
+    return np.moveaxis((csum[window:] - csum[:-window]) / window, 0, axis_value)
 
 
 def _trimmed_mean_square(
@@ -759,6 +772,7 @@ def _trimmed_mean_square(
     trim_fraction: float,
     mask: NDArray[np.bool_] | None,
 ) -> float:
+    trim_fraction = _finite_float_value(trim_fraction, "trim_fraction")
     if not 0 <= trim_fraction < 1:
         raise ValueError("trim_fraction must be in [0, 1)")
     values = residual[mask] if mask is not None else residual.ravel()

@@ -76,6 +76,28 @@ def test_motion_model_wraps_signed_image_velocity():
     assert model.phase_at(0) == 45
 
 
+@pytest.mark.parametrize(
+    ("model", "message"),
+    [
+        (BeltMotionModel(image_velocity_px_per_frame=True), "image_velocity_px_per_frame"),
+        (BeltMotionModel(image_velocity_px_per_frame="2.0"), "image_velocity_px_per_frame"),
+        (BeltMotionModel(image_velocity_px_per_frame=1.0, reference_frame=True), "reference_frame"),
+        (BeltMotionModel(image_velocity_px_per_frame=1.0, reference_phase_px=True), "reference_phase_px"),
+        (BeltMotionModel(image_velocity_px_per_frame=1.0, period_px=True), "period_px"),
+    ],
+)
+def test_motion_model_rejects_coerced_numeric_values(model, message):
+    with pytest.raises(ValueError, match=message):
+        model.phase_at(0.0)
+
+
+def test_motion_model_coordinate_rows_rejects_boolean_height():
+    model = BeltMotionModel(image_velocity_px_per_frame=1.0)
+
+    with pytest.raises(ValueError, match="height"):
+        model.coordinate_rows(0.0, True)
+
+
 def test_render_belt_view_uses_fractional_phase():
     belt = np.arange(20, dtype=float)[:, None] * np.ones((1, 3))
     rendered = render_belt_view(belt, phase_px=0.5, height=3)
@@ -89,21 +111,6 @@ def test_render_belt_view_defaults_to_periodic_wrapping():
     rendered = render_belt_view(belt, phase_px=-1.0, height=3)
 
     np.testing.assert_allclose(rendered[:, 0], [4.0, 0.0, 1.0])
-
-
-@pytest.mark.parametrize("height", [0, 3.5, float("nan")])
-def test_render_belt_view_rejects_nonpositive_or_fractional_height(height):
-    belt = np.arange(5, dtype=float)[:, None]
-
-    with pytest.raises(ValueError, match="height"):
-        render_belt_view(belt, phase_px=0.0, height=height)
-
-
-def test_motion_model_coordinate_rows_rejects_fractional_height():
-    model = BeltMotionModel(image_velocity_px_per_frame=1.0, period_px=10.0)
-
-    with pytest.raises(ValueError, match="height"):
-        model.coordinate_rows(frame_index=0.0, height=2.5)
 
 
 def test_render_belt_view_can_mark_nonperiodic_out_of_support_rows():
@@ -131,11 +138,42 @@ def test_wrap_phase_rejects_nonfinite_values(phase_px, period_px, message):
         wrap_phase(phase_px, period_px)
 
 
+@pytest.mark.parametrize(
+    ("phase_px", "period_px", "message"),
+    [
+        (True, None, "phase_px"),
+        ("0.0", None, "phase_px"),
+        (0.0, True, "period_px"),
+        (0.0, "10.0", "period_px"),
+    ],
+)
+def test_wrap_phase_rejects_coerced_numeric_values(phase_px, period_px, message):
+    with pytest.raises(ValueError, match=message):
+        wrap_phase(phase_px, period_px)
+
+
 def test_render_belt_view_rejects_nonfinite_phase():
     belt = np.arange(5, dtype=float)[:, None]
 
     with pytest.raises(ValueError, match="phase_px"):
         render_belt_view(belt, phase_px=float("nan"), height=3)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"height": True}, "height"),
+        ({"height": 1.5}, "height"),
+        ({"periodic": "false"}, "periodic"),
+    ],
+)
+def test_render_belt_view_rejects_coerced_control_values(kwargs, message):
+    belt = np.arange(5, dtype=float)[:, None]
+    options = {"height": 3}
+    options.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        render_belt_view(belt, phase_px=0.0, **options)
 
 
 def test_quadratic_refinement_returns_consistent_loss_offset_pair():
@@ -181,11 +219,15 @@ def test_registration_candidate_offsets_are_symmetric_for_non_divisible_step():
         (PhaseRegistrationConfig(search_radius_px=float("nan")), "search_radius_px"),
         (PhaseRegistrationConfig(search_step_px=float("nan")), "search_step_px"),
         (PhaseRegistrationConfig(trim_fraction=float("nan")), "trim_fraction"),
-        (
-            PhaseRegistrationConfig(highpass_radius_px=float("nan")),
-            "highpass_radius_px",
-        ),
+        (PhaseRegistrationConfig(highpass_radius_px=float("nan")), "highpass_radius_px"),
         (PhaseRegistrationConfig(highpass_radius_px=1.5), "highpass_radius_px"),
+        (PhaseRegistrationConfig(search_radius_px=True), "search_radius_px"),
+        (PhaseRegistrationConfig(search_step_px=True), "search_step_px"),
+        (PhaseRegistrationConfig(trim_fraction=True), "trim_fraction"),
+        (PhaseRegistrationConfig(highpass_radius_px=True), "highpass_radius_px"),
+        (PhaseRegistrationConfig(search_radius_px="1.0"), "search_radius_px"),
+        (PhaseRegistrationConfig(subpixel_refinement="false"), "subpixel_refinement"),
+        (PhaseRegistrationConfig(robust_normalization="false"), "robust_normalization"),
     ],
 )
 def test_registration_config_rejects_invalid_numeric_settings(config, message):
@@ -204,6 +246,28 @@ def test_registration_refinement_validates_full_config_before_search():
             predicted_phase_px=0.0,
             config=PhaseRegistrationConfig(trim_fraction=float("nan")),
         )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"predicted_phase_px": True}, "predicted_phase_px"),
+        ({"frame_index": True}, "frame_index"),
+        ({"period_px": True}, "period_px"),
+    ],
+)
+def test_registration_refinement_rejects_coerced_numeric_values(kwargs, message):
+    frame = np.zeros((4, 4), dtype=float)
+    belt = np.zeros((8, 4), dtype=float)
+    options = {
+        "frame": frame,
+        "belt_map": belt,
+        "predicted_phase_px": 0.0,
+    }
+    options.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        refine_phase_by_registration(**options)
 
 
 def test_uniform_filter_axis_matches_edge_padded_reference():
@@ -337,27 +401,48 @@ def test_smooth_phase_estimates_rejects_registration_outlier():
 @pytest.mark.parametrize(
     ("config", "message"),
     [
-        (
-            PhaseTrajectorySmoothingConfig(window_radius_frames=float("nan")),
-            "window_radius_frames",
-        ),
-        (
-            PhaseTrajectorySmoothingConfig(window_radius_frames=1.5),
-            "window_radius_frames",
-        ),
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=float("nan")), "window_radius_frames"),
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=1.5), "window_radius_frames"),
         (PhaseTrajectorySmoothingConfig(min_support=float("nan")), "min_support"),
         (PhaseTrajectorySmoothingConfig(min_support=1.5), "min_support"),
         (PhaseTrajectorySmoothingConfig(robust_sigma=float("nan")), "robust_sigma"),
         (PhaseTrajectorySmoothingConfig(min_score=float("nan")), "min_score"),
-        (
-            PhaseTrajectorySmoothingConfig(max_abs_correction_px=float("nan")),
-            "max_abs_correction_px",
-        ),
+        (PhaseTrajectorySmoothingConfig(max_abs_correction_px=float("nan")), "max_abs_correction_px"),
+        (PhaseTrajectorySmoothingConfig(window_radius_frames=True), "window_radius_frames"),
+        (PhaseTrajectorySmoothingConfig(min_support=True), "min_support"),
+        (PhaseTrajectorySmoothingConfig(robust_sigma=True), "robust_sigma"),
+        (PhaseTrajectorySmoothingConfig(min_score=True), "min_score"),
+        (PhaseTrajectorySmoothingConfig(max_abs_correction_px=True), "max_abs_correction_px"),
+        (PhaseTrajectorySmoothingConfig(window_radius_frames="1"), "window_radius_frames"),
     ],
 )
 def test_phase_smoothing_config_rejects_invalid_numeric_settings(config, message):
     with pytest.raises(ValueError, match=message):
         config.validate()
+
+
+def test_smooth_phase_estimates_normalizes_integer_valued_float_config():
+    estimates = [
+        PhaseEstimate(
+            phase_px=float(index),
+            frame_index=float(index),
+            predicted_phase_px=0.0,
+            correction_px=float(index),
+            score=1.0,
+            method="registration",
+        )
+        for index in range(3)
+    ]
+
+    smoothed = smooth_phase_estimates(
+        estimates,
+        config=PhaseTrajectorySmoothingConfig(
+            window_radius_frames=1.0,
+            min_support=1.0,
+        ),
+    )
+
+    assert len(smoothed) == 3
 
 
 def test_smooth_phase_estimates_uses_cyclic_corrections():

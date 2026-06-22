@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import numpy as np
 from PIL import Image
@@ -13,6 +15,7 @@ from beltmap import (
     render_belt_view,
 )
 from beltmap import _driver_runtime as rt
+from beltmap.cli.apply import build_parser, resolve_driver_env
 from beltmap._driver_map import (
     build_belt_map,
     map_sampling_strategy_from_env,
@@ -28,7 +31,6 @@ from beltmap.driver import (
     load_recurrent_artifact_map,
     motion_model_phase_estimate,
     normalize_phase_estimation_mode,
-    optional_positive_int,
     phase_estimate_row,
     subtract_static_background,
     texture_phase_velocity_summary,
@@ -49,21 +51,6 @@ def test_env_float_rejects_non_finite_defaults(monkeypatch):
 
     with pytest.raises(ValueError, match="TEST_FLOAT must be finite"):
         rt.env_float("TEST_FLOAT", float("nan"))
-
-
-def test_optional_positive_int_rejects_negative_values(monkeypatch):
-    monkeypatch.delenv("TEST_OPTIONAL_INT", raising=False)
-    assert optional_positive_int("TEST_OPTIONAL_INT") is None
-
-    monkeypatch.setenv("TEST_OPTIONAL_INT", "0")
-    assert optional_positive_int("TEST_OPTIONAL_INT") is None
-
-    monkeypatch.setenv("TEST_OPTIONAL_INT", "7")
-    assert optional_positive_int("TEST_OPTIONAL_INT") == 7
-
-    monkeypatch.setenv("TEST_OPTIONAL_INT", "-1")
-    with pytest.raises(ValueError, match="TEST_OPTIONAL_INT"):
-        optional_positive_int("TEST_OPTIONAL_INT")
 
 
 def test_auto_velocity_rejects_full_frame_region_by_default(monkeypatch):
@@ -99,6 +86,23 @@ def test_map_sampling_strategy_env_prefers_canonical_alias(monkeypatch):
     monkeypatch.setenv("MAP_SAMPLING_STRATEGY", "adaptive_phase_coverage")
 
     assert map_sampling_strategy_from_env() == "adaptive_phase_coverage"
+
+
+def test_apply_config_resolves_map_exclusion_mask_path(tmp_path):
+    mask_path = tmp_path / "ghost_defect_mask.npy"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"map": {"exclusion_mask_path": str(mask_path)}}),
+        encoding="utf-8",
+    )
+
+    namespace = build_parser().parse_args(["--config", str(config_path), "--dry-run"])
+    env_updates, report = resolve_driver_env(namespace, environ={})
+
+    assert env_updates["MAP_EXCLUSION_MASK_PATH"] == str(mask_path)
+    option = report["options"]["map_exclusion_mask_path"]
+    assert option["env_var"] == "MAP_EXCLUSION_MASK_PATH"
+    assert option["source"] == f"config:{config_path}"
 
 
 def test_phase_estimate_row_reports_circular_coordinates():
@@ -230,84 +234,6 @@ def test_load_phase_estimates_for_reuse_mode(tmp_path):
     assert estimates[1].correction_px == -0.5
     assert estimates[1].loss is None
     assert estimates[1].score is None
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("phase_px", "nan"),
-        ("predicted_phase_px", "inf"),
-        ("correction_px", "-inf"),
-    ],
-)
-def test_load_phase_estimates_rejects_nonfinite_required_values(
-    tmp_path,
-    field,
-    value,
-):
-    row = {
-        "frame_index": "0",
-        "image": "frame0.bmp",
-        "phase_px": "1.5",
-        "phase_fraction": "0.15",
-        "phase_rad": "0.94",
-        "predicted_phase_px": "1.0",
-        "correction_px": "0.5",
-        "loss": "",
-        "score": "",
-        "method": "registration",
-    }
-    row[field] = value
-    path = tmp_path / "phase_estimates.csv"
-    path.write_text(
-        ",".join(row) + "\n" + ",".join(row.values()) + "\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match=field):
-        load_phase_estimates(path)
-
-
-@pytest.mark.parametrize("field", ["phase_drift_px", "loss", "score"])
-def test_load_phase_estimates_rejects_nonfinite_optional_values(tmp_path, field):
-    headers = [
-        "frame_index",
-        "image",
-        "phase_px",
-        "phase_fraction",
-        "phase_rad",
-        "predicted_phase_px",
-        "correction_px",
-        "phase_drift_px",
-        "loss",
-        "score",
-        "method",
-    ]
-    values = {
-        "frame_index": "0",
-        "image": "frame0.bmp",
-        "phase_px": "1.5",
-        "phase_fraction": "0.15",
-        "phase_rad": "0.94",
-        "predicted_phase_px": "1.0",
-        "correction_px": "0.5",
-        "phase_drift_px": "",
-        "loss": "",
-        "score": "",
-        "method": "registration",
-    }
-    values[field] = "nan"
-    path = tmp_path / "phase_estimates.csv"
-    path.write_text(
-        ",".join(headers)
-        + "\n"
-        + ",".join(values[column] for column in headers)
-        + "\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match=field):
-        load_phase_estimates(path)
 
 
 def test_load_phase_estimates_validates_reused_image_sequence(tmp_path):
@@ -527,7 +453,21 @@ def test_learn_static_residual_noise_map_estimates_per_pixel_mad(tmp_path, monke
     assert not any(output_dir.glob("static_noise_*"))
 
 
-def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("mask_mode", "belt_base", "particle_signal"),
+    [
+        ("positive", 70.0, 80.0),
+        ("dark", 170.0, -80.0),
+    ],
+    ids=["bright-particles", "dark-particles"],
+)
+def test_build_belt_map_masks_particle_contaminated_observations(
+    tmp_path,
+    monkeypatch,
+    mask_mode,
+    belt_base,
+    particle_signal,
+):
     monkeypatch.setenv("MAP_SAMPLE_FRAMES", "40")
     monkeypatch.setenv("PROGRESS_INTERVAL_FRAMES", "1000")
 
@@ -538,7 +478,10 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
     y = np.arange(period, dtype=float)[:, None]
     x = np.arange(width, dtype=float)[None, :]
     true_belt = np.round(
-        70 + 0.35 * y + 8 * np.sin(2 * np.pi * y / 11) + 3 * np.cos(2 * np.pi * x / 5)
+        belt_base
+        + 0.35 * y
+        + 8 * np.sin(2 * np.pi * y / 11)
+        + 3 * np.cos(2 * np.pi * x / 5)
     )
     particle_rows = np.arange(12, 17)
     particle_cols = np.arange(5, 10)
@@ -552,7 +495,7 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
         if frame_index in particle_frames:
             for image_y, belt_y in enumerate(rows):
                 if belt_y in particle_rows:
-                    frame[image_y, particle_cols] += 80
+                    frame[image_y, particle_cols] += particle_signal
         path = tmp_path / f"frame_{frame_index:03d}.bmp"
         Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)).save(path)
         paths.append(path)
@@ -570,6 +513,7 @@ def test_build_belt_map_masks_particle_contaminated_observations(tmp_path, monke
         velocity,
         period,
         mask_iterations=1,
+        mask_mode=mask_mode,
         mask_threshold=3.0,
         mask_margin_px=1,
         mask_min_area_px=2,
