@@ -34,6 +34,21 @@ def _optional_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _optional_int(value: Any) -> int:
+    parsed = _optional_float(value)
+    if parsed is None:
+        return 0
+    return int(parsed)
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
 def _recurrence_strength(ratio: float, correlation: float) -> float:
     return max(0.0, min(1.0, ratio)) * max(0.0, correlation)
 
@@ -112,6 +127,36 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
     return result
 
 
+def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
+    """Classify recurrence errors using the same evidence as the hard filter.
+
+    The original taxonomy used ``max_recurrence_ratio`` alone.  After gating the
+    hard filter by signal *and* patch correlation, that made uncorrelated bright
+    revisits look like recurrent belt-fixed evidence in reports even though they
+    could never trigger the hard filter.  Use ``high_recurrence_revisits`` and
+    ``belt_fixedness_score`` instead so the report describes the actual decision
+    evidence.
+    """
+
+    valid = _optional_int(feature.get("valid_revisits"))
+    hard_reject = _bool_value(feature.get("hard_reject"))
+    supported_revisits = _optional_int(feature.get("high_recurrence_revisits"))
+    supported_score = _optional_float(feature.get("belt_fixedness_score")) or 0.0
+    threshold = _yolo_recurrence.DEFAULT_HARD_RATIO_THRESHOLD
+    role_lower = role.lower()
+    if valid == 0:
+        return f"{role_lower}_no_valid_revisits"
+    if role == "FP" and hard_reject:
+        return "fp_recurrent_removed"
+    if role == "FP" and supported_revisits == 0 and supported_score < threshold:
+        return "fp_low_shape_supported_recurrence_evidence"
+    if role == "TP" and hard_reject:
+        return "tp_high_shape_supported_recurrence_accidentally_removed"
+    if supported_revisits > 0 or supported_score >= threshold:
+        return f"{role_lower}_shape_supported_recurrent_but_not_hard_rejected"
+    return f"{role_lower}_inconclusive_low_recurrence"
+
+
 # Backwards-compatible safety patch for older imports.  The production CLI
 # imports this module before running the recurrence scorer.  The underlying
 # scorer also needs these fixes when used directly; ``beltmap.__init__`` imports
@@ -119,3 +164,4 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
 # in place.
 _yolo_recurrence.row_key = duplicate_safe_row_key
 _yolo_recurrence.score_detection_recurrence = correlation_gated_score_detection_recurrence
+_yolo_recurrence.error_taxonomy = correlation_gated_error_taxonomy
