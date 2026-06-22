@@ -260,6 +260,40 @@ def test_yolo_recurrence_filter_removes_belt_fixed_detection(tmp_path: Path) -> 
     assert (out / "yolo_recurrence_report.md").is_file()
 
 
+def test_yolo_recurrence_cli_smoke(tmp_path: Path) -> None:
+    source_dir, yolo_run, reference, truth_path = make_fixture(tmp_path)
+    out = tmp_path / "outputs" / "yolo_recurrence"
+
+    code = yolo_recurrence_main(
+        [
+            "--yolo-run-dir",
+            str(yolo_run),
+            "--beltmap-reference-dir",
+            str(reference),
+            "--source-image-dir",
+            str(source_dir),
+            "--truth-path",
+            str(truth_path),
+            "--output-dir",
+            str(out),
+            "--frame-count",
+            "6",
+            "--belt-region",
+            "0,0,10,12",
+            "--patch-margin-px",
+            "0",
+            "--min-patch-size-px",
+            "3",
+            "--quiet",
+        ]
+    )
+
+    assert code == 0
+    assert (out / "yolo_recurrence_features.csv").is_file()
+    assert (out.parent / "beltmap_runs" / "yolo11_raw_recurrence_hard_test" / "metadata.json").is_file()
+    assert (out / "compare" / "summary.csv").is_file()
+
+
 def test_yolo_recurrence_filter_cli_rejects_nonpositive_excess_floor(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
