@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 
 from beltmap import (
     BeltPeriodState,
@@ -29,6 +30,20 @@ def test_fresh_period_state_marks_inferred_finite_strip():
     assert not state.period_known
     assert not state.periodic
     assert state.source == "inferred_finite_strip"
+
+
+def test_fresh_period_state_rejects_fractional_and_boolean_dimensions():
+    with pytest.raises(ValueError, match="map_height_px must be a positive integer"):
+        fresh_period_state(map_height_px=12.5, model_period_px=None)
+    with pytest.raises(ValueError, match="map_height_px must be finite"):
+        fresh_period_state(map_height_px=True, model_period_px=None)
+    with pytest.raises(ValueError, match="map_height_px must be finite"):
+        fresh_period_state(map_height_px=np.bool_(True), model_period_px=None)
+
+
+def test_fresh_period_state_rejects_boolean_period():
+    with pytest.raises(ValueError, match="model_period_px must be finite"):
+        fresh_period_state(map_height_px=96, model_period_px=True)
 
 
 def test_reused_period_state_trusts_explicit_metadata_period():
@@ -129,6 +144,11 @@ def test_phase_fraction_and_radians_are_empty_without_physical_period():
 
     assert fraction == pytest.approx(0.25)
     assert radians == pytest.approx(0.5 * 3.141592653589793)
+
+
+def test_phase_fraction_and_radians_rejects_nonfinite_phase():
+    with pytest.raises(ValueError, match="phase_px must be finite"):
+        phase_fraction_and_radians(float("nan"), 48.0)
 
 
 def test_require_period_known_rejects_finite_strip():

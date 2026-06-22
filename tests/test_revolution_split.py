@@ -72,6 +72,29 @@ def test_build_revolution_split_rejects_missing_explicit_revolutions():
         build_revolution_split([0, 0, 1, 1], eval_revolutions=(3,))
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"revolution_by_frame": [0, 0.5, 1]}, "revolution indices"),
+        ({"revolution_by_frame": [0, 1], "eval_every": 1.5}, "eval_every"),
+        ({"revolution_by_frame": [0, 1], "eval_offset": 0.5}, "eval_offset"),
+        (
+            {"revolution_by_frame": [0, 1], "eval_revolutions": (0.5,)},
+            "eval_revolutions",
+        ),
+        (
+            {"revolution_by_frame": [0, 1], "min_train_revolutions": 1.5},
+            "min_train_revolutions",
+        ),
+    ],
+)
+def test_build_revolution_split_rejects_fractional_integer_inputs(kwargs, message):
+    revolution_by_frame = kwargs.pop("revolution_by_frame")
+
+    with pytest.raises(ValueError, match=message):
+        build_revolution_split(revolution_by_frame, **kwargs)
+
+
 def test_revolution_split_frame_rows_marks_map_training_samples():
     split = build_revolution_split([0, 0, 1, 1], eval_revolutions=(1,))
     rows = revolution_split_frame_rows(
@@ -83,6 +106,17 @@ def test_revolution_split_frame_rows_marks_map_training_samples():
     assert rows[1]["selected_for_map_training"] is True
     assert rows[2]["split"] == "eval"
     assert rows[2]["selected_for_map_training"] is False
+
+
+def test_revolution_split_frame_rows_rejects_fractional_selected_training_indices():
+    split = build_revolution_split([0, 0, 1, 1], eval_revolutions=(1,))
+
+    with pytest.raises(ValueError, match="selected_train_frame_indices"):
+        revolution_split_frame_rows(
+            split,
+            image_names=["a.png", "b.png", "c.png", "d.png"],
+            selected_train_frame_indices=(1.5,),
+        )
 
 
 def test_revolution_split_detection_summary_counts_train_and_eval():
@@ -99,8 +133,12 @@ def test_revolution_split_detection_summary_counts_train_and_eval():
         detections,
         stage="pre",
     )
-    train = next(row for row in rows if row["group"] == "split" and row["split"] == "train")
-    eval_row = next(row for row in rows if row["group"] == "split" and row["split"] == "eval")
+    train = next(
+        row for row in rows if row["group"] == "split" and row["split"] == "train"
+    )
+    eval_row = next(
+        row for row in rows if row["group"] == "split" and row["split"] == "eval"
+    )
 
     assert train["n_detections"] == 1
     assert train["detections_per_frame"] == 0.5
@@ -114,7 +152,9 @@ def test_revolution_split_score_summary_counts_rejections():
     scores = [[DummyScore(False, 0.1, 0.2)], [], [DummyScore(True, 1.0, 0.8)], []]
 
     rows = revolution_split_score_summary_rows(split, scores, stage="ghost")
-    eval_row = next(row for row in rows if row["group"] == "split" and row["split"] == "eval")
+    eval_row = next(
+        row for row in rows if row["group"] == "split" and row["split"] == "eval"
+    )
 
     assert eval_row["n_detections"] == 1
     assert eval_row["n_rejected"] == 1

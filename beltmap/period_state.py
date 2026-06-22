@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from math import isfinite, pi
 from typing import Any, Mapping
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class BeltPeriodState:
@@ -119,7 +121,8 @@ def phase_fraction_and_radians(
     period = _positive_float_or_none(model_period_px, name="model_period_px")
     if period is None:
         return "", ""
-    fraction = float(phase_px) / period
+    phase = _finite_float(phase_px, name="phase_px")
+    fraction = phase / period
     return fraction, fraction * 2.0 * pi
 
 
@@ -190,19 +193,28 @@ def _validate_reused_period_matches_height(period: float, height: int, *, source
 
 
 def _positive_int(value: Any, *, name: str) -> int:
-    parsed_float = float(value)
-    if not isfinite(parsed_float) or not parsed_float.is_integer():
+    parsed = _finite_float(value, name=name)
+    if parsed <= 0 or not parsed.is_integer():
         raise ValueError(f"{name} must be a positive integer")
-    parsed = int(parsed_float)
-    if parsed <= 0:
-        raise ValueError(f"{name} must be positive")
-    return parsed
+    return int(parsed)
 
 
 def _positive_float_or_none(value: Any, *, name: str) -> float | None:
     if value in (None, ""):
         return None
-    parsed = float(value)
-    if not isfinite(parsed) or parsed <= 0:
+    parsed = _finite_float(value, name=name)
+    if parsed <= 0:
         raise ValueError(f"{name} must be a positive finite value when set")
+    return parsed
+
+
+def _finite_float(value: Any, *, name: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be finite")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
     return parsed

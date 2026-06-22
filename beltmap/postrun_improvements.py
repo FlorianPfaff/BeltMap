@@ -128,8 +128,15 @@ LABEL_PLAN_FIELDS = [
 ]
 
 LABEL_TEMPLATE_FIELDS = [
-    "frame_index", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right",
-    "annotation_role", "reason", "label_status", "review_notes",
+    "frame_index",
+    "bbox_top",
+    "bbox_left",
+    "bbox_bottom",
+    "bbox_right",
+    "annotation_role",
+    "reason",
+    "label_status",
+    "review_notes",
 ]
 
 
@@ -142,12 +149,16 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def write_csv(path: Path, rows: Sequence[Mapping[str, Any]], fieldnames: Sequence[str]) -> None:
+def write_csv(
+    path: Path, rows: Sequence[Mapping[str, Any]], fieldnames: Sequence[str]
+) -> None:
     """Write rows to a CSV file, preserving the supplied field order."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(fieldnames), extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle, fieldnames=list(fieldnames), extrasaction="ignore"
+        )
         writer.writeheader()
         for row in rows:
             writer.writerow({key: row.get(key, "") for key in fieldnames})
@@ -160,6 +171,8 @@ def write_json(path: Path, data: Any) -> None:
 
 def finite_float(value: Any) -> float | None:
     if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
         return None
     if isinstance(value, str) and value.strip() == "":
         return None
@@ -177,14 +190,44 @@ def finite_int(value: Any) -> int | None:
     return int(parsed)
 
 
-def positive_metadata_float(metadata: Mapping[str, Any], key: str, default: float) -> float:
-    value = metadata.get(key)
-    if value is None or (isinstance(value, str) and value.strip() == ""):
-        return default
+def _positive_integer_value(value: Any, name: str) -> int:
     parsed = finite_float(value)
-    if parsed is None or parsed <= 0:
-        raise ValueError(f"{key} must be positive")
+    if parsed is None or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a finite positive integer")
+    return int(parsed)
+
+
+def _nonnegative_integer_value(value: Any, name: str) -> int:
+    parsed = finite_float(value)
+    if parsed is None or not parsed.is_integer() or parsed < 0:
+        raise ValueError(f"{name} must be a finite non-negative integer")
+    return int(parsed)
+
+
+def _positive_float_value(value: Any, name: str) -> float:
+    parsed = finite_float(value)
+    if parsed is None or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive value")
     return parsed
+
+
+def _positive_float_or_default(value: Any, default: float) -> float:
+    parsed = finite_float(value)
+    return default if parsed is None or parsed <= 0.0 else parsed
+
+
+def _velocity_ratio_range(value: Any) -> tuple[float, float]:
+    if (
+        isinstance(value, (str, bytes))
+        or not isinstance(value, Sequence)
+        or len(value) != 2
+    ):
+        raise ValueError("velocity_ratio_y_range must contain [lower, upper]")
+    lower = finite_float(value[0])
+    upper = finite_float(value[1])
+    if lower is None or upper is None or lower > upper:
+        raise ValueError("velocity_ratio_y_range must contain finite ordered bounds")
+    return lower, upper
 
 
 def metadata_count_or_rows(
@@ -243,7 +286,9 @@ def load_detection_rows(output_dir: Path) -> list[dict[str, str]]:
     return read_csv_rows(output_dir / "detections.csv")
 
 
-def map_shape_from_outputs(output_dir: Path, metadata: Mapping[str, Any] | None = None) -> tuple[int, int] | None:
+def map_shape_from_outputs(
+    output_dir: Path, metadata: Mapping[str, Any] | None = None
+) -> tuple[int, int] | None:
     metadata = load_metadata(output_dir) if metadata is None else metadata
     map_height = finite_int(metadata.get("belt_map_height_px"))
     region = metadata.get("belt_region")
@@ -297,10 +342,8 @@ def uncertainty_from_counts(
 ) -> FloatArray:
     """Convert observation counts to an uncertainty floor proportional to 1/sqrt(N)."""
 
-    if scale <= 0:
-        raise ValueError("scale must be positive")
-    if min_count <= 0:
-        raise ValueError("min_count must be positive")
+    scale = _positive_float_value(scale, "scale")
+    min_count = _positive_float_value(min_count, "min_count")
     arr = np.asarray(counts, dtype=np.float64)
     safe = np.maximum(arr, min_count)
     uncertainty = scale / np.sqrt(safe)
@@ -341,13 +384,19 @@ def write_map_uncertainty_outputs(
     )
     row_uncertainty = uncertainty_from_counts(row_counts, scale=scale)
     np.save(report_dir / "belt_map_row_counts.npy", row_counts)
-    np.save(report_dir / "belt_map_row_uncertainty.npy", row_uncertainty.astype(np.float32))
+    np.save(
+        report_dir / "belt_map_row_uncertainty.npy", row_uncertainty.astype(np.float32)
+    )
     normalized_png(report_dir / "belt_map_row_counts.png", row_counts[:, None])
-    normalized_png(report_dir / "belt_map_row_uncertainty.png", row_uncertainty[:, None])
+    normalized_png(
+        report_dir / "belt_map_row_uncertainty.png", row_uncertainty[:, None]
+    )
 
     if write_full_counts:
         full_counts = np.repeat(row_counts[:, None], map_width, axis=1)
-        full_uncertainty = np.repeat(row_uncertainty[:, None], map_width, axis=1).astype(np.float32)
+        full_uncertainty = np.repeat(
+            row_uncertainty[:, None], map_width, axis=1
+        ).astype(np.float32)
         np.save(report_dir / "belt_map_counts.npy", full_counts)
         np.save(report_dir / "belt_map_uncertainty.npy", full_uncertainty)
         normalized_png(report_dir / "belt_map_coverage.png", full_counts)
@@ -361,8 +410,12 @@ def write_map_uncertainty_outputs(
         "crop_height": crop_height,
         "phase_estimates": len(phase_values),
         "row_count_min": int(np.min(finite_counts)) if finite_counts.size else 0,
-        "row_count_median": float(np.median(finite_counts)) if finite_counts.size else 0.0,
-        "row_count_p05": float(np.percentile(finite_counts, 5)) if finite_counts.size else 0.0,
+        "row_count_median": (
+            float(np.median(finite_counts)) if finite_counts.size else 0.0
+        ),
+        "row_count_p05": (
+            float(np.percentile(finite_counts, 5)) if finite_counts.size else 0.0
+        ),
         "unobserved_rows": int(np.count_nonzero(row_counts == 0)),
         "scale": scale,
         "wrote_full_counts": write_full_counts,
@@ -381,8 +434,9 @@ def seam_discontinuity_profile(
     belt = np.asarray(belt_map, dtype=np.float64)
     if belt.ndim != 2:
         raise ValueError("belt_map must be 2-D")
-    if window_px < 1:
-        raise ValueError("window_px must be positive")
+    if not np.all(np.isfinite(belt)):
+        raise ValueError("belt_map values must be finite")
+    window_px = _positive_integer_value(window_px, "window_px")
     jumps = _seam_discontinuity_jumps(belt, window_px=window_px)
     best_row = int(np.argmin(jumps))
     current_jump = float(jumps[0])
@@ -392,7 +446,11 @@ def seam_discontinuity_profile(
         "current_mean_abs_jump_gray": current_jump,
         "best_roll_row": best_row,
         "best_mean_abs_jump_gray": best_jump,
-        "relative_improvement": None if current_jump <= 0 else float((current_jump - best_jump) / current_jump),
+        "relative_improvement": (
+            None
+            if current_jump <= 0
+            else float((current_jump - best_jump) / current_jump)
+        ),
         "p95_row_jump_gray": float(np.percentile(jumps, 95)),
         "median_row_jump_gray": float(np.median(jumps)),
     }
@@ -404,7 +462,9 @@ def _seam_discontinuity_jumps(belt: FloatArray, *, window_px: int) -> FloatArray
     height = belt.shape[0]
     if height <= 0:
         raise ValueError("belt_map must have at least one row")
-    window = max(1, min(int(window_px), max(1, height // 2)))
+    window = max(
+        1, min(_positive_integer_value(window_px, "window_px"), max(1, height // 2))
+    )
     before_offsets = np.arange(window, 0, -1, dtype=np.int64)
     after_offsets = np.arange(window, dtype=np.int64)
     jumps = np.empty(height, dtype=np.float64)
@@ -415,7 +475,9 @@ def _seam_discontinuity_jumps(belt: FloatArray, *, window_px: int) -> FloatArray
     return jumps
 
 
-def write_seam_diagnostics(output_dir: Path, *, report_dir: Path | None = None) -> dict[str, Any]:
+def write_seam_diagnostics(
+    output_dir: Path, *, report_dir: Path | None = None
+) -> dict[str, Any]:
     output_dir = Path(output_dir)
     report_dir = output_dir if report_dir is None else Path(report_dir)
     belt_map_path = output_dir / "belt_map.npy"
@@ -434,7 +496,10 @@ def write_seam_diagnostics(output_dir: Path, *, report_dir: Path | None = None) 
     return result
 
 
-def _frame_metric_rows(mapping: Mapping[int, float | int], *, metric: str, reverse: bool, top_n: int) -> list[dict[str, Any]]:
+def _frame_metric_rows(
+    mapping: Mapping[int, float | int], *, metric: str, reverse: bool, top_n: int
+) -> list[dict[str, Any]]:
+    top_n = _nonnegative_integer_value(top_n, "top_n")
     rows = [
         {"frame_index": frame, "metric": metric, "value": value}
         for frame, value in mapping.items()
@@ -444,7 +509,9 @@ def _frame_metric_rows(mapping: Mapping[int, float | int], *, metric: str, rever
     return rows[:top_n]
 
 
-def worst_frame_tables(output_dir: Path, *, top_n: int = 10) -> dict[str, list[dict[str, Any]]]:
+def worst_frame_tables(
+    output_dir: Path, *, top_n: int = 10
+) -> dict[str, list[dict[str, Any]]]:
     """Rank frames by common failure-mode proxy metrics."""
 
     output_dir = Path(output_dir)
@@ -467,7 +534,11 @@ def worst_frame_tables(output_dir: Path, *, top_n: int = 10) -> dict[str, list[d
     rejected_by_frame: dict[int, int] = {}
     for row in recurrent_rows:
         frame = finite_int(row.get("frame_index"))
-        rejected = str(row.get("recurrent_artifact_rejected", "")).strip().lower() in {"1", "true", "yes"}
+        rejected = str(row.get("recurrent_artifact_rejected", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         if frame is not None and rejected:
             rejected_by_frame[frame] = rejected_by_frame.get(frame, 0) + 1
 
@@ -480,17 +551,31 @@ def worst_frame_tables(output_dir: Path, *, top_n: int = 10) -> dict[str, list[d
             rmse_by_frame[frame] = rmse
 
     tables = {
-        "low_registration_score": _frame_metric_rows(low_score, metric="registration_score", reverse=False, top_n=top_n),
-        "large_phase_correction": _frame_metric_rows(abs_correction, metric="abs_correction_px", reverse=True, top_n=top_n),
-        "detection_spikes": _frame_metric_rows(detection_counts, metric="n_detections", reverse=True, top_n=top_n),
-        "empty_or_low_detection_frames": _frame_metric_rows(detection_counts, metric="n_detections", reverse=False, top_n=top_n),
-        "recurrent_rejections": _frame_metric_rows(rejected_by_frame, metric="recurrent_rejected", reverse=True, top_n=top_n),
-        "photometric_rmse": _frame_metric_rows(rmse_by_frame, metric="photometric_rmse_gray", reverse=True, top_n=top_n),
+        "low_registration_score": _frame_metric_rows(
+            low_score, metric="registration_score", reverse=False, top_n=top_n
+        ),
+        "large_phase_correction": _frame_metric_rows(
+            abs_correction, metric="abs_correction_px", reverse=True, top_n=top_n
+        ),
+        "detection_spikes": _frame_metric_rows(
+            detection_counts, metric="n_detections", reverse=True, top_n=top_n
+        ),
+        "empty_or_low_detection_frames": _frame_metric_rows(
+            detection_counts, metric="n_detections", reverse=False, top_n=top_n
+        ),
+        "recurrent_rejections": _frame_metric_rows(
+            rejected_by_frame, metric="recurrent_rejected", reverse=True, top_n=top_n
+        ),
+        "photometric_rmse": _frame_metric_rows(
+            rmse_by_frame, metric="photometric_rmse_gray", reverse=True, top_n=top_n
+        ),
     }
     return tables
 
 
-def write_worst_frame_tables(output_dir: Path, *, report_dir: Path, top_n: int = 10) -> dict[str, list[dict[str, Any]]]:
+def write_worst_frame_tables(
+    output_dir: Path, *, report_dir: Path, top_n: int = 10
+) -> dict[str, list[dict[str, Any]]]:
     tables = worst_frame_tables(output_dir, top_n=top_n)
     for name, rows in tables.items():
         write_csv(
@@ -509,44 +594,102 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
     metadata = load_metadata(output_dir)
     flags: list[QualityFlag] = []
 
-    corrections = np.asarray([
-        value for value in (finite_float(row.get("correction_px")) for row in phase_rows(output_dir))
-        if value is not None
-    ], dtype=np.float64)
-    search_radius = positive_metadata_float(metadata, "registration_search_radius_px", 8.0)
-    search_step = positive_metadata_float(metadata, "registration_search_step_px", 1.0)
+    corrections = np.asarray(
+        [
+            value
+            for value in (
+                finite_float(row.get("correction_px")) for row in phase_rows(output_dir)
+            )
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
+    search_radius = _positive_float_or_default(
+        metadata.get("registration_search_radius_px"),
+        8.0,
+    )
+    search_step = _positive_float_or_default(
+        metadata.get("registration_search_step_px"),
+        1.0,
+    )
     boundary_tolerance = max(1e-9, 0.5 * search_step)
     if corrections.size:
-        boundary_share = float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
+        boundary_share = float(
+            np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance)
+        )
         if boundary_share > 0.05:
-            flags.append(QualityFlag("warning", "registration_boundary", "phase corrections often hit the search boundary", boundary_share, 0.05))
+            flags.append(
+                QualityFlag(
+                    "warning",
+                    "registration_boundary",
+                    "phase corrections often hit the search boundary",
+                    boundary_share,
+                    0.05,
+                )
+            )
 
-    counts = np.asarray(list(detection_count_by_frame(output_dir).values()), dtype=np.float64)
+    counts = np.asarray(
+        list(detection_count_by_frame(output_dir).values()), dtype=np.float64
+    )
     if counts.size:
         median = float(np.median(counts))
         p95 = float(np.percentile(counts, 95))
         if p95 > max(25.0, 5.0 * (median + 1.0)):
-            flags.append(QualityFlag("warning", "detection_spikes", "detection counts have large frame-to-frame spikes", p95, max(25.0, 5.0 * (median + 1.0))))
+            flags.append(
+                QualityFlag(
+                    "warning",
+                    "detection_spikes",
+                    "detection counts have large frame-to-frame spikes",
+                    p95,
+                    max(25.0, 5.0 * (median + 1.0)),
+                )
+            )
 
     detections = load_detection_rows(output_dir)
-    areas = np.asarray([
-        value for value in (finite_float(row.get("area_px")) for row in detections)
-        if value is not None
-    ], dtype=np.float64)
+    areas = np.asarray(
+        [
+            value
+            for value in (finite_float(row.get("area_px")) for row in detections)
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
     if areas.size:
         tiny_share = float(np.mean(areas <= 2.0))
         if tiny_share > 0.5:
-            flags.append(QualityFlag("warning", "many_tiny_components", "most detections are tiny components", tiny_share, 0.5))
+            flags.append(
+                QualityFlag(
+                    "warning",
+                    "many_tiny_components",
+                    "most detections are tiny components",
+                    tiny_share,
+                    0.5,
+                )
+            )
 
     velocities = read_csv_rows(output_dir / "velocities.csv")
-    ratios = np.asarray([
-        value for value in (finite_float(row.get("velocity_ratio_y")) for row in velocities)
-        if value is not None
-    ], dtype=np.float64)
+    ratios = np.asarray(
+        [
+            value
+            for value in (
+                finite_float(row.get("velocity_ratio_y")) for row in velocities
+            )
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
     if ratios.size:
         in_range = float(np.mean((0.0 <= ratios) & (ratios <= 1.1)))
         if in_range < 0.5:
-            flags.append(QualityFlag("warning", "implausible_velocity_ratios", "many velocity ratios are outside [0, 1.1]", in_range, 0.5))
+            flags.append(
+                QualityFlag(
+                    "warning",
+                    "implausible_velocity_ratios",
+                    "many velocity ratios are outside [0, 1.1]",
+                    in_range,
+                    0.5,
+                )
+            )
 
     recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
     n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
@@ -554,14 +697,37 @@ def quality_flags_from_outputs(output_dir: Path) -> list[QualityFlag]:
     if denom > 0:
         rejected_share = recurrent_rejected / denom
         if rejected_share > 0.75:
-            flags.append(QualityFlag("info", "heavy_recurrent_filtering", "recurrent artifact filtering rejected most first-pass detections", rejected_share, 0.75))
+            flags.append(
+                QualityFlag(
+                    "info",
+                    "heavy_recurrent_filtering",
+                    "recurrent artifact filtering rejected most first-pass detections",
+                    rejected_share,
+                    0.75,
+                )
+            )
 
     photometric_rows = read_csv_rows(output_dir / "photometric_fits.csv")
-    gains = np.asarray([value for value in (finite_float(row.get("gain")) for row in photometric_rows) if value is not None], dtype=np.float64)
+    gains = np.asarray(
+        [
+            value
+            for value in (finite_float(row.get("gain")) for row in photometric_rows)
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
     if gains.size:
         extreme_gain_share = float(np.mean((gains < 0.75) | (gains > 1.25)))
         if extreme_gain_share > 0.1:
-            flags.append(QualityFlag("warning", "photometric_gain_drift", "many frames required large photometric gain correction", extreme_gain_share, 0.1))
+            flags.append(
+                QualityFlag(
+                    "warning",
+                    "photometric_gain_drift",
+                    "many frames required large photometric gain correction",
+                    extreme_gain_share,
+                    0.1,
+                )
+            )
     return flags
 
 
@@ -574,30 +740,61 @@ def write_quality_flags(output_dir: Path, *, report_dir: Path) -> list[QualityFl
     for flag in flags:
         suffix = "" if flag.value is None else f" value={flag.value:.4g}"
         lines.append(f"- **{flag.severity} / {flag.code}**: {flag.message}{suffix}")
-    (report_dir / "quality_flags.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (report_dir / "quality_flags.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
     return flags
 
 
-def flux_summary(output_dir: Path, *, frame_rate_hz: float | None = None) -> dict[str, Any]:
+def flux_summary(
+    output_dir: Path, *, frame_rate_hz: float | None = None
+) -> dict[str, Any]:
     """Summarize accepted particle-track and velocity outputs."""
 
     output_dir = Path(output_dir)
-    rows = read_csv_rows(output_dir / "filtered_velocities.csv") or read_csv_rows(output_dir / "velocities.csv")
-    ratios = np.asarray([value for value in (finite_float(row.get("velocity_ratio_y")) for row in rows) if value is not None], dtype=np.float64)
-    speeds = np.asarray([value for value in (finite_float(row.get("speed_px_per_frame")) for row in rows) if value is not None], dtype=np.float64)
+    rows = read_csv_rows(output_dir / "filtered_velocities.csv") or read_csv_rows(
+        output_dir / "velocities.csv"
+    )
+    ratios = np.asarray(
+        [
+            value
+            for value in (finite_float(row.get("velocity_ratio_y")) for row in rows)
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
+    speeds = np.asarray(
+        [
+            value
+            for value in (finite_float(row.get("speed_px_per_frame")) for row in rows)
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
     metadata = load_metadata(output_dir)
     n_images = finite_int(metadata.get("n_images")) or 0
     duration_s = None
     tracks_per_second = None
-    if frame_rate_hz is not None and frame_rate_hz > 0 and n_images > 0:
-        duration_s = n_images / frame_rate_hz
+    parsed_frame_rate_hz = None
+    if frame_rate_hz is not None:
+        parsed_frame_rate_hz = _positive_float_value(frame_rate_hz, "frame_rate_hz")
+    if parsed_frame_rate_hz is not None and n_images > 0:
+        duration_s = n_images / parsed_frame_rate_hz
         tracks_per_second = len(rows) / duration_s if duration_s > 0 else None
     return {
         "velocity_rows": len(rows),
-        "velocity_ratio_y_median": None if ratios.size == 0 else float(np.median(ratios)),
-        "velocity_ratio_y_iqr": None if ratios.size == 0 else float(np.percentile(ratios, 75) - np.percentile(ratios, 25)),
-        "speed_px_per_frame_median": None if speeds.size == 0 else float(np.median(speeds)),
-        "frame_rate_hz": frame_rate_hz,
+        "velocity_ratio_y_median": (
+            None if ratios.size == 0 else float(np.median(ratios))
+        ),
+        "velocity_ratio_y_iqr": (
+            None
+            if ratios.size == 0
+            else float(np.percentile(ratios, 75) - np.percentile(ratios, 25))
+        ),
+        "speed_px_per_frame_median": (
+            None if speeds.size == 0 else float(np.median(speeds))
+        ),
+        "frame_rate_hz": parsed_frame_rate_hz,
         "duration_s": duration_s,
         "tracks_per_second": tracks_per_second,
     }
@@ -631,11 +828,22 @@ def detection_confidence_rows(output_dir: Path) -> list[dict[str, Any]]:
         mean_score = 1.0 - math.exp(-max(0.0, mean_signal) / 5.0)
         shape_score = 1.0
         if None not in (top, bottom, left, right) and area > 0:
-            bbox_area = max(1.0, (bottom - top) * (right - left))
-            extent = max(0.0, min(1.0, area / bbox_area))
-            shape_score = math.sqrt(extent)
+            bbox_height = bottom - top
+            bbox_width = right - left
+            if bbox_height <= 0.0 or bbox_width <= 0.0:
+                shape_score = 0.0
+            else:
+                bbox_area = max(1.0, bbox_height * bbox_width)
+                extent = max(0.0, min(1.0, area / bbox_area))
+                shape_score = math.sqrt(extent)
         artifact_penalty = max(0.0, 1.0 - max(overlap, probability))
-        confidence = signal_score * (0.5 + 0.5 * mean_score) * shape_score * reg_score * artifact_penalty
+        confidence = (
+            signal_score
+            * (0.5 + 0.5 * mean_score)
+            * shape_score
+            * reg_score
+            * artifact_penalty
+        )
         out = dict(row)
         out.update(
             {
@@ -650,22 +858,42 @@ def detection_confidence_rows(output_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def write_detection_confidence(output_dir: Path, *, report_dir: Path) -> list[dict[str, Any]]:
+def write_detection_confidence(
+    output_dir: Path, *, report_dir: Path
+) -> list[dict[str, Any]]:
     rows = detection_confidence_rows(output_dir)
     fieldnames = [
-        "frame_index", "image", "label", "y", "x", "area_px", "peak_signal", "mean_signal",
-        "registration_score", "signal_score", "shape_score", "artifact_penalty", "detection_confidence",
+        "frame_index",
+        "image",
+        "label",
+        "y",
+        "x",
+        "area_px",
+        "peak_signal",
+        "mean_signal",
+        "registration_score",
+        "signal_score",
+        "shape_score",
+        "artifact_penalty",
+        "detection_confidence",
     ]
     write_csv(report_dir / "detection_confidence.csv", rows, fieldnames)
     return rows
 
 
-def adaptive_map_frame_plan(output_dir: Path, *, frame_count: int | None = None, top_n: int = 120) -> list[dict[str, Any]]:
+def adaptive_map_frame_plan(
+    output_dir: Path, *, frame_count: int | None = None, top_n: int = 120
+) -> list[dict[str, Any]]:
     """Suggest low-contamination, phase-diverse frames for map reconstruction."""
 
     metadata = load_metadata(output_dir)
     if frame_count is None:
         frame_count = finite_int(metadata.get("n_images")) or 0
+    else:
+        frame_count = _nonnegative_integer_value(frame_count, "frame_count")
+    top_n = _nonnegative_integer_value(top_n, "top_n")
+    if top_n == 0:
+        return []
     counts = detection_count_by_frame(output_dir)
     phase_by_frame: dict[int, float] = {}
     score_by_frame: dict[int, float] = {}
@@ -680,7 +908,7 @@ def adaptive_map_frame_plan(output_dir: Path, *, frame_count: int | None = None,
     frames = sorted(set(range(frame_count)) | set(counts) | set(phase_by_frame))
     if not frames:
         return []
-    map_height = positive_metadata_float(metadata, "belt_map_height_px", 1.0)
+    map_height = _positive_float_or_default(metadata.get("belt_map_height_px"), 1.0)
     bucket_count = max(1, min(top_n, 64))
     buckets: dict[int, list[tuple[float, int]]] = {}
     for frame in frames:
@@ -700,13 +928,15 @@ def adaptive_map_frame_plan(output_dir: Path, *, frame_count: int | None = None,
                 continue
             candidates.sort()
             cost, frame = candidates.pop(0)
-            selected.append({
-                "frame_index": frame,
-                "phase_bucket": bucket,
-                "rank_cost": cost,
-                "n_detections": counts.get(frame, 0),
-                "registration_score": score_by_frame.get(frame, ""),
-            })
+            selected.append(
+                {
+                    "frame_index": frame,
+                    "phase_bucket": bucket,
+                    "rank_cost": cost,
+                    "n_detections": counts.get(frame, 0),
+                    "registration_score": score_by_frame.get(frame, ""),
+                }
+            )
             progressed = True
             if len(selected) >= top_n:
                 break
@@ -722,7 +952,10 @@ def label_plan_bucket_info(bucket: str) -> tuple[str, str]:
         if name == bucket:
             return role, reason
     if bucket == "regular_control":
-        return "box_all_particles", "regular interval control frame; checks ordinary operating regime"
+        return (
+            "box_all_particles",
+            "regular interval control frame; checks ordinary operating regime",
+        )
     return "box_all_particles", bucket
 
 
@@ -755,7 +988,9 @@ def label_frame_diagnostics(output_dir: Path) -> dict[int, dict[str, Any]]:
         }
         if frame is not None and rejected:
             entry = diagnostics.setdefault(frame, {})
-            entry["recurrent_rejections"] = int(entry.get("recurrent_rejections", 0)) + 1
+            entry["recurrent_rejections"] = (
+                int(entry.get("recurrent_rejections", 0)) + 1
+            )
 
     for row in read_csv_rows(output_dir / "photometric_fits.csv"):
         frame = finite_int(row.get("frame_index"))
@@ -772,7 +1007,9 @@ def _append_unique_semicolon(value: Any, addition: str) -> str:
     return ";".join(parts)
 
 
-def _far_enough_from_selected(frame: int, selected: Mapping[int, Mapping[str, Any]], *, min_gap_frames: int) -> bool:
+def _far_enough_from_selected(
+    frame: int, selected: Mapping[int, Mapping[str, Any]], *, min_gap_frames: int
+) -> bool:
     if min_gap_frames <= 0:
         return True
     return all(abs(frame - other) >= min_gap_frames for other in selected)
@@ -787,7 +1024,9 @@ def _regular_control_rows(output_dir: Path, *, top_n: int) -> list[dict[str, Any
     n_images = finite_int(metadata.get("n_images"))
     if n_images is not None and n_images > 0:
         count = min(max(3 * top_n, top_n), n_images)
-        frames = sorted({int(round(value)) for value in np.linspace(0, n_images - 1, count)})
+        frames = sorted(
+            {int(round(value)) for value in np.linspace(0, n_images - 1, count)}
+        )
     else:
         observed = sorted(label_frame_diagnostics(output_dir))
         if not observed:
@@ -818,7 +1057,9 @@ def _add_label_plan_row(
     role, reason = label_plan_bucket_info(bucket)
     existing = selected.get(frame)
     if existing is None:
-        if not _far_enough_from_selected(frame, selected, min_gap_frames=min_gap_frames):
+        if not _far_enough_from_selected(
+            frame, selected, min_gap_frames=min_gap_frames
+        ):
             return False
         diag = diagnostics.get(frame, {})
         selected[frame] = {
@@ -840,7 +1081,9 @@ def _add_label_plan_row(
         return True
 
     if bucket != existing.get("primary_bucket"):
-        existing["secondary_buckets"] = _append_unique_semicolon(existing.get("secondary_buckets"), bucket)
+        existing["secondary_buckets"] = _append_unique_semicolon(
+            existing.get("secondary_buckets"), bucket
+        )
     existing["reason"] = _append_unique_semicolon(existing.get("reason"), reason)
     if existing.get("annotation_role") != "empty_check" and role == "empty_check":
         existing["annotation_role"] = "empty_check"
@@ -864,14 +1107,14 @@ def suggest_label_frames(
     contains no particles.
     """
 
-    if frame_count <= 0:
-        raise ValueError("frame_count must be positive")
-    if min_gap_frames < 0:
-        raise ValueError("min_gap_frames must be non-negative")
+    frame_count = _positive_integer_value(frame_count, "frame_count")
+    min_gap_frames = _nonnegative_integer_value(min_gap_frames, "min_gap_frames")
     if empty_frame_count is None:
         empty_frame_count = max(1, min(10, math.ceil(0.2 * frame_count)))
-    if empty_frame_count < 0:
-        raise ValueError("empty_frame_count must be non-negative")
+    empty_frame_count = _nonnegative_integer_value(
+        empty_frame_count,
+        "empty_frame_count",
+    )
     empty_frame_count = min(empty_frame_count, frame_count)
 
     output_dir = Path(output_dir)
@@ -884,9 +1127,15 @@ def suggest_label_frames(
         for row in tables.get(bucket, []):
             if len(selected) >= frame_count:
                 break
-            if limit is not None and sum(
-                1 for item in selected.values() if item.get("primary_bucket") == bucket
-            ) >= limit:
+            if (
+                limit is not None
+                and sum(
+                    1
+                    for item in selected.values()
+                    if item.get("primary_bucket") == bucket
+                )
+                >= limit
+            ):
                 break
             frame = finite_int(row.get("frame_index"))
             if frame is None:
@@ -903,8 +1152,14 @@ def suggest_label_frames(
 
     add_from_bucket("empty_or_low_detection_frames", limit=empty_frame_count)
 
-    non_empty_buckets = [name for name, _role, _reason in LABEL_PLAN_BUCKETS if name != "empty_or_low_detection_frames"]
-    per_bucket = max(1, math.ceil((frame_count - len(selected)) / max(1, len(non_empty_buckets))))
+    non_empty_buckets = [
+        name
+        for name, _role, _reason in LABEL_PLAN_BUCKETS
+        if name != "empty_or_low_detection_frames"
+    ]
+    per_bucket = max(
+        1, math.ceil((frame_count - len(selected)) / max(1, len(non_empty_buckets)))
+    )
     for bucket in non_empty_buckets:
         add_from_bucket(bucket, limit=per_bucket)
 
@@ -938,7 +1193,9 @@ def suggest_label_frames(
     return [selected[frame] for frame in sorted(selected)[:frame_count]]
 
 
-def label_template_rows(label_plan: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def label_template_rows(
+    label_plan: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
     """Convert a frame-selection plan into a ready-to-fill box-label template."""
 
     return [
@@ -957,7 +1214,9 @@ def label_template_rows(label_plan: Sequence[Mapping[str, Any]]) -> list[dict[st
     ]
 
 
-def write_label_template(label_plan: Sequence[Mapping[str, Any]], *, output_path: Path) -> list[dict[str, Any]]:
+def write_label_template(
+    label_plan: Sequence[Mapping[str, Any]], *, output_path: Path
+) -> list[dict[str, Any]]:
     """Write a sparse-label CSV template compatible with ``beltmap-compare``."""
 
     rows = label_template_rows(label_plan)
@@ -983,7 +1242,9 @@ def write_label_plan(
     return rows
 
 
-def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | None = None) -> list[ContractResult]:
+def evaluate_quality_contract(
+    output_dir: Path, contract: Mapping[str, Any] | None = None
+) -> list[ContractResult]:
     """Evaluate a compact quality contract against standard output files."""
 
     output_dir = Path(output_dir)
@@ -991,60 +1252,170 @@ def evaluate_quality_contract(output_dir: Path, contract: Mapping[str, Any] | No
     metadata = load_metadata(output_dir)
     results: list[ContractResult] = []
 
-    corrections = np.asarray([
-        value for value in (finite_float(row.get("correction_px")) for row in phase_rows(output_dir))
-        if value is not None
-    ], dtype=np.float64)
-    search_radius = positive_metadata_float(metadata, "registration_search_radius_px", 8.0)
-    search_step = positive_metadata_float(metadata, "registration_search_step_px", 1.0)
+    corrections = np.asarray(
+        [
+            value
+            for value in (
+                finite_float(row.get("correction_px")) for row in phase_rows(output_dir)
+            )
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
+    search_radius = _positive_float_or_default(
+        metadata.get("registration_search_radius_px"),
+        8.0,
+    )
+    search_step = _positive_float_or_default(
+        metadata.get("registration_search_step_px"),
+        1.0,
+    )
     boundary_tolerance = max(1e-9, 0.5 * search_step)
-    boundary_share = None if corrections.size == 0 else float(np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance))
+    boundary_share = (
+        None
+        if corrections.size == 0
+        else float(
+            np.mean(np.abs(np.abs(corrections) - search_radius) <= boundary_tolerance)
+        )
+    )
     threshold = finite_float(contract.get("max_registration_boundary_share"))
     if threshold is not None:
-        results.append(ContractResult("registration_boundary_share", boundary_share is None or boundary_share <= threshold, boundary_share, threshold, "<=", "share of phase corrections at search boundary"))
+        results.append(
+            ContractResult(
+                "registration_boundary_share",
+                boundary_share is None or boundary_share <= threshold,
+                boundary_share,
+                threshold,
+                "<=",
+                "share of phase corrections at search boundary",
+            )
+        )
 
     detections = load_detection_rows(output_dir)
-    areas = np.asarray([value for value in (finite_float(row.get("area_px")) for row in detections) if value is not None], dtype=np.float64)
+    areas = np.asarray(
+        [
+            value
+            for value in (finite_float(row.get("area_px")) for row in detections)
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
     tiny_share = None if areas.size == 0 else float(np.mean(areas <= 2.0))
     threshold = finite_float(contract.get("max_many_tiny_component_share"))
     if threshold is not None:
-        results.append(ContractResult("many_tiny_component_share", tiny_share is None or tiny_share <= threshold, tiny_share, threshold, "<=", "share of detections with area <= 2 px"))
+        results.append(
+            ContractResult(
+                "many_tiny_component_share",
+                tiny_share is None or tiny_share <= threshold,
+                tiny_share,
+                threshold,
+                "<=",
+                "share of detections with area <= 2 px",
+            )
+    )
 
     velocities = read_csv_rows(output_dir / "velocities.csv")
-    ratios = np.asarray([value for value in (finite_float(row.get("velocity_ratio_y")) for row in velocities) if value is not None], dtype=np.float64)
+    ratios = np.asarray(
+        [
+            value
+            for value in (
+                finite_float(row.get("velocity_ratio_y")) for row in velocities
+            )
+            if value is not None
+        ],
+        dtype=np.float64,
+    )
     ratio_range = contract.get("velocity_ratio_y_range", [0.0, 1.1])
-    lower, upper = float(ratio_range[0]), float(ratio_range[1])
-    in_range_share = None if ratios.size == 0 else float(np.mean((lower <= ratios) & (ratios <= upper)))
     threshold = finite_float(contract.get("min_velocity_ratio_in_range_share"))
     if threshold is not None:
-        results.append(ContractResult("velocity_ratio_in_range_share", in_range_share is None or in_range_share >= threshold, in_range_share, threshold, ">=", f"share of velocity ratios in [{lower}, {upper}]"))
+        try:
+            lower, upper = _velocity_ratio_range(ratio_range)
+        except ValueError:
+            results.append(
+                ContractResult(
+                    "velocity_ratio_in_range_share",
+                    False,
+                    None,
+                    threshold,
+                    ">=",
+                    "invalid velocity ratio range",
+                )
+            )
+        else:
+            in_range_share = (
+                None
+                if ratios.size == 0
+                else float(np.mean((lower <= ratios) & (ratios <= upper)))
+            )
+            results.append(
+                ContractResult(
+                    "velocity_ratio_in_range_share",
+                    in_range_share is None or in_range_share >= threshold,
+                    in_range_share,
+                    threshold,
+                    ">=",
+                    f"share of velocity ratios in [{lower}, {upper}]",
+                )
+            )
 
     recurrent_rejected = finite_int(metadata.get("n_recurrent_artifact_rejected")) or 0
     n_detections = metadata_count_or_rows(metadata, "n_detections", detections)
-    rejection_share = None if recurrent_rejected + n_detections == 0 else recurrent_rejected / (recurrent_rejected + n_detections)
+    rejection_share = (
+        None
+        if recurrent_rejected + n_detections == 0
+        else recurrent_rejected / (recurrent_rejected + n_detections)
+    )
     threshold = finite_float(contract.get("max_recurrent_rejection_share"))
     if threshold is not None:
-        results.append(ContractResult("recurrent_rejection_share", rejection_share is None or rejection_share <= threshold, rejection_share, threshold, "<=", "share rejected by recurrent artifact filter"))
+        results.append(
+            ContractResult(
+                "recurrent_rejection_share",
+                rejection_share is None or rejection_share <= threshold,
+                rejection_share,
+                threshold,
+                "<=",
+                "share rejected by recurrent artifact filter",
+            )
+        )
 
     min_filtered = finite_int(contract.get("min_filtered_velocity_estimates"))
     if min_filtered is not None:
         filtered = read_csv_rows(output_dir / "filtered_velocities.csv")
-        results.append(ContractResult("filtered_velocity_estimates", len(filtered) >= min_filtered, len(filtered), min_filtered, ">=", "accepted filtered velocity rows"))
+        results.append(
+            ContractResult(
+                "filtered_velocity_estimates",
+                len(filtered) >= min_filtered,
+                len(filtered),
+                min_filtered,
+                ">=",
+                "accepted filtered velocity rows",
+            )
+        )
     return results
 
 
-def write_quality_contract_report(output_dir: Path, *, report_dir: Path, contract: Mapping[str, Any] | None = None) -> list[ContractResult]:
+def write_quality_contract_report(
+    output_dir: Path, *, report_dir: Path, contract: Mapping[str, Any] | None = None
+) -> list[ContractResult]:
     results = evaluate_quality_contract(output_dir, contract=contract)
-    write_json(report_dir / "quality_contract.json", [asdict(result) for result in results])
+    write_json(
+        report_dir / "quality_contract.json", [asdict(result) for result in results]
+    )
     lines = ["# Quality contract", ""]
     for result in results:
         status = "PASS" if result.passed else "FAIL"
-        lines.append(f"- **{status}** `{result.name}`: {result.value} {result.comparison} {result.threshold} — {result.description}")
-    (report_dir / "quality_contract.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        lines.append(
+            f"- **{status}** `{result.name}`: {result.value} {result.comparison} {result.threshold} — {result.description}"
+        )
+    (report_dir / "quality_contract.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
     return results
 
 
-def belt_edge_ignore_mask(shape: tuple[int, int], *, margin_px: int) -> NDArray[np.bool_]:
+def belt_edge_ignore_mask(
+    shape: tuple[int, int], *, margin_px: int
+) -> NDArray[np.bool_]:
     """Return a boolean allow-mask that excludes belt-edge margins."""
 
     height, width = shape
@@ -1063,7 +1434,9 @@ def belt_edge_ignore_mask(shape: tuple[int, int], *, margin_px: int) -> NDArray[
     return mask
 
 
-def load_ignore_mask(path: Path, *, shape: tuple[int, int] | None = None) -> NDArray[np.bool_]:
+def load_ignore_mask(
+    path: Path, *, shape: tuple[int, int] | None = None
+) -> NDArray[np.bool_]:
     """Load a PNG/NumPy ignore mask as an allow-mask; nonzero pixels are allowed."""
 
     path = Path(path)
@@ -1072,11 +1445,15 @@ def load_ignore_mask(path: Path, *, shape: tuple[int, int] | None = None) -> NDA
     else:
         mask = np.asarray(Image.open(path).convert("L")) > 0
     if shape is not None and tuple(mask.shape) != tuple(shape):
-        raise ValueError(f"ignore mask shape {mask.shape} does not match expected {shape}")
+        raise ValueError(
+            f"ignore mask shape {mask.shape} does not match expected {shape}"
+        )
     return mask
 
 
-def apply_ignore_mask(values: ArrayLike, allow_mask: ArrayLike, *, fill_value: float = np.nan) -> FloatArray:
+def apply_ignore_mask(
+    values: ArrayLike, allow_mask: ArrayLike, *, fill_value: float = np.nan
+) -> FloatArray:
     arr = np.asarray(values, dtype=np.float64).copy()
     mask = np.asarray(allow_mask, dtype=bool)
     if arr.shape != mask.shape:
@@ -1131,7 +1508,11 @@ def warp_perspective(
         raise ValueError("homography must be 3x3")
     inv = np.linalg.inv(matrix)
     out_h, out_w = output_shape
-    yy, xx = np.meshgrid(np.arange(out_h, dtype=np.float64), np.arange(out_w, dtype=np.float64), indexing="ij")
+    yy, xx = np.meshgrid(
+        np.arange(out_h, dtype=np.float64),
+        np.arange(out_w, dtype=np.float64),
+        indexing="ij",
+    )
     ones = np.ones_like(xx)
     coords = np.stack([xx.ravel(), yy.ravel(), ones.ravel()], axis=0)
     src_coords = inv @ coords
@@ -1141,7 +1522,9 @@ def warp_perspective(
     return _bilinear_sample(src, y, x, fill_value=fill_value)
 
 
-def _bilinear_sample(image: np.ndarray, y: np.ndarray, x: np.ndarray, *, fill_value: float) -> FloatArray:
+def _bilinear_sample(
+    image: np.ndarray, y: np.ndarray, x: np.ndarray, *, fill_value: float
+) -> FloatArray:
     h, w = image.shape[:2]
     valid = (x >= 0) & (x <= w - 1) & (y >= 0) & (y <= h - 1)
     x0 = np.clip(np.floor(x).astype(np.int64), 0, w - 1)
@@ -1210,11 +1593,13 @@ def short_horizon_link_detections(
     rows = []
     for track_id, track in enumerate(tracks):
         for det_index, item in enumerate(track):
-            rows.append({
-                "diagnostic_track_id": track_id,
-                "track_detection_index": det_index,
-                **item,
-            })
+            rows.append(
+                {
+                    "diagnostic_track_id": track_id,
+                    "track_detection_index": det_index,
+                    **item,
+                }
+            )
     return rows
 
 
@@ -1230,24 +1615,57 @@ def write_postrun_audit(
     """Write a bundle of post-run result-improvement diagnostics."""
 
     output_dir = Path(output_dir)
-    report_dir = output_dir / "postrun_audit" if report_dir is None else Path(report_dir)
+    report_dir = (
+        output_dir / "postrun_audit" if report_dir is None else Path(report_dir)
+    )
     report_dir.mkdir(parents=True, exist_ok=True)
 
     flags = write_quality_flags(output_dir, report_dir=report_dir)
     worst = write_worst_frame_tables(output_dir, report_dir=report_dir, top_n=top_n)
-    map_summary = write_map_uncertainty_outputs(output_dir, report_dir=report_dir, write_full_counts=write_full_counts)
+    map_summary = write_map_uncertainty_outputs(
+        output_dir, report_dir=report_dir, write_full_counts=write_full_counts
+    )
     seam = write_seam_diagnostics(output_dir, report_dir=report_dir)
     confidence = write_detection_confidence(output_dir, report_dir=report_dir)
-    label_plan = write_label_plan(output_dir, output_path=report_dir / "label_plan.csv", frame_count=max(20, top_n * 2))
+    label_plan = write_label_plan(
+        output_dir,
+        output_path=report_dir / "label_plan.csv",
+        frame_count=max(20, top_n * 2),
+    )
     map_plan = adaptive_map_frame_plan(output_dir, top_n=120)
-    write_csv(report_dir / "adaptive_map_frame_plan.csv", map_plan, ["frame_index", "phase_bucket", "rank_cost", "n_detections", "registration_score"])
+    write_csv(
+        report_dir / "adaptive_map_frame_plan.csv",
+        map_plan,
+        [
+            "frame_index",
+            "phase_bucket",
+            "rank_cost",
+            "n_detections",
+            "registration_score",
+        ],
+    )
     flux = flux_summary(output_dir, frame_rate_hz=frame_rate_hz)
     write_json(report_dir / "flux_summary.json", flux)
-    contract_results = write_quality_contract_report(output_dir, report_dir=report_dir, contract=contract)
+    contract_results = write_quality_contract_report(
+        output_dir, report_dir=report_dir, contract=contract
+    )
 
     detections = load_detection_rows(output_dir)
-    diagnostic_links = short_horizon_link_detections(detections, max_frame_gap=2) if detections else []
-    write_csv(report_dir / "short_horizon_track_diagnostics.csv", diagnostic_links, ["diagnostic_track_id", "track_detection_index", "index", "frame_index", "y", "x"])
+    diagnostic_links = (
+        short_horizon_link_detections(detections, max_frame_gap=2) if detections else []
+    )
+    write_csv(
+        report_dir / "short_horizon_track_diagnostics.csv",
+        diagnostic_links,
+        [
+            "diagnostic_track_id",
+            "track_detection_index",
+            "index",
+            "frame_index",
+            "y",
+            "x",
+        ],
+    )
 
     summary = {
         "output_dir": str(output_dir),
@@ -1267,5 +1685,9 @@ def write_postrun_audit(
 
 
 def write_quality_contract_template(path: Path, *, synthetic: bool = False) -> None:
-    template = SYNTHETIC_REGRESSION_CONTRACT_TEMPLATE if synthetic else DEFAULT_QUALITY_CONTRACT
+    template = (
+        SYNTHETIC_REGRESSION_CONTRACT_TEMPLATE
+        if synthetic
+        else DEFAULT_QUALITY_CONTRACT
+    )
     write_json(path, template)

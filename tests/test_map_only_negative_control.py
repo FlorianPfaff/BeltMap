@@ -8,12 +8,15 @@ import pytest
 from beltmap.cli import map_only_negative_control as cli_map_only_negative_control
 from beltmap.map_only_negative_control import (
     MapOnlyNegativeControlConfig,
+    _json_ready,
     generate_map_only_negative_control_report,
     load_phase_samples,
 )
 
 
-def write_phase_estimates(path: Path, *, frames: int, velocity: float, period: float) -> None:
+def write_phase_estimates(
+    path: Path, *, frames: int, velocity: float, period: float
+) -> None:
     fieldnames = [
         "frame_index",
         "image",
@@ -49,7 +52,9 @@ def test_map_only_negative_control_counts_map_blobs_as_false_tracks(tmp_path):
     belt_map = np.zeros((40, 24), dtype=np.float32)
     belt_map[8:12, 6:10] = 100.0
     np.save(tmp_path / "belt_map.npy", belt_map)
-    write_phase_estimates(tmp_path / "phase_estimates.csv", frames=7, velocity=1.0, period=40.0)
+    write_phase_estimates(
+        tmp_path / "phase_estimates.csv", frames=7, velocity=1.0, period=40.0
+    )
 
     result = generate_map_only_negative_control_report(
         output_dir=tmp_path,
@@ -104,7 +109,56 @@ def test_load_phase_samples_rejects_fractional_frame_indices(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="non-integer frame_index"):
+    with pytest.raises(ValueError, match="invalid frame_index"):
+        load_phase_samples(phase_path)
+
+
+@pytest.mark.parametrize("frame_index", ["-1", "true"])
+def test_load_phase_samples_rejects_invalid_frame_indices(tmp_path, frame_index):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(
+        f"frame_index,image,phase_px\n{frame_index},frame_000000.png,0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid frame_index"):
+        load_phase_samples(phase_path)
+
+
+def test_load_phase_samples_rejects_duplicate_frame_indices(tmp_path):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(
+        "frame_index,image,phase_px\n0,frame_000000.png,0\n0,frame_000001.png,1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate frame_index"):
+        load_phase_samples(phase_path)
+
+
+@pytest.mark.parametrize(
+    ("csv_text", "message"),
+    [
+        ("frame_index,image,phase_px\n-1,frame_000000.png,0\n", "negative frame_index"),
+        (
+            "frame_index,image,phase_px\n0,frame_000000.png,0\n0,frame_000001.png,1\n",
+            "duplicate frame_index 0",
+        ),
+        (
+            "frame_index,image,phase_px\n,frame_000000.png,0\n0,frame_000001.png,1\n",
+            "duplicate frame_index 0",
+        ),
+    ],
+)
+def test_load_phase_samples_rejects_invalid_frame_sequence(
+    tmp_path,
+    csv_text,
+    message,
+):
+    phase_path = tmp_path / "phase_estimates.csv"
+    phase_path.write_text(csv_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
         load_phase_samples(phase_path)
 
 
@@ -138,7 +192,11 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
     )
 
     assert exit_code == 0
-    metrics = json.loads((tmp_path / "map_only_negative_control_metrics.json").read_text(encoding="utf-8"))
+    metrics = json.loads(
+        (tmp_path / "map_only_negative_control_metrics.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert metrics["detections"]["false_detections"] == 0
     assert metrics["tracks"]["false_tracks"] == 0
 
@@ -146,14 +204,52 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
 @pytest.mark.parametrize(
     ("config_kwargs", "message"),
     [
+        ({"threshold": 0.0}, "threshold must be positive"),
+        ({"threshold": -1.0}, "threshold must be positive"),
+        ({"low_threshold": -0.5}, "low_threshold must be non-negative"),
         ({"period_px": float("nan")}, "period_px must be positive"),
-        ({"belt_velocity_px_per_frame": float("nan")}, "belt_velocity_px_per_frame must be finite"),
-        ({"max_match_distance_px": float("nan")}, "max_match_distance_px must be positive"),
-        ({"highpass_min_scale_gray": float("nan")}, "highpass_min_scale_gray must be positive"),
-        ({"track_filter_min_velocity_ratio_y": float("nan")}, "track_filter_min_velocity_ratio_y must be finite"),
-        ({"track_filter_max_velocity_ratio_y": float("nan")}, "track_filter_max_velocity_ratio_y must be finite"),
+        ({"min_area_px": 1.5}, "min_area_px must be a positive integer"),
         (
-            {"track_filter_min_velocity_ratio_y": 1.2, "track_filter_max_velocity_ratio_y": 1.0},
+            {"highpass_radius_px": 1.5},
+            "highpass_radius_px must be a non-negative integer",
+        ),
+        ({"crop_height_px": 12.5}, "crop_height_px must be a positive integer"),
+        ({"frame_count": 2.5}, "frame_count must be a positive integer"),
+        ({"random_seed": 1.5}, "random_seed must be a non-negative integer"),
+        ({"long_track_length": 3.5}, "long_track_length must be a positive integer"),
+        (
+            {"belt_velocity_px_per_frame": float("nan")},
+            "belt_velocity_px_per_frame must be finite",
+        ),
+        (
+            {"max_match_distance_px": float("nan")},
+            "max_match_distance_px must be positive",
+        ),
+        (
+            {"highpass_min_scale_gray": float("nan")},
+            "highpass_min_scale_gray must be positive",
+        ),
+        (
+            {"split_min_projection_gap_px": 0},
+            "split_min_projection_gap_px must be positive",
+        ),
+        (
+            {"split_min_component_area_px": -1},
+            "split_min_component_area_px must be positive",
+        ),
+        (
+            {"track_filter_min_velocity_ratio_y": float("nan")},
+            "track_filter_min_velocity_ratio_y must be finite",
+        ),
+        (
+            {"track_filter_max_velocity_ratio_y": float("nan")},
+            "track_filter_max_velocity_ratio_y must be finite",
+        ),
+        (
+            {
+                "track_filter_min_velocity_ratio_y": 1.2,
+                "track_filter_max_velocity_ratio_y": 1.0,
+            },
             "track_filter_min_velocity_ratio_y must be less than or equal",
         ),
         (
@@ -162,7 +258,9 @@ def test_map_only_negative_control_cli_writes_metrics(tmp_path):
         ),
     ],
 )
-def test_map_only_config_rejects_nonfinite_optional_floats(tmp_path, config_kwargs, message):
+def test_map_only_config_rejects_nonfinite_optional_floats(
+    tmp_path, config_kwargs, message
+):
     with pytest.raises(ValueError, match=message):
         generate_map_only_negative_control_report(
             output_dir=tmp_path,
@@ -181,6 +279,17 @@ def test_map_only_cli_rejects_fractional_integer_config_options():
         )
 
 
+def test_map_only_cli_rejects_boolean_integer_config_options():
+    with pytest.raises(ValueError, match="min_track_length must be an integer"):
+        cli_map_only_negative_control._int_option(
+            None,
+            {"options": {"min_track_length": {"value": True}}},
+            "min_track_length",
+            ("tracking", "min_track_length"),
+            2,
+        )
+
+
 def test_map_only_cli_rejects_nonfinite_float_config_options():
     with pytest.raises(ValueError, match="detection_threshold must be finite"):
         cli_map_only_negative_control._float_option(
@@ -193,17 +302,32 @@ def test_map_only_cli_rejects_nonfinite_float_config_options():
 
 
 def test_map_only_cli_ignores_fractional_crop_region_height():
-    assert cli_map_only_negative_control._region_height(
-        {"top": 0, "left": 0, "height": "12.5", "width": 40}
-    ) is None
+    assert (
+        cli_map_only_negative_control._region_height(
+            {"top": 0, "left": 0, "height": "12.5", "width": 40}
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
     ("option", "value", "message"),
     [
-        ("--long-track-length", "0", "long_track_length must be positive"),
-        ("--frame-count", "-1", "frame_count must be positive"),
-        ("--crop-height-px", "0", "crop_height_px must be positive"),
+        ("--long-track-length", "0", "long_track_length must be a positive integer"),
+        ("--frame-count", "-1", "frame_count must be a positive integer"),
+        ("--crop-height-px", "0", "crop_height_px must be a positive integer"),
+        ("--threshold", "-1", "threshold must be positive"),
+        ("--low-threshold", "-1", "low_threshold must be non-negative"),
+        (
+            "--split-min-projection-gap-px",
+            "0",
+            "split_min_projection_gap_px must be positive",
+        ),
+        (
+            "--split-min-component-area-px",
+            "-1",
+            "split_min_component_area_px must be positive",
+        ),
         ("--threshold", "nan", "detection_threshold must be finite"),
     ],
 )
@@ -227,3 +351,9 @@ def test_map_only_cli_rejects_explicit_invalid_integer_values(
 
     assert exc_info.value.code == 2
     assert message in capsys.readouterr().err
+
+
+def test_json_ready_sanitizes_numpy_nonfinite_scalars():
+    payload = _json_ready({"bad": np.float64(float("nan"))})
+
+    assert payload == {"bad": None}

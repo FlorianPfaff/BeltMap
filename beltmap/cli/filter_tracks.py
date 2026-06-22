@@ -137,6 +137,8 @@ def optional_nonnegative_float(value: float | None, *, name: str) -> float | Non
 
     if value is None:
         return None
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be finite")
     if not math.isfinite(value):
         raise ValueError(f"{name} must be finite")
     if value < 0:
@@ -154,8 +156,8 @@ def optional_unit_float(value: float | None, *, name: str) -> float | None:
 
 
 def unit_float(value: float, *, name: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed):
+    parsed = finite_float(value)
+    if parsed is None:
         raise ValueError(f"{name} must be finite")
     if parsed < 0 or parsed > 1:
         raise ValueError(f"{name} must be in [0, 1]")
@@ -191,57 +193,72 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
 
 def parse_integral_field(row: dict[str, str], field: str) -> int:
     value = row[field]
-    parsed = float(value)
-    if not math.isfinite(parsed) or not parsed.is_integer():
+    parsed = finite_float(value)
+    if parsed is None or not parsed.is_integer():
         raise ValueError(f"{field} must be an integer-valued number, got {value!r}")
     return int(parsed)
+
+
+def finite_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def parse_required_float(row: dict[str, str], field: str) -> float:
+    value = row[field]
+    parsed = finite_float(value)
+    if parsed is None:
+        raise ValueError(f"{field} must be a finite number, got {value!r}")
+    return parsed
+
+
+def parse_optional_float(row: dict[str, str], field: str) -> float | None:
+    return finite_float(row.get(field, ""))
 
 
 def parse_velocity(row: dict[str, str]) -> ParticleVelocity:
     return ParticleVelocity(
         track_id=parse_integral_field(row, "track_id"),
         n_detections=parse_integral_field(row, "n_detections"),
-        frame_start=float(row["frame_start"]),
-        frame_end=float(row["frame_end"]),
-        velocity_y_px_per_frame=float(row["velocity_y_px_per_frame"]),
-        velocity_x_px_per_frame=float(row["velocity_x_px_per_frame"]),
-        speed_px_per_frame=float(row["speed_px_per_frame"]),
-        belt_velocity_y_px_per_frame=float(row["belt_velocity_y_px_per_frame"]),
-        velocity_ratio_y=float(row["velocity_ratio_y"]),
-        belt_minus_particle_velocity_y_px_per_frame=float(
-            row["belt_minus_particle_velocity_y_px_per_frame"]
+        frame_start=parse_required_float(row, "frame_start"),
+        frame_end=parse_required_float(row, "frame_end"),
+        velocity_y_px_per_frame=parse_required_float(row, "velocity_y_px_per_frame"),
+        velocity_x_px_per_frame=parse_required_float(row, "velocity_x_px_per_frame"),
+        speed_px_per_frame=parse_required_float(row, "speed_px_per_frame"),
+        belt_velocity_y_px_per_frame=parse_required_float(row, "belt_velocity_y_px_per_frame"),
+        velocity_ratio_y=parse_required_float(row, "velocity_ratio_y"),
+        belt_minus_particle_velocity_y_px_per_frame=parse_required_float(
+            row,
+            "belt_minus_particle_velocity_y_px_per_frame",
         ),
     )
 
 
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
     return ParticleDetection(
-        frame_index=float(row["frame_index"]),
+        frame_index=float(parse_integral_field(row, "frame_index")),
         label=parse_integral_field(row, "label"),
-        y=float(row["y"]),
-        x=float(row["x"]),
+        y=parse_required_float(row, "y"),
+        x=parse_required_float(row, "x"),
         area_px=parse_integral_field(row, "area_px"),
         bbox_top=parse_integral_field(row, "bbox_top"),
         bbox_left=parse_integral_field(row, "bbox_left"),
         bbox_bottom=parse_integral_field(row, "bbox_bottom"),
         bbox_right=parse_integral_field(row, "bbox_right"),
-        mean_signal=None if row.get("mean_signal", "") == "" else float(row["mean_signal"]),
-        peak_signal=None if row.get("peak_signal", "") == "" else float(row["peak_signal"]),
-        recurrent_artifact_overlap_fraction=(
-            None
-            if row.get("recurrent_artifact_overlap_fraction", "") == ""
-            else float(row["recurrent_artifact_overlap_fraction"])
-        ),
-        recurrent_artifact_probability=(
-            None
-            if row.get("recurrent_artifact_probability", "") == ""
-            else float(row["recurrent_artifact_probability"])
-        ),
-        recurrent_artifact_required_peak_signal=(
-            None
-            if row.get("recurrent_artifact_required_peak_signal", "") == ""
-            else float(row["recurrent_artifact_required_peak_signal"])
-        ),
+        mean_signal=parse_optional_float(row, "mean_signal"),
+        peak_signal=parse_optional_float(row, "peak_signal"),
+        recurrent_artifact_overlap_fraction=parse_optional_float(row, "recurrent_artifact_overlap_fraction"),
+        recurrent_artifact_probability=parse_optional_float(row, "recurrent_artifact_probability"),
+        recurrent_artifact_required_peak_signal=parse_optional_float(row, "recurrent_artifact_required_peak_signal"),
     )
 
 
@@ -249,7 +266,7 @@ def parse_track_detection_index(value: str, *, fallback: int) -> int:
     if value == "":
         return fallback
     try:
-        parsed = float(value)
+        parsed = parse_required_float({"track_detection_index": value}, "track_detection_index")
     except ValueError as exc:
         raise ValueError("track_detection_index must be integer-valued") from exc
     if not parsed.is_integer():
@@ -300,10 +317,18 @@ def reconstruct_track_rows(output_dir: Path) -> list[dict[str, str]]:
 
     metadata = read_json(output_dir / "metadata.json")
     config = read_json(output_dir / "config_resolved.json")
-    velocity = float(metadata.get("belt_velocity_px_per_frame", 0.0))
+    raw_velocity = metadata.get("belt_velocity_px_per_frame")
+    velocity = (
+        0.0
+        if raw_velocity in (None, "")
+        else parse_required_float(
+            {"belt_velocity_px_per_frame": raw_velocity},
+            "belt_velocity_px_per_frame",
+        )
+    )
     max_match_text = option_value(config, "max_match_distance_px")
     max_match = (
-        float(max_match_text)
+        parse_required_float({"max_match_distance_px": max_match_text}, "max_match_distance_px")
         if max_match_text is not None
         else max(5.0, 1.5 * abs(velocity))
     )

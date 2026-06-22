@@ -4,14 +4,21 @@ import numpy as np
 import pytest
 
 from beltmap.advanced_quality import (
+    GainOffsetFit,
+    apply_gain_offset,
     bbox_iou,
     evaluate_real_detections,
+    estimate_integer_xy_shift,
     finite_int,
     quality_flags,
     quadratic_subpixel_minimum,
     robust_gain_offset,
+    map_uncertainty_from_counts,
+    seam_discontinuity_profile,
+    smooth_phase_velocity,
     theil_sen_slope,
     track_confidence_score,
+    unwrap_periodic,
 )
 
 
@@ -27,11 +34,112 @@ def test_robust_gain_offset_recovers_linear_photometric_change():
     assert fit.n_pixels < expected.size
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"trim_fraction": True}, "trim_fraction"),
+        ({"trim_fraction": "0.1"}, "trim_fraction"),
+        ({"max_iterations": True}, "max_iterations"),
+        ({"max_iterations": 1.5}, "max_iterations"),
+        ({"min_pixels": True}, "min_pixels"),
+        ({"min_pixels": 0}, "min_pixels"),
+    ],
+)
+def test_robust_gain_offset_rejects_coerced_config(kwargs, message):
+    expected = np.arange(100, dtype=float).reshape(10, 10)
+    observed = expected.copy()
+
+    with pytest.raises(ValueError, match=message):
+        robust_gain_offset(observed, expected, **kwargs)
+
+
+def test_robust_gain_offset_rejects_unidentifiable_constant_expected():
+    expected = np.ones((10, 10), dtype=float)
+    observed = expected + 2.0
+
+    with pytest.raises(ValueError, match="distinct"):
+        robust_gain_offset(observed, expected, min_pixels=20)
+
+
+def test_apply_gain_offset_rejects_invalid_fit_values():
+    expected = np.arange(4, dtype=float).reshape(2, 2)
+    fit = GainOffsetFit(
+        gain=float("nan"),
+        offset=0.0,
+        n_pixels=4,
+        rmse_gray=0.0,
+        trimmed_fraction=0.0,
+    )
+
+    with pytest.raises(ValueError, match="fit.gain"):
+        apply_gain_offset(expected, fit)
+
+
 def test_quadratic_subpixel_minimum_fits_best_neighbor_triplet():
     offsets = [-1.0, 0.0, 1.0]
     losses = [(x - 0.25) ** 2 for x in offsets]
 
     assert abs(quadratic_subpixel_minimum(offsets, losses) - 0.25) < 1e-9
+
+
+def test_quadratic_subpixel_minimum_rejects_duplicate_offsets():
+    with pytest.raises(ValueError, match="distinct"):
+        quadratic_subpixel_minimum([0.0, 0.0, 1.0], [1.0, 0.5, 2.0])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_shift_y_px": True}, "max_shift_y_px"),
+        ({"max_shift_x_px": 1.5}, "max_shift_x_px"),
+        ({"trim_fraction": True}, "trim_fraction"),
+        ({"trim_fraction": 1.0}, "trim_fraction"),
+    ],
+)
+def test_estimate_integer_xy_shift_rejects_invalid_config(kwargs, message):
+    image = np.arange(9, dtype=float).reshape(3, 3)
+
+    with pytest.raises(ValueError, match=message):
+        estimate_integer_xy_shift(image, image, **kwargs)
+
+
+def test_estimate_integer_xy_shift_rejects_no_finite_overlap():
+    observed = np.full((3, 3), np.nan)
+    expected = np.arange(9, dtype=float).reshape(3, 3)
+
+    with pytest.raises(ValueError, match="no finite overlap"):
+        estimate_integer_xy_shift(observed, expected)
+
+
+@pytest.mark.parametrize(
+    ("period", "values", "message"),
+    [
+        (True, [0.0, 1.0], "period"),
+        ("10.0", [0.0, 1.0], "period"),
+        (10.0, [0.0, float("nan")], "values"),
+    ],
+)
+def test_unwrap_periodic_rejects_invalid_inputs(period, values, message):
+    with pytest.raises(ValueError, match=message):
+        unwrap_periodic(values, period)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"process_noise_px": True}, "process_noise_px"),
+        ({"measurement_noise_px": "2.0"}, "measurement_noise_px"),
+        ({"scores": [float("inf"), 1.0]}, "scores"),
+    ],
+)
+def test_smooth_phase_velocity_rejects_invalid_config(kwargs, message):
+    options = {
+        "period_px": 10.0,
+    }
+    options.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        smooth_phase_velocity([0.0, 1.0], **options)
 
 
 def test_theil_sen_slope_ignores_single_bad_point_better_than_mean_slope():
@@ -49,10 +157,65 @@ def test_bbox_iou_and_track_confidence_are_finite():
     assert 0.0 < score <= 1.0
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"min_count": True}, "min_count"),
+        ({"scale": "1.0"}, "scale"),
+        ({"min_count": 0.0}, "positive"),
+    ],
+)
+def test_map_uncertainty_rejects_invalid_config(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        map_uncertainty_from_counts(np.ones((2, 2)), **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"seam_row": True}, "seam_row"),
+        ({"window_px": 1.5}, "window_px"),
+        ({"window_px": 0}, "window_px"),
+    ],
+)
+def test_seam_discontinuity_rejects_invalid_config(kwargs, message):
+    belt = np.arange(9, dtype=float).reshape(3, 3)
+
+    with pytest.raises(ValueError, match=message):
+        seam_discontinuity_profile(belt, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"n_detections": True}, "n_detections"),
+        ({"n_detections": -1}, "n_detections"),
+        ({"min_track_length": "5"}, "min_track_length"),
+        ({"velocity_fit_rmse_px": -1.0}, "velocity_fit_rmse_px"),
+        ({"velocity_ratio_y": float("nan")}, "velocity_ratio_y"),
+    ],
+)
+def test_track_confidence_score_rejects_invalid_inputs(kwargs, message):
+    options = {"n_detections": 5, "min_track_length": 5}
+    options.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        track_confidence_score(**options)
+
+
+def test_bbox_iou_rejects_invalid_coordinate_values():
+    with pytest.raises(ValueError, match="a.top"):
+        bbox_iou(
+            {"top": True, "left": 0, "bottom": 10, "right": 10},
+            {"top": 0, "left": 0, "bottom": 10, "right": 10},
+        )
+
+
 def test_finite_int_rejects_fractional_values():
     assert finite_int("7") == 7
     assert finite_int("7.0") == 7
     assert finite_int("7.5") is None
+    assert finite_int(True) is None
 
 
 def test_real_label_metrics_count_detections_only_on_labeled_frames(tmp_path):
@@ -202,6 +365,52 @@ def test_real_label_metrics_reject_invalid_reviewed_frames(tmp_path, frame, mess
         evaluate_real_detections(out, labels, iou_threshold=0.5)
 
 
+def test_real_label_metrics_reject_boolean_reviewed_frame_index(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [{"frame_index": True, "boxes": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="frame_index"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+def test_real_label_metrics_reject_non_list_boxes(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [{"frame_index": 0, "boxes": {"top": 0}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="boxes must be a list"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
 def test_real_label_metrics_reject_duplicate_reviewed_frames(tmp_path):
     out = tmp_path / "outputs"
     out.mkdir()
@@ -262,6 +471,52 @@ def test_real_label_metrics_reject_invalid_reviewed_boxes(tmp_path, box, message
 
     with pytest.raises(ValueError, match=message):
         evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+def test_real_label_metrics_reject_boolean_box_coordinate(tmp_path):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "status": "reviewed_ground_truth",
+                "requires_manual_review": False,
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "boxes": [{"top": True, "left": 0, "bottom": 1, "right": 1}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="top"):
+        evaluate_real_detections(out, labels, iou_threshold=0.5)
+
+
+@pytest.mark.parametrize("iou_threshold", [True, "0.5", float("nan")])
+def test_real_label_metrics_reject_invalid_iou_threshold(tmp_path, iou_threshold):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    (out / "detections.csv").write_text(
+        "frame_index,bbox_top,bbox_left,bbox_bottom,bbox_right\n",
+        encoding="utf-8",
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"frames": [{"frame_index": 0, "boxes": []}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="iou_threshold"):
+        evaluate_real_detections(out, labels, iou_threshold=iou_threshold)
 
 
 def test_real_label_metrics_ignore_degenerate_detection_boxes(tmp_path):

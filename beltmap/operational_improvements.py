@@ -381,6 +381,8 @@ def estimate_homography(
     dst = np.asarray(target_points, dtype=np.float64)
     if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 2 or src.shape[0] < 4:
         raise ValueError("source_points and target_points must be Nx2 arrays with N >= 4")
+    if not np.all(np.isfinite(src)) or not np.all(np.isfinite(dst)):
+        raise ValueError("source_points and target_points must be finite")
 
     src_norm, src_transform = _normalize_points(src)
     dst_norm, dst_transform = _normalize_points(dst)
@@ -429,9 +431,12 @@ def warp_perspective(
     matrix = homography.matrix if isinstance(homography, HomographyModel) else np.asarray(homography, dtype=np.float64)
     if matrix.shape != (3, 3):
         raise ValueError("homography matrix must be 3x3")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("homography matrix must be finite")
     if interpolation not in {"nearest", "bilinear"}:
         raise ValueError("interpolation must be 'nearest' or 'bilinear'")
-    out_h, out_w = output_shape
+    out_h = _positive_integer_value(output_shape[0], "output_shape height")
+    out_w = _positive_integer_value(output_shape[1], "output_shape width")
     yy, xx = np.indices((out_h, out_w), dtype=np.float64)
     target = np.stack([xx.ravel(), yy.ravel(), np.ones(xx.size)], axis=0)
     source = np.linalg.inv(matrix) @ target
@@ -490,6 +495,13 @@ def estimate_period_from_profile(
     """Estimate a periodicity from a 1-D belt texture profile."""
 
     values = np.asarray(profile, dtype=np.float64).ravel()
+    min_period_px = _positive_integer_value(min_period_px, "min_period_px")
+    top_k = _positive_integer_value(top_k, "top_k")
+    max_period_px = (
+        None
+        if max_period_px is None
+        else _positive_integer_value(max_period_px, "max_period_px")
+    )
     values = values[np.isfinite(values)]
     if values.size < 2 * min_period_px:
         raise ValueError("profile is too short for the requested minimum period")
@@ -548,8 +560,13 @@ def select_adaptive_map_frames(
     phases = np.asarray(phases_px, dtype=np.float64)
     if phases.size == 0:
         return []
-    if map_height_px <= 0 or sample_count <= 0 or crop_height_px <= 0:
-        raise ValueError("map_height_px, sample_count, and crop_height_px must be positive")
+    if not np.all(np.isfinite(phases)):
+        raise ValueError("phases_px must be finite")
+    map_height_px = _positive_integer_value(map_height_px, "map_height_px")
+    sample_count = _positive_integer_value(sample_count, "sample_count")
+    crop_height_px = _positive_integer_value(crop_height_px, "crop_height_px")
+    if bin_count is not None:
+        bin_count = _positive_integer_value(bin_count, "bin_count")
     scores = np.ones(phases.size, dtype=np.float64) if quality_scores is None else np.asarray(quality_scores, dtype=np.float64)
     if scores.shape != phases.shape:
         raise ValueError("quality_scores must have one value per phase")
@@ -1107,28 +1124,31 @@ def classify_failure_modes(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     warnings: list[dict[str, Any]] = []
 
+    def metric(name: str, default: float) -> float:
+        value = _finite_float(summary.get(name))
+        return default if value is None else value
+
     def add(code: str, severity: str, message: str) -> None:
         warnings.append({"code": code, "severity": severity, "message": message})
 
-    def metric_value(key: str, default: float) -> float:
-        value = summary.get(key)
-        if value is None or (isinstance(value, str) and value.strip() == ""):
-            return default
-        return float(value)
-
-    if metric_value("phase_boundary_fraction", 0.0) > 0.1:
+    if _summary_metric(summary, "phase_boundary_fraction", default=0.0) > 0.1:
         add("registration-search-boundary", "high", "Many phase corrections hit the search boundary; increase registration radius or improve velocity calibration.")
-    if metric_value("registration_score_median", 1.0) < 0.2:
+    if _summary_metric(summary, "registration_score_median", default=1.0) < 0.2:
         add("low-registration-score", "high", "Median phase-registration score is low; check belt texture, crop, and map quality.")
-    if metric_value("small_component_share_area_le_8", 0.0) > 0.5:
+    if _summary_metric(summary, "small_component_share_area_le_8", default=0.0) > 0.5:
         add("many-small-components", "medium", "Most detections are tiny; raise threshold or enable shape/edge gates.")
-    if metric_value("velocity_ratio_share_0_to_1", 1.0) < 0.5:
+    if _summary_metric(summary, "velocity_ratio_share_0_to_1", default=1.0) < 0.5:
         add("implausible-velocity-ratios", "high", "Few velocities are in the expected [0, 1] belt-relative range.")
-    if metric_value("map_low_coverage_fraction", 0.0) > 0.05:
+    if _summary_metric(summary, "map_low_coverage_fraction", default=0.0) > 0.05:
         add("low-map-coverage", "medium", "Some belt-map pixels have low coverage; increase sample frames or use adaptive sampling.")
-    if metric_value("track_fragmentation", 0.0) > 0.5:
+    if _summary_metric(summary, "track_fragmentation", default=0.0) > 0.5:
         add("track-fragmentation", "medium", "Tracks are fragmented; use wider PyRecEst matching or tracklet stitching.")
     return warnings
+
+
+def _summary_metric(summary: Mapping[str, Any], key: str, *, default: float) -> float:
+    value = _finite_float(summary.get(key))
+    return default if value is None else value
 
 
 def classify_event(
@@ -1399,11 +1419,20 @@ def _connected_component_masks(mask: BoolArray) -> list[BoolArray]:
 def _finite_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
+    if isinstance(value, (bool, np.bool_)):
+        return None
     try:
         parsed = float(value)
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _positive_integer_value(value: Any, name: str) -> int:
+    parsed = _finite_float(value)
+    if parsed is None or not parsed.is_integer() or parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(parsed)
 
 
 def _last_int_in_stem(path: Path, *, fallback: int) -> int:
