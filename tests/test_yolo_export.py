@@ -9,9 +9,12 @@ from PIL import Image
 
 from beltmap.cli.yolo_export import main as yolo_export_main
 from beltmap.yolo_export import (
+    ImageRecord,
+    YoloPrediction,
     export_yolo_predictions_to_beltmap_run,
     infer_frame_index,
     parse_yolo_label_line,
+    yolo_prediction_to_detection_row,
 )
 
 
@@ -40,6 +43,35 @@ def test_parse_yolo_label_line_with_and_without_confidence() -> None:
     assert pred_no_conf is not None
     assert pred_no_conf.class_id == 1
     assert pred_no_conf.confidence == 0.9
+
+
+def test_yolo_export_area_matches_integer_half_open_bbox() -> None:
+    image = ImageRecord(
+        path=Path("frame_000001.png"),
+        stem="frame_000001",
+        frame_index=1,
+        width=10,
+        height=10,
+    )
+    row = yolo_prediction_to_detection_row(
+        YoloPrediction(
+            class_id=0,
+            x_center=0.505,
+            y_center=0.505,
+            width=0.101,
+            height=0.101,
+            confidence=0.7,
+        ),
+        image=image,
+        label_index=1,
+        source="yolo11_raw",
+    )
+
+    assert row["bbox_top"] == "4"
+    assert row["bbox_left"] == "4"
+    assert row["bbox_bottom"] == "6"
+    assert row["bbox_right"] == "6"
+    assert row["area_px"] == "4"
 
 
 def test_export_yolo_predictions_writes_beltmap_run(tmp_path: Path) -> None:
@@ -71,6 +103,7 @@ def test_export_yolo_predictions_writes_beltmap_run(tmp_path: Path) -> None:
     assert detections[0]["bbox_top"] == "30"
     assert detections[0]["bbox_right"] == "60"
     assert detections[0]["bbox_bottom"] == "50"
+    assert detections[0]["area_px"] == "400"
     assert detections[0]["confidence"] == "0.80000000"
     assert detections[0]["score"] == "0.80000000"
     assert detections[0]["source"] == "yolo11_raw"

@@ -7,6 +7,9 @@ from PIL import Image
 from beltmap import yolo_export as _yolo_export
 
 
+_original_yolo_prediction_to_detection_row = _yolo_export.yolo_prediction_to_detection_row
+
+
 def duplicate_safe_find_images(
     images_dir: Path,
     *,
@@ -55,4 +58,37 @@ def duplicate_safe_find_images(
     return records
 
 
+def discrete_area_yolo_prediction_to_detection_row(
+    prediction: _yolo_export.YoloPrediction,
+    *,
+    image: _yolo_export.ImageRecord,
+    label_index: int,
+    source: str,
+) -> dict[str, str]:
+    """Return a BeltMap detection row with area matching the emitted integer box.
+
+    ``beltmap.yolo_export`` emits integer half-open ``bbox_*`` fields by flooring
+    the top/left edges and ceiling the bottom/right edges.  The original exporter
+    computed ``area_px`` from the unclipped floating-point YOLO box before that
+    integer expansion.  Tiny or highly fractional YOLO boxes can therefore report
+    an area that is smaller than the exported half-open box area, which affects
+    downstream small-component statistics and any area-based filtering.  Use the
+    discrete emitted box area instead.
+    """
+
+    row = _original_yolo_prediction_to_detection_row(
+        prediction,
+        image=image,
+        label_index=label_index,
+        source=source,
+    )
+    top = int(row["bbox_top"])
+    left = int(row["bbox_left"])
+    bottom = int(row["bbox_bottom"])
+    right = int(row["bbox_right"])
+    row["area_px"] = str((bottom - top) * (right - left))
+    return row
+
+
 _yolo_export.find_images = duplicate_safe_find_images
+_yolo_export.yolo_prediction_to_detection_row = discrete_area_yolo_prediction_to_detection_row
