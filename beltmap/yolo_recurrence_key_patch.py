@@ -152,29 +152,27 @@ setattr(correlation_gated_score_detection_recurrence, _ORIGINAL_ATTR, _original_
 def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
     """Classify recurrence errors using the same evidence as the hard filter.
 
-    The original taxonomy used ``max_recurrence_ratio`` alone.  After gating the
-    hard filter by signal *and* patch correlation, that made uncorrelated bright
-    revisits look like recurrent belt-fixed evidence in reports even though they
-    could never trigger the hard filter.  Use ``high_recurrence_revisits`` and
-    ``belt_fixedness_score`` instead so the report describes the actual decision
-    evidence.
+    The hard-filter threshold is applied before this function runs and is
+    represented by ``high_recurrence_revisits``.  Do not re-threshold
+    ``belt_fixedness_score`` here with the module default: users can pass a
+    different hard-reject threshold, and reapplying the default would make the
+    report describe recurrence evidence that the configured hard filter did not
+    actually use.
     """
 
     valid = _optional_int(feature.get("valid_revisits"))
     hard_reject = _bool_value(feature.get("hard_reject"))
     supported_revisits = _optional_int(feature.get("high_recurrence_revisits"))
-    supported_score = _optional_float(feature.get("belt_fixedness_score")) or 0.0
-    threshold = _yolo_recurrence.DEFAULT_HARD_RATIO_THRESHOLD
     role_lower = role.lower()
     if valid == 0:
         return f"{role_lower}_no_valid_revisits"
     if role == "FP" and hard_reject:
         return "fp_recurrent_removed"
-    if role == "FP" and supported_revisits == 0 and supported_score < threshold:
+    if role == "FP" and supported_revisits == 0:
         return "fp_low_shape_supported_recurrence_evidence"
     if role == "TP" and hard_reject:
         return "tp_high_shape_supported_recurrence_accidentally_removed"
-    if supported_revisits > 0 or supported_score >= threshold:
+    if supported_revisits > 0:
         return f"{role_lower}_shape_supported_recurrent_but_not_hard_rejected"
     return f"{role_lower}_inconclusive_low_recurrence"
 
