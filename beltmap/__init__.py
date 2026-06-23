@@ -83,6 +83,10 @@ from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F
 # detections_per_frame.csv consistent with the exported detections.csv rows.
 from . import yolo_recurrence_per_frame_patch as _yolo_recurrence_per_frame_patch  # noqa: F401,E402
 
+# Import for side effect: make YOLO recurrence metadata fall back when optional
+# numeric fields are serialized as blank strings in legacy run metadata.
+from . import yolo_recurrence_metadata_patch as _yolo_recurrence_metadata_patch  # noqa: F401,E402
+
 # Import for side effect: make YOLO export fail on ambiguous image directories
 # instead of silently overwriting duplicate stems or duplicate frame indices.
 from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,E402
