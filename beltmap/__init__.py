@@ -79,6 +79,10 @@ from .tracking import (
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
 
+# Import for side effect: make YOLO recurrence filtered runs keep
+# detections_per_frame.csv consistent with the exported detections.csv rows.
+from . import yolo_recurrence_per_frame_patch as _yolo_recurrence_per_frame_patch  # noqa: F401,E402
+
 # Import for side effect: make YOLO export fail on ambiguous image directories
 # instead of silently overwriting duplicate stems or duplicate frame indices.
 from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,E402
