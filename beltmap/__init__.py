@@ -87,6 +87,10 @@ from . import yolo_recurrence_per_frame_patch as _yolo_recurrence_per_frame_patc
 # numeric fields are serialized as blank strings in legacy run metadata.
 from . import yolo_recurrence_metadata_patch as _yolo_recurrence_metadata_patch  # noqa: F401,E402
 
+# Import for side effect: make YOLO recurrence contact sheets focus on the
+# scored detection and revisit patches instead of downscaled full crops.
+from . import yolo_recurrence_contact_patch as _yolo_recurrence_contact_patch  # noqa: F401,E402
+
 # Import for side effect: make YOLO export fail on ambiguous image directories
 # instead of silently overwriting duplicate stems or duplicate frame indices.
 from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,E402
