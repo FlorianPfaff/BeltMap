@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import importlib
 import json
 from pathlib import Path
 
@@ -54,6 +55,41 @@ def test_yolo_export_area_matches_integer_half_open_bbox() -> None:
         height=10,
     )
     row = yolo_prediction_to_detection_row(
+        YoloPrediction(
+            class_id=0,
+            x_center=0.505,
+            y_center=0.505,
+            width=0.101,
+            height=0.101,
+            confidence=0.7,
+        ),
+        image=image,
+        label_index=1,
+        source="yolo11_raw",
+    )
+
+    assert row["bbox_top"] == "4"
+    assert row["bbox_left"] == "4"
+    assert row["bbox_bottom"] == "6"
+    assert row["bbox_right"] == "6"
+    assert row["area_px"] == "4"
+
+
+def test_yolo_export_patch_is_reload_safe() -> None:
+    import beltmap.yolo_export as yolo_export
+    import beltmap.yolo_export_image_patch as patch_module
+
+    importlib.reload(patch_module)
+    importlib.reload(patch_module)
+
+    image = ImageRecord(
+        path=Path("frame_000001.png"),
+        stem="frame_000001",
+        frame_index=1,
+        width=10,
+        height=10,
+    )
+    row = yolo_export.yolo_prediction_to_detection_row(
         YoloPrediction(
             class_id=0,
             x_center=0.505,
