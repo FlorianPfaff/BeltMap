@@ -5,6 +5,9 @@ from typing import Any, Mapping
 
 from beltmap import yolo_recurrence as _yolo_recurrence
 
+_PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
+_ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original"
+
 
 def _required(row: Mapping[str, Any], key: str) -> Any:
     value = row.get(key)
@@ -34,8 +37,36 @@ def _optional_float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _optional_int(value: Any) -> int:
+    parsed = _optional_float(value)
+    if parsed is None:
+        return 0
+    return int(parsed)
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
 def _recurrence_strength(ratio: float, correlation: float) -> float:
     return max(0.0, min(1.0, ratio)) * max(0.0, correlation)
+
+
+def _unwrap_patched_callable(func: Any) -> Any:
+    """Return the original unpatched callable behind our wrapper, if present.
+
+    This module is imported for side effects from ``beltmap.__init__`` and from
+    the YOLO recurrence CLI.  A normal second import is cached, but test suites
+    and notebooks can reload modules.  Without unwrapping, a reload would store
+    the previous wrapper as ``_original_score_detection_recurrence`` and the new
+    wrapper would recursively call itself.
+    """
+
+    return getattr(func, _ORIGINAL_ATTR, func)
 
 
 def correlation_supported_high_revisits(
@@ -94,7 +125,9 @@ def duplicate_safe_row_key(row: Mapping[str, Any]) -> tuple[object, ...]:
     )
 
 
-_original_score_detection_recurrence = _yolo_recurrence.score_detection_recurrence
+_original_score_detection_recurrence = _unwrap_patched_callable(
+    _yolo_recurrence.score_detection_recurrence
+)
 
 
 def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -112,10 +145,46 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
     return result
 
 
+setattr(correlation_gated_score_detection_recurrence, _PATCHED_ATTR, True)
+setattr(correlation_gated_score_detection_recurrence, _ORIGINAL_ATTR, _original_score_detection_recurrence)
+
+
+def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
+    """Classify recurrence errors using the same evidence as the hard filter.
+
+    The original taxonomy used ``max_recurrence_ratio`` alone.  After gating the
+    hard filter by signal *and* patch correlation, that made uncorrelated bright
+    revisits look like recurrent belt-fixed evidence in reports even though they
+    could never trigger the hard filter.  Use ``high_recurrence_revisits`` and
+    ``belt_fixedness_score`` instead so the report describes the actual decision
+    evidence.
+    """
+
+    valid = _optional_int(feature.get("valid_revisits"))
+    hard_reject = _bool_value(feature.get("hard_reject"))
+    supported_revisits = _optional_int(feature.get("high_recurrence_revisits"))
+    supported_score = _optional_float(feature.get("belt_fixedness_score")) or 0.0
+    threshold = _yolo_recurrence.DEFAULT_HARD_RATIO_THRESHOLD
+    role_lower = role.lower()
+    if valid == 0:
+        return f"{role_lower}_no_valid_revisits"
+    if role == "FP" and hard_reject:
+        return "fp_recurrent_removed"
+    if role == "FP" and supported_revisits == 0 and supported_score < threshold:
+        return "fp_low_shape_supported_recurrence_evidence"
+    if role == "TP" and hard_reject:
+        return "tp_high_shape_supported_recurrence_accidentally_removed"
+    if supported_revisits > 0 or supported_score >= threshold:
+        return f"{role_lower}_shape_supported_recurrent_but_not_hard_rejected"
+    return f"{role_lower}_inconclusive_low_recurrence"
+
+
 # Backwards-compatible safety patch for older imports.  The production CLI
 # imports this module before running the recurrence scorer.  The underlying
 # scorer also needs these fixes when used directly; ``beltmap.__init__`` imports
 # this module for that side effect until ``beltmap.yolo_recurrence`` is updated
-# in place.
+# in place.  The wrapper is idempotent, so reloading this module cannot wrap a
+# previous wrapper and recurse.
 _yolo_recurrence.row_key = duplicate_safe_row_key
 _yolo_recurrence.score_detection_recurrence = correlation_gated_score_detection_recurrence
+_yolo_recurrence.error_taxonomy = correlation_gated_error_taxonomy
