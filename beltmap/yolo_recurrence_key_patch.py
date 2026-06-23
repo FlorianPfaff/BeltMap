@@ -56,6 +56,17 @@ def _recurrence_strength(ratio: float, correlation: float) -> float:
     return max(0.0, min(1.0, ratio)) * max(0.0, correlation)
 
 
+def _shape_supported_strengths(row: Mapping[str, Any]) -> list[float]:
+    strengths: list[float] = []
+    for suffix in ("prev", "next"):
+        ratio = _optional_float(row.get(f"recurrence_ratio_{suffix}"))
+        corr = _optional_float(row.get(f"patch_correlation_{suffix}"))
+        if ratio is None or corr is None:
+            continue
+        strengths.append(_recurrence_strength(ratio, corr))
+    return strengths
+
+
 def _unwrap_patched_callable(func: Any) -> Any:
     """Return the original unpatched callable behind our wrapper, if present.
 
@@ -84,15 +95,30 @@ def correlation_supported_high_revisits(
     should use the same evidence instead of rejecting on ratio alone.
     """
 
-    count = 0
-    for suffix in ("prev", "next"):
-        ratio = _optional_float(row.get(f"recurrence_ratio_{suffix}"))
-        corr = _optional_float(row.get(f"patch_correlation_{suffix}"))
-        if ratio is None or corr is None:
-            continue
-        if _recurrence_strength(ratio, corr) >= threshold:
-            count += 1
-    return count
+    return sum(strength >= threshold for strength in _shape_supported_strengths(row))
+
+
+def correlation_supported_belt_fixedness_score(
+    row: Mapping[str, Any],
+    *,
+    min_revisits: int,
+) -> float:
+    """Return the shape-supported recurrence score used for YOLO reranking.
+
+    Hard rejection still requires ``min_revisits`` supported revisits.  The soft
+    rerank score should nevertheless use available one-sided recurrence evidence
+    when only a previous or next revolution is visible.  The old patched path kept
+    the core module's second-largest score, so detections near the beginning or
+    end of a split got ``belt_fixedness_score = 0`` even when their only valid
+    revisit was strongly shape-supported.  That made the rerank path blind to
+    exactly the one-sided cases shown in the contact sheets.
+    """
+
+    strengths = sorted(_shape_supported_strengths(row), reverse=True)
+    if not strengths:
+        return 0.0
+    rank = min(max(1, int(min_revisits)), len(strengths))
+    return float(strengths[rank - 1])
 
 
 def duplicate_safe_row_key(row: Mapping[str, Any]) -> tuple[object, ...]:
@@ -131,7 +157,7 @@ _original_score_detection_recurrence = _unwrap_patched_callable(
 
 
 def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """Patch the hard filter to use the same signal+shape evidence as scoring."""
+    """Patch the hard filter and rerank score to use shape-supported recurrence."""
 
     result = _original_score_detection_recurrence(*args, **kwargs)
     config = kwargs.get("config")
@@ -140,8 +166,11 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
     )
     min_revisits = int(getattr(config, "hard_min_revisits", _yolo_recurrence.DEFAULT_HARD_MIN_REVISITS))
     high_revisits = correlation_supported_high_revisits(result, threshold=threshold)
+    belt_fixedness = correlation_supported_belt_fixedness_score(result, min_revisits=min_revisits)
     result["hard_ratio_threshold"] = threshold
     result["high_recurrence_revisits"] = high_revisits
+    result["belt_fixedness_score"] = belt_fixedness
+    result["transient_score"] = max(0.05, min(1.0, 1.0 - belt_fixedness))
     result["hard_reject"] = high_revisits >= min_revisits
     return result
 
