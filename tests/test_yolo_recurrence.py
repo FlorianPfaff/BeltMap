@@ -7,6 +7,7 @@ import numpy as np
 
 from beltmap.yolo_recurrence import error_taxonomy, parse_belt_region, patch_correlation, patch_excess, row_key
 from beltmap.yolo_recurrence_key_patch import (
+    correlation_supported_belt_fixedness_score,
     correlation_supported_high_revisits,
     duplicate_safe_row_key,
 )
@@ -53,6 +54,28 @@ def test_correlation_supported_high_revisits_counts_shape_supported_revisits() -
     }
 
     assert correlation_supported_high_revisits(row, threshold=0.4) == 2
+
+
+def test_correlation_supported_belt_fixedness_uses_ranked_supported_revisit() -> None:
+    row = {
+        "recurrence_ratio_prev": "0.9",
+        "patch_correlation_prev": "0.7",  # strength 0.63
+        "recurrence_ratio_next": "0.8",
+        "patch_correlation_next": "0.6",  # strength 0.48
+    }
+
+    assert correlation_supported_belt_fixedness_score(row, min_revisits=2) == pytest.approx(0.48)
+
+
+def test_correlation_supported_belt_fixedness_uses_one_sided_revisit_when_only_one_is_visible() -> None:
+    row = {
+        "recurrence_ratio_prev": "0.9",
+        "patch_correlation_prev": "0.7",
+        "recurrence_ratio_next": "",
+        "patch_correlation_next": "",
+    }
+
+    assert correlation_supported_belt_fixedness_score(row, min_revisits=2) == pytest.approx(0.63)
 
 
 def test_error_taxonomy_ignores_uncorrelated_bright_revisits() -> None:
