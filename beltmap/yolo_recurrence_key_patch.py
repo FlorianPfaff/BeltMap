@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any, Mapping
 
+from PIL import Image
+
 from beltmap import yolo_recurrence as _yolo_recurrence
 
 _PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
@@ -161,6 +163,7 @@ _original_score_detection_recurrence = _unwrap_patched_callable(
     _yolo_recurrence.score_detection_recurrence
 )
 _original_enrich_detection_row = _unwrap_patched_callable(_yolo_recurrence.enrich_detection_row)
+_original_load_crop = _unwrap_patched_callable(_yolo_recurrence.load_crop)
 
 
 def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -198,6 +201,48 @@ def persist_threshold_enrich_detection_row(*args: Any, **kwargs: Any) -> dict[st
 
 setattr(persist_threshold_enrich_detection_row, _PATCHED_ATTR, True)
 setattr(persist_threshold_enrich_detection_row, _ORIGINAL_ATTR, _original_enrich_detection_row)
+
+
+def bounds_checked_load_crop(*args: Any, **kwargs: Any) -> Any:
+    """Reject out-of-image belt regions before PIL pads them with black pixels.
+
+    ``PIL.Image.crop`` silently pads regions extending beyond the source image.
+    Recurrence scoring would then compare detector boxes against artificial black
+    borders, which can suppress or amplify apparent recurrence evidence.  The
+    BeltMap crop must be fully contained in the source frame; fail with a clear
+    error instead of producing padded crops.
+    """
+
+    if args:
+        frame_index = int(args[0])
+    else:
+        frame_index = int(kwargs.get("frame_index"))
+    source_images = kwargs.get("source_images")
+    region = kwargs.get("region")
+    if not isinstance(source_images, Mapping) or region is None:
+        return _original_load_crop(*args, **kwargs)
+    path = source_images.get(frame_index)
+    if path is None:
+        return _original_load_crop(*args, **kwargs)
+
+    with Image.open(path) as image:
+        image_width, image_height = image.size
+    left = int(region.left)
+    top = int(region.top)
+    right = left + int(region.width)
+    bottom = top + int(region.height)
+    if left < 0 or top < 0 or right > image_width or bottom > image_height:
+        raise ValueError(
+            "belt region exceeds source image bounds for frame "
+            f"{frame_index}: region=(top={top}, left={left}, "
+            f"height={region.height}, width={region.width}), "
+            f"image=(height={image_height}, width={image_width})"
+        )
+    return _original_load_crop(*args, **kwargs)
+
+
+setattr(bounds_checked_load_crop, _PATCHED_ATTR, True)
+setattr(bounds_checked_load_crop, _ORIGINAL_ATTR, _original_load_crop)
 
 
 def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
@@ -242,4 +287,5 @@ _ensure_field(_yolo_recurrence.RUN_EXTRA_FIELDS, THRESHOLD_FIELD)
 _yolo_recurrence.row_key = duplicate_safe_row_key
 _yolo_recurrence.score_detection_recurrence = correlation_gated_score_detection_recurrence
 _yolo_recurrence.enrich_detection_row = persist_threshold_enrich_detection_row
+_yolo_recurrence.load_crop = bounds_checked_load_crop
 _yolo_recurrence.error_taxonomy = correlation_gated_error_taxonomy
