@@ -295,7 +295,7 @@ jobs:
           fractional_splat = true
           frame_median_offset_correction = true
           local_illumination_correction = false
-          mask_iterations = 4
+          mask_iterations = 2
           aggregation = "huber"
           robust_iterations = 1
           robust_huber_delta = 3.0
