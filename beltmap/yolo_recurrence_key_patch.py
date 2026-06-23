@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any, Mapping
 
 from beltmap import yolo_recurrence as _yolo_recurrence
@@ -51,6 +52,43 @@ def _bool_value(value: Any) -> bool:
     if value in (None, ""):
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _validate_score_frame_range(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> None:
+    """Reject detections whose frame index is outside the recurrence inputs.
+
+    The core scorer indexes ``phase_by_frame[frame_index]`` before loading the
+    source image.  A YOLO export can legitimately contain frame indices outside
+    the caller's ``--frame-count``/phase-estimate range, for example when a user
+    scores a non-0-based test split with the default frame count.  Without this
+    guard the CLI crashes with a raw ``IndexError``; surface a deterministic
+    ``ValueError`` that explains which input is inconsistent.
+    """
+
+    if not args or not isinstance(args[0], Mapping):
+        return
+    row = args[0]
+    frame = _integer_value(row, "frame_index")
+    if frame < 0:
+        raise ValueError(f"frame_index {frame} must be non-negative")
+
+    phase_by_frame = kwargs.get("phase_by_frame")
+    if isinstance(phase_by_frame, Sequence):
+        n_phases = len(phase_by_frame)
+        if frame >= n_phases:
+            raise ValueError(
+                f"frame_index {frame} is outside phase_estimates frame range 0..{n_phases - 1}; "
+                "increase --frame-count or provide matching phase estimates"
+            )
+
+    revolution_by_frame = kwargs.get("revolution_by_frame")
+    if isinstance(revolution_by_frame, Sequence):
+        n_revolutions = len(revolution_by_frame)
+        if frame >= n_revolutions:
+            raise ValueError(
+                f"frame_index {frame} is outside revolution-index frame range 0..{n_revolutions - 1}; "
+                "increase --frame-count or provide matching phase estimates"
+            )
 
 
 def _recurrence_strength(ratio: float, correlation: float) -> float:
@@ -166,6 +204,7 @@ _original_enrich_detection_row = _unwrap_patched_callable(_yolo_recurrence.enric
 def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """Patch the hard filter and rerank score to use shape-supported recurrence."""
 
+    _validate_score_frame_range(args, kwargs)
     result = _original_score_detection_recurrence(*args, **kwargs)
     config = kwargs.get("config")
     threshold = float(
