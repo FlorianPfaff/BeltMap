@@ -164,16 +164,19 @@ def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -
     valid = _optional_int(feature.get("valid_revisits"))
     hard_reject = _bool_value(feature.get("hard_reject"))
     supported_revisits = _optional_int(feature.get("high_recurrence_revisits"))
+    supported_score = _optional_float(feature.get("belt_fixedness_score")) or 0.0
+    threshold = _optional_float(feature.get("hard_ratio_threshold"))
+    threshold_supported = threshold is not None and supported_score >= threshold
     role_lower = role.lower()
     if valid == 0:
         return f"{role_lower}_no_valid_revisits"
     if role == "FP" and hard_reject:
         return "fp_recurrent_removed"
-    if role == "FP" and supported_revisits == 0:
+    if role == "FP" and supported_revisits == 0 and not threshold_supported:
         return "fp_low_shape_supported_recurrence_evidence"
     if role == "TP" and hard_reject:
         return "tp_high_shape_supported_recurrence_accidentally_removed"
-    if supported_revisits > 0:
+    if supported_revisits > 0 or threshold_supported:
         return f"{role_lower}_shape_supported_recurrent_but_not_hard_rejected"
     return f"{role_lower}_inconclusive_low_recurrence"
 
