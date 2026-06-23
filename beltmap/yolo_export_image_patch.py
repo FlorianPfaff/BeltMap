@@ -1,13 +1,32 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
 from beltmap import yolo_export as _yolo_export
 
+_PATCHED_ATTR = "_beltmap_yolo_export_patched"
+_ORIGINAL_ATTR = "_beltmap_yolo_export_original"
 
-_original_yolo_prediction_to_detection_row = _yolo_export.yolo_prediction_to_detection_row
+
+def _unwrap_patched_callable(func: Any) -> Any:
+    """Return the original callable behind our wrapper, if already patched.
+
+    This module is imported for side effects from ``beltmap.__init__``.  Normal
+    imports are cached, but test suites and interactive notebooks may reload the
+    module.  Without unwrapping, a reload would store the previous wrapper as the
+    original YOLO-row converter and ``discrete_area_yolo_prediction_to_detection_row``
+    would recurse forever.
+    """
+
+    return getattr(func, _ORIGINAL_ATTR, func)
+
+
+_original_yolo_prediction_to_detection_row = _unwrap_patched_callable(
+    _yolo_export.yolo_prediction_to_detection_row
+)
 
 
 def duplicate_safe_find_images(
@@ -89,6 +108,13 @@ def discrete_area_yolo_prediction_to_detection_row(
     row["area_px"] = str((bottom - top) * (right - left))
     return row
 
+
+setattr(discrete_area_yolo_prediction_to_detection_row, _PATCHED_ATTR, True)
+setattr(
+    discrete_area_yolo_prediction_to_detection_row,
+    _ORIGINAL_ATTR,
+    _original_yolo_prediction_to_detection_row,
+)
 
 _yolo_export.find_images = duplicate_safe_find_images
 _yolo_export.yolo_prediction_to_detection_row = discrete_area_yolo_prediction_to_detection_row
