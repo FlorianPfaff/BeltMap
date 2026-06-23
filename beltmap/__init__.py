@@ -87,6 +87,10 @@ from . import yolo_recurrence_per_frame_patch as _yolo_recurrence_per_frame_patc
 # instead of silently overwriting duplicate stems or duplicate frame indices.
 from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,E402
 
+# Import for side effect: make the ghost objective understand the nested JSON
+# schema written by beltmap-map-only-negative-control metrics files.
+from . import ghost_objective_map_only_json_patch as _ghost_objective_map_only_json_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
