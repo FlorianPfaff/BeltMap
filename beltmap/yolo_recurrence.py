@@ -334,6 +334,7 @@ def score_detection_recurrence(
         min_size_px=config.min_patch_size_px,
     )
     phase = phase_by_frame[frame_index]
+    patch_center_x = 0.5 * (patch.left + patch.right)
     belt_y = (y + phase) % belt_map.shape[0]
     original = patch_evidence(
         frame_index,
@@ -354,7 +355,7 @@ def score_detection_recurrence(
         revisit = find_revisit(
             frame_index=frame_index,
             belt_y=belt_y,
-            x=x,
+            x=patch_center_x,
             patch_shape=(patch.height, patch.width),
             revolution_offset=offset,
             phase_by_frame=phase_by_frame,
