@@ -7,6 +7,7 @@ from beltmap import yolo_recurrence as _yolo_recurrence
 
 _PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
 _ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original"
+THRESHOLD_FIELD = "hard_ratio_threshold"
 
 
 def _required(row: Mapping[str, Any], key: str) -> Any:
@@ -78,6 +79,11 @@ def _unwrap_patched_callable(func: Any) -> Any:
     """
 
     return getattr(func, _ORIGINAL_ATTR, func)
+
+
+def _ensure_field(fieldnames: list[str], field: str) -> None:
+    if field not in fieldnames:
+        fieldnames.append(field)
 
 
 def correlation_supported_high_revisits(
@@ -154,6 +160,7 @@ def duplicate_safe_row_key(row: Mapping[str, Any]) -> tuple[object, ...]:
 _original_score_detection_recurrence = _unwrap_patched_callable(
     _yolo_recurrence.score_detection_recurrence
 )
+_original_enrich_detection_row = _unwrap_patched_callable(_yolo_recurrence.enrich_detection_row)
 
 
 def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -167,7 +174,7 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
     min_revisits = int(getattr(config, "hard_min_revisits", _yolo_recurrence.DEFAULT_HARD_MIN_REVISITS))
     high_revisits = correlation_supported_high_revisits(result, threshold=threshold)
     belt_fixedness = correlation_supported_belt_fixedness_score(result, min_revisits=min_revisits)
-    result["hard_ratio_threshold"] = threshold
+    result[THRESHOLD_FIELD] = threshold
     result["high_recurrence_revisits"] = high_revisits
     result["belt_fixedness_score"] = belt_fixedness
     result["transient_score"] = max(0.05, min(1.0, 1.0 - belt_fixedness))
@@ -177,6 +184,20 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
 
 setattr(correlation_gated_score_detection_recurrence, _PATCHED_ATTR, True)
 setattr(correlation_gated_score_detection_recurrence, _ORIGINAL_ATTR, _original_score_detection_recurrence)
+
+
+def persist_threshold_enrich_detection_row(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Keep the configured recurrence threshold in exported hard/rerank runs."""
+
+    enriched = dict(_original_enrich_detection_row(*args, **kwargs))
+    feature = args[1] if len(args) >= 2 else kwargs.get("feature")
+    if isinstance(feature, Mapping) and THRESHOLD_FIELD in feature:
+        enriched[THRESHOLD_FIELD] = feature[THRESHOLD_FIELD]
+    return enriched
+
+
+setattr(persist_threshold_enrich_detection_row, _PATCHED_ATTR, True)
+setattr(persist_threshold_enrich_detection_row, _ORIGINAL_ATTR, _original_enrich_detection_row)
 
 
 def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -> str:
@@ -194,7 +215,7 @@ def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -
     hard_reject = _bool_value(feature.get("hard_reject"))
     supported_revisits = _optional_int(feature.get("high_recurrence_revisits"))
     supported_score = _optional_float(feature.get("belt_fixedness_score")) or 0.0
-    threshold = _optional_float(feature.get("hard_ratio_threshold"))
+    threshold = _optional_float(feature.get(THRESHOLD_FIELD))
     threshold_supported = threshold is not None and supported_score >= threshold
     role_lower = role.lower()
     if valid == 0:
@@ -216,6 +237,9 @@ def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -
 # this module for that side effect until ``beltmap.yolo_recurrence`` is updated
 # in place.  The wrapper is idempotent, so reloading this module cannot wrap a
 # previous wrapper and recurse.
+_ensure_field(_yolo_recurrence.FEATURE_FIELDNAMES, THRESHOLD_FIELD)
+_ensure_field(_yolo_recurrence.RUN_EXTRA_FIELDS, THRESHOLD_FIELD)
 _yolo_recurrence.row_key = duplicate_safe_row_key
 _yolo_recurrence.score_detection_recurrence = correlation_gated_score_detection_recurrence
+_yolo_recurrence.enrich_detection_row = persist_threshold_enrich_detection_row
 _yolo_recurrence.error_taxonomy = correlation_gated_error_taxonomy

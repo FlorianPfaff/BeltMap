@@ -5,8 +5,18 @@ import importlib
 import pytest
 import numpy as np
 
-from beltmap.yolo_recurrence import error_taxonomy, parse_belt_region, patch_correlation, patch_excess, row_key
+from beltmap.yolo_recurrence import (
+    FEATURE_FIELDNAMES,
+    RUN_EXTRA_FIELDS,
+    enrich_detection_row,
+    error_taxonomy,
+    parse_belt_region,
+    patch_correlation,
+    patch_excess,
+    row_key,
+)
 from beltmap.yolo_recurrence_key_patch import (
+    THRESHOLD_FIELD,
     correlation_supported_belt_fixedness_score,
     correlation_supported_high_revisits,
     duplicate_safe_row_key,
@@ -112,6 +122,36 @@ def test_error_taxonomy_reports_shape_supported_recurrence() -> None:
     }
 
     assert error_taxonomy(feature, role="TP") == "tp_shape_supported_recurrent_but_not_hard_rejected"
+
+
+def test_threshold_field_is_exported_for_feature_and_filtered_runs() -> None:
+    row = {
+        "frame_index": "12",
+        "label": "0",
+        "y": "20",
+        "x": "30",
+        "area_px": "400",
+        "bbox_top": "10",
+        "bbox_left": "20",
+        "bbox_bottom": "30",
+        "bbox_right": "40",
+        "score": "0.9",
+        "confidence": "0.9",
+        "source": "yolo11_raw",
+    }
+    feature = {
+        THRESHOLD_FIELD: "0.7",
+        "transient_score": "0.8",
+        "belt_fixedness_score": "0.2",
+        "max_recurrence_ratio": "0.5",
+        "high_recurrence_revisits": "1",
+        "hard_reject": "False",
+    }
+
+    assert THRESHOLD_FIELD in FEATURE_FIELDNAMES
+    assert THRESHOLD_FIELD in RUN_EXTRA_FIELDS
+    assert enrich_detection_row(row, feature, rerank=False)[THRESHOLD_FIELD] == "0.7"
+    assert enrich_detection_row(row, feature, rerank=True)[THRESHOLD_FIELD] == "0.7"
 
 
 def test_duplicate_safe_row_key_distinguishes_same_frame_same_label_boxes() -> None:
