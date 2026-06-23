@@ -67,6 +67,18 @@ def test_error_taxonomy_ignores_uncorrelated_bright_revisits() -> None:
     assert error_taxonomy(feature, role="FP") == "fp_low_shape_supported_recurrence_evidence"
 
 
+def test_error_taxonomy_uses_configured_supported_revisit_count_not_default_threshold() -> None:
+    feature = {
+        "valid_revisits": "2",
+        "hard_reject": "False",
+        "max_recurrence_ratio": "1.4",
+        "belt_fixedness_score": "0.45",
+        "high_recurrence_revisits": "0",
+    }
+
+    assert error_taxonomy(feature, role="FP") == "fp_low_shape_supported_recurrence_evidence"
+
+
 def test_error_taxonomy_reports_shape_supported_recurrence() -> None:
     feature = {
         "valid_revisits": "2",
