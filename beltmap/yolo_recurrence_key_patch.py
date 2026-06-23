@@ -140,6 +140,7 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
     )
     min_revisits = int(getattr(config, "hard_min_revisits", _yolo_recurrence.DEFAULT_HARD_MIN_REVISITS))
     high_revisits = correlation_supported_high_revisits(result, threshold=threshold)
+    result["hard_ratio_threshold"] = threshold
     result["high_recurrence_revisits"] = high_revisits
     result["hard_reject"] = high_revisits >= min_revisits
     return result
@@ -157,14 +158,20 @@ def correlation_gated_error_taxonomy(feature: Mapping[str, Any], *, role: str) -
     revisits look like recurrent belt-fixed evidence in reports even though they
     could never trigger the hard filter.  Use ``high_recurrence_revisits`` and
     ``belt_fixedness_score`` instead so the report describes the actual decision
-    evidence.
+    evidence.  If a run used a non-default hard threshold, read that threshold
+    from the feature row so the taxonomy follows the configured decision rule.
     """
 
     valid = _optional_int(feature.get("valid_revisits"))
     hard_reject = _bool_value(feature.get("hard_reject"))
     supported_revisits = _optional_int(feature.get("high_recurrence_revisits"))
     supported_score = _optional_float(feature.get("belt_fixedness_score")) or 0.0
-    threshold = _yolo_recurrence.DEFAULT_HARD_RATIO_THRESHOLD
+    threshold_from_feature = _optional_float(feature.get("hard_ratio_threshold"))
+    threshold = (
+        threshold_from_feature
+        if threshold_from_feature is not None
+        else _yolo_recurrence.DEFAULT_HARD_RATIO_THRESHOLD
+    )
     role_lower = role.lower()
     if valid == 0:
         return f"{role_lower}_no_valid_revisits"
