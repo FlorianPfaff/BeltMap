@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import beltmap.ghost_repair_crop_clip_patch  # noqa: F401
 from beltmap.ghost_repair import build_ghost_defect_maps
 
 
