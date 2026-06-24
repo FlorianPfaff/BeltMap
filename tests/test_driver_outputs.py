@@ -101,3 +101,41 @@ def test_driver_output_rows_tolerate_paths_outside_data_root(tmp_path, monkeypat
     assert phase_row["image"] == str(image_path)
     assert detection_row["image"] == str(image_path)
     assert track_row["image"] == str(image_path)
+
+
+def test_phase_estimate_row_omits_cyclic_fields_without_known_period(
+    tmp_path,
+    monkeypatch,
+):
+    image_path = tmp_path / "frame_000.png"
+    image_path.write_bytes(b"not-an-image-needed-for-row-tests")
+    monkeypatch.setattr(rt, "DATA", tmp_path)
+
+    phase_row = driver.phase_estimate_row(
+        0,
+        image_path,
+        _residual_with_phase_estimate(),
+        period_px=None,
+    )
+
+    assert phase_row["phase_px"] == 1.0
+    assert phase_row["phase_fraction"] == ""
+    assert phase_row["phase_rad"] == ""
+
+
+def test_texture_phase_velocity_summary_skips_unknown_period():
+    phase_rows = [
+        {"frame_index": 0, "phase_px": 0.0, "method": "registration"},
+        {"frame_index": 1, "phase_px": 1.0, "method": "registration"},
+    ]
+
+    summary = driver.texture_phase_velocity_summary(
+        phase_rows,
+        period_px=None,
+        nominal_velocity_px_per_frame=1.0,
+    )
+
+    assert summary == {
+        "texture_phase_velocity_status": "unknown_period",
+        "texture_phase_velocity_samples": 2,
+    }
