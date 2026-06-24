@@ -307,9 +307,10 @@ def validated_label_state(truth_path: Path | str) -> LabelValidationReport:
             errors.append(f"frame review row {index} has no valid frame_index")
             continue
         reviewed_frames.add(frame)
-        if status_value in _NEEDS_REVIEW_STATUSES:
+        is_empty_review = status_value in _EMPTY_REVIEW_STATUSES or confirmed_empty is True
+        if status_value in _NEEDS_REVIEW_STATUSES and not is_empty_review:
             needs_review += 1
-        if status_value in _EMPTY_REVIEW_STATUSES or confirmed_empty is True:
+        if is_empty_review:
             reviewed_empty += 1
             review_empty_frames.add(frame)
         if status_value in _PARTICLE_REVIEW_STATUSES:
