@@ -149,7 +149,7 @@ def _patched_phase_drift_filter(*args, **kwargs):
 
 
 def _patched_phase_estimate_row(frame_index: int, path, residual, period_px: float) -> dict:
-    resolved_period = _model_period(period_px)
+    resolved_period = None if period_px is None else float(period_px)
     row = _original_phase_estimate_row(
         frame_index,
         path,
@@ -185,7 +185,7 @@ def _patched_texture_phase_velocity_summary(
     period_px: float,
     nominal_velocity_px_per_frame: float,
 ):
-    resolved_period = _model_period(period_px)
+    resolved_period = None if period_px is None else float(period_px)
     if resolved_period is None:
         samples, has_registration = _registered_phase_row_count(phase_rows)
         if samples >= 2 and has_registration:
