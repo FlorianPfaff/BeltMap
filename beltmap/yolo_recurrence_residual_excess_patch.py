@@ -45,7 +45,9 @@ def residual_patch_excess(
     if residual.size == 0:
         return 0.0
     maximum = float(np.max(residual))
-    return maximum if np.isfinite(maximum) else 0.0
+    if not np.isfinite(maximum):
+        return 0.0
+    return max(0.0, maximum)
 
 
 setattr(residual_patch_excess, _PATCHED_ATTR, True)
