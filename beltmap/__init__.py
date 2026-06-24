@@ -99,6 +99,10 @@ from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,
 # schema written by beltmap-map-only-negative-control metrics files.
 from . import ghost_objective_map_only_json_patch as _ghost_objective_map_only_json_patch  # noqa: F401,E402
 
+# Import for side effect: keep the packaged driver from turning inferred map
+# support height into a cyclic belt period.
+from . import driver_period_state_patch as _driver_period_state_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
