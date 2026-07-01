@@ -33,7 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.0",
-    "pillow>=10",
+    "pillow>=12.3.0",
     "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git@main",
 ]
 
