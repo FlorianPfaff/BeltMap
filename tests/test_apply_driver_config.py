@@ -105,7 +105,9 @@ def test_apply_config_resolves_map_exclusion_mask_path(tmp_path):
     assert option["source"] == f"config:{config_path}"
 
 
-def test_phase_estimate_row_reports_circular_coordinates():
+def test_phase_estimate_row_reports_circular_coordinates(monkeypatch):
+    monkeypatch.setenv("BELT_PERIOD_PX", "100")
+    monkeypatch.delenv("REUSE_BELT_MAP_PATH", raising=False)
     phase = PhaseEstimate(
         phase_px=25.0,
         frame_index=3.0,
@@ -173,7 +175,9 @@ def test_motion_model_phase_estimate_bypasses_registration():
     assert estimate.method == "motion_model"
 
 
-def test_texture_phase_velocity_summary_estimates_phase_speed():
+def test_texture_phase_velocity_summary_estimates_phase_speed(monkeypatch):
+    monkeypatch.setenv("BELT_PERIOD_PX", "100")
+    monkeypatch.delenv("REUSE_BELT_MAP_PATH", raising=False)
     rows = [
         {
             "frame_index": index,
