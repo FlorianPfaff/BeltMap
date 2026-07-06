@@ -148,13 +148,13 @@ def _patched_phase_drift_filter(*args, **kwargs):
     return _original_phase_drift_filter(*args, **kwargs)
 
 
-def _patched_phase_estimate_row(frame_index: int, path, residual, period_px: float) -> dict:
-    resolved_period = None if period_px is None else float(period_px)
+def _patched_phase_estimate_row(frame_index: int, path, residual, period_px: float | None) -> dict:
+    resolved_period = _model_period(period_px)
     row = _original_phase_estimate_row(
         frame_index,
         path,
         residual,
-        period_px if resolved_period is not None else 1.0,
+        resolved_period if resolved_period is not None else 1.0,
     )
     phase_fraction, phase_rad = phase_fraction_and_radians(
         float(row["phase_px"]),
@@ -182,10 +182,10 @@ def _registered_phase_row_count(phase_rows: Sequence[Mapping[str, Any]]) -> tupl
 def _patched_texture_phase_velocity_summary(
     phase_rows,
     *,
-    period_px: float,
+    period_px: float | None,
     nominal_velocity_px_per_frame: float,
 ):
-    resolved_period = None if period_px is None else float(period_px)
+    resolved_period = _model_period(period_px)
     if resolved_period is None:
         samples, has_registration = _registered_phase_row_count(phase_rows)
         if samples >= 2 and has_registration:
