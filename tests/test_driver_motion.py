@@ -12,7 +12,7 @@ def test_correlation_shift_rejects_search_radius_at_or_above_height():
         correlation_shift(previous, current, max_shift=4)
 
 
-@pytest.mark.parametrize("max_shift", [0, -1, 1.5, float("nan")])
+@pytest.mark.parametrize("max_shift", [0, -1, 1.5, float("nan"), True, np.bool_(True)])
 def test_correlation_shift_rejects_invalid_search_radius(max_shift):
     previous = np.zeros((4, 6), dtype=np.float32)
     current = np.zeros((4, 6), dtype=np.float32)
