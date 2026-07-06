@@ -30,6 +30,8 @@ from .phase import PhaseDriftFilter as _PhaseDriftFilter
 from .phase import render_belt_view as _render_belt_view
 
 _MAP_BUILD_PERIOD_KNOWN: list[bool | None] = [None]
+_DRIVER_MODEL_PERIOD_UNKNOWN = object()
+_DRIVER_MODEL_PERIOD_PX = [_DRIVER_MODEL_PERIOD_UNKNOWN]
 
 _original_build_belt_map_result = _driver.build_belt_map_result
 _original_belt_motion_model = _BeltMotionModel
@@ -104,6 +106,13 @@ def _model_period(period_px: float | int | None) -> float | None:
     return state.model_period_px
 
 
+def _output_model_period(period_px: float | int | None) -> float | None:
+    driver_period = _DRIVER_MODEL_PERIOD_PX[0]
+    if driver_period is not _DRIVER_MODEL_PERIOD_UNKNOWN:
+        return None if driver_period is None else float(driver_period)
+    return None if period_px is None else float(period_px)
+
+
 def _patched_build_belt_map_result(*args, **kwargs):
     previous = _MAP_BUILD_PERIOD_KNOWN[0]
     _MAP_BUILD_PERIOD_KNOWN[0] = kwargs.get("supplied_period") is not None
@@ -149,12 +158,13 @@ def _patched_phase_drift_filter(*args, **kwargs):
 
 
 def _patched_phase_estimate_row(frame_index: int, path, residual, period_px: float | None) -> dict:
-    resolved_period = _model_period(period_px)
+    resolved_period = _output_model_period(period_px)
+    row_period = resolved_period if resolved_period is not None else 1.0
     row = _original_phase_estimate_row(
         frame_index,
         path,
         residual,
-        resolved_period if resolved_period is not None else 1.0,
+        row_period,
     )
     phase_fraction, phase_rad = phase_fraction_and_radians(
         float(row["phase_px"]),
@@ -185,7 +195,7 @@ def _patched_texture_phase_velocity_summary(
     period_px: float | None,
     nominal_velocity_px_per_frame: float,
 ):
-    resolved_period = _model_period(period_px)
+    resolved_period = _output_model_period(period_px)
     if resolved_period is None:
         samples, has_registration = _registered_phase_row_count(phase_rows)
         if samples >= 2 and has_registration:
@@ -272,17 +282,21 @@ def _patch_metadata_file() -> None:
 
 
 def _patched_main(*args, **kwargs):
+    state = _period_state_for_driver_preflight()
     if _recurrent_artifact_requested():
-        state = _period_state_for_driver_preflight()
         if state is None:
             raise ValueError(
                 "recurrent-artifact filtering requires a known physical BELT_PERIOD_PX; "
                 "the current belt map is an inferred finite strip"
             )
         require_period_known(state, feature="recurrent-artifact filtering")
+
+    previous_output_period = _DRIVER_MODEL_PERIOD_PX[0]
+    _DRIVER_MODEL_PERIOD_PX[0] = None if state is None else state.model_period_px
     try:
         return _original_driver_main(*args, **kwargs)
     finally:
+        _DRIVER_MODEL_PERIOD_PX[0] = previous_output_period
         _patch_metadata_file()
 
 

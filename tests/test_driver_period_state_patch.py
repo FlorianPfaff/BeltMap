@@ -1,74 +1,122 @@
 from pathlib import Path
-from types import SimpleNamespace
+import math
 
 import pytest
 
-import beltmap.driver as driver
+from beltmap import driver_period_state_patch as patch
 
 
-def _residual_with_phase(phase_px: float = 25.0):
-    estimate = SimpleNamespace(
-        phase_px=phase_px,
-        predicted_phase_px=phase_px,
-        correction_px=0.0,
-        drift_px=0.0,
-        loss=None,
-        score=None,
-        second_best_loss=None,
-        loss_gap=None,
-        loss_gap_ratio=None,
-        loss_curvature=None,
-        uncertainty_px=None,
-        method="registration",
-    )
-    return SimpleNamespace(clean_render=SimpleNamespace(phase_estimate=estimate))
+@pytest.fixture(autouse=True)
+def reset_driver_output_period():
+    previous = patch._DRIVER_MODEL_PERIOD_PX[0]
+    patch._DRIVER_MODEL_PERIOD_PX[0] = patch._DRIVER_MODEL_PERIOD_UNKNOWN
+    try:
+        yield
+    finally:
+        patch._DRIVER_MODEL_PERIOD_PX[0] = previous
 
 
-def test_driver_phase_row_leaves_cyclic_fields_empty_for_inferred_strip(monkeypatch):
-    monkeypatch.delenv("BELT_PERIOD_PX", raising=False)
-    monkeypatch.delenv("REUSE_BELT_MAP_PATH", raising=False)
+def _stub_phase_estimate_row(seen: dict[str, float]):
+    def fake_phase_estimate_row(frame_index, path, residual, period_px):
+        seen["period_px"] = period_px
+        return {
+            "frame_index": frame_index,
+            "image": str(path),
+            "phase_px": 50.0,
+            "phase_fraction": "stale",
+            "phase_rad": "stale",
+        }
 
-    row = driver.phase_estimate_row(
-        0,
-        Path("frame_000.png"),
-        _residual_with_phase(phase_px=25.0),
-        100.0,
-    )
+    return fake_phase_estimate_row
 
-    assert row["phase_px"] == 25.0
+
+def test_phase_estimate_row_preserves_direct_numeric_period(monkeypatch):
+    seen: dict[str, float] = {}
+    monkeypatch.setattr(patch, "_original_phase_estimate_row", _stub_phase_estimate_row(seen))
+
+    row = patch._patched_phase_estimate_row(0, Path("frame.png"), object(), 123.0)
+
+    assert seen["period_px"] == 123.0
+    assert row["phase_fraction"] == pytest.approx(50.0 / 123.0)
+    assert row["phase_rad"] == pytest.approx((50.0 / 123.0) * 2.0 * math.pi)
+
+
+def test_phase_estimate_row_omits_cycle_fields_for_inferred_driver_support(monkeypatch):
+    patch._DRIVER_MODEL_PERIOD_PX[0] = None
+    seen: dict[str, float] = {}
+    monkeypatch.setattr(patch, "_original_phase_estimate_row", _stub_phase_estimate_row(seen))
+
+    row = patch._patched_phase_estimate_row(0, Path("frame.png"), object(), 123.0)
+
+    assert seen["period_px"] == 1.0
     assert row["phase_fraction"] == ""
     assert row["phase_rad"] == ""
 
 
-def test_driver_phase_row_preserves_cyclic_fields_when_period_known(monkeypatch):
-    monkeypatch.setenv("BELT_PERIOD_PX", "100")
-    monkeypatch.delenv("REUSE_BELT_MAP_PATH", raising=False)
+def test_phase_estimate_row_preserves_cycle_fields_for_known_driver_period(monkeypatch):
+    patch._DRIVER_MODEL_PERIOD_PX[0] = 123.0
+    seen: dict[str, float] = {}
+    monkeypatch.setattr(patch, "_original_phase_estimate_row", _stub_phase_estimate_row(seen))
 
-    row = driver.phase_estimate_row(
-        0,
-        Path("frame_000.png"),
-        _residual_with_phase(phase_px=25.0),
-        100.0,
-    )
+    row = patch._patched_phase_estimate_row(0, Path("frame.png"), object(), 123.0)
 
-    assert row["phase_fraction"] == pytest.approx(0.25)
-    assert row["phase_rad"] == pytest.approx(0.5 * 3.141592653589793)
+    assert seen["period_px"] == 123.0
+    assert row["phase_fraction"] == pytest.approx(50.0 / 123.0)
+    assert row["phase_rad"] == pytest.approx((50.0 / 123.0) * 2.0 * math.pi)
 
 
-def test_texture_phase_velocity_summary_skips_unknown_period_for_inferred_strip(monkeypatch):
-    monkeypatch.delenv("BELT_PERIOD_PX", raising=False)
-    monkeypatch.delenv("REUSE_BELT_MAP_PATH", raising=False)
+def test_texture_phase_velocity_uses_direct_numeric_period(monkeypatch):
+    called = False
+
+    def fake_summary(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {
+            "texture_phase_velocity_status": "called",
+            "period_px": kwargs["period_px"],
+        }
+
+    monkeypatch.setattr(patch, "_original_texture_phase_velocity_summary", fake_summary)
     phase_rows = [
         {"frame_index": 0, "phase_px": 0.0, "method": "registration"},
-        {"frame_index": 1, "phase_px": 4.0, "method": "registration"},
+        {"frame_index": 1, "phase_px": 1.0, "method": "registration"},
     ]
 
-    summary = driver.texture_phase_velocity_summary(
+    summary = patch._patched_texture_phase_velocity_summary(
         phase_rows,
-        period_px=100.0,
-        nominal_velocity_px_per_frame=4.0,
+        period_px=123.0,
+        nominal_velocity_px_per_frame=1.0,
     )
 
+    assert called
+    assert summary == {
+        "texture_phase_velocity_status": "called",
+        "period_px": 123.0,
+    }
+
+
+def test_texture_phase_velocity_skips_periodic_summary_for_unknown_driver_period(monkeypatch):
+    patch._DRIVER_MODEL_PERIOD_PX[0] = None
+    called = False
+
+    def fake_summary(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {"texture_phase_velocity_status": "called"}
+
+    monkeypatch.setattr(patch, "_original_texture_phase_velocity_summary", fake_summary)
+    phase_rows = [
+        {"frame_index": 0, "phase_px": 0.0, "method": "registration"},
+        {"frame_index": 1, "phase_px": 1.0, "method": "registration"},
+    ]
+
+    summary = patch._patched_texture_phase_velocity_summary(
+        phase_rows,
+        period_px=123.0,
+        nominal_velocity_px_per_frame=1.0,
+    )
+
+    assert not called
     assert summary == {
         "texture_phase_velocity_status": "unknown_period",
         "texture_phase_velocity_samples": 2,
