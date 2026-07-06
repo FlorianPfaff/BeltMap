@@ -42,6 +42,16 @@ def _int_value(value: Any) -> int:
     return int(float(value))
 
 
+def _int_or_zero(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return int(parsed) if np.isfinite(parsed) else 0
+
+
 def _patch_box_from_feature(row: Mapping[str, Any], column: str) -> _yolo_recurrence.PatchBox | None:
     top = _int_value(row["patch_top"])
     left = _int_value(row["patch_left"])
@@ -96,7 +106,7 @@ def _feature_sort_key(row: Mapping[str, Any]) -> tuple[int, float, float, int]:
         1 if _bool_value(row.get("hard_reject")) else 0,
         _float_or_zero(row.get("belt_fixedness_score")),
         _float_or_zero(row.get("max_recurrence_ratio")),
-        _int_value(row.get("valid_revisits", 0)),
+        _int_or_zero(row.get("valid_revisits", 0)),
     )
 
 
