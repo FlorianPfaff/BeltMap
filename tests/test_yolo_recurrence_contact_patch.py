@@ -32,5 +32,19 @@ def test_contact_sheet_selection_prefers_shape_supported_recurrence() -> None:
     assert selected[0] is lower_ratio_shape_supported
 
 
+def test_contact_sheet_selection_tolerates_blank_valid_revisits() -> None:
+    row = {
+        "frame_index": "12",
+        "label": "3",
+        "raw_match_role": "FP",
+        "hard_reject": "False",
+        "max_recurrence_ratio": "0.5",
+        "belt_fixedness_score": "0.4",
+        "valid_revisits": "",
+    }
+
+    assert contact_sheet_rows([row], limit=1) == [row]
+
+
 def test_yolo_recurrence_contact_sheet_selector_is_patched() -> None:
     assert yolo_recurrence.select_contact_rows is contact_sheet_rows
