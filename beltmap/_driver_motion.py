@@ -257,7 +257,12 @@ def estimate_velocity(
 
 
 def _positive_integer_value(value: int, name: str) -> int:
-    parsed = float(value)
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be a finite positive integer")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive integer") from exc
     if not math.isfinite(parsed) or not parsed.is_integer() or parsed < 1:
         raise ValueError(f"{name} must be a finite positive integer")
     return int(parsed)
