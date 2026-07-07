@@ -39,7 +39,11 @@ def _stub_phase_estimate_row(seen: dict[str, float]):
 
 def test_phase_estimate_row_preserves_direct_numeric_period(monkeypatch):
     seen: dict[str, float] = {}
-    monkeypatch.setattr(patch, "_original_phase_estimate_row", _stub_phase_estimate_row(seen))
+    monkeypatch.setattr(
+        patch,
+        "_original_phase_estimate_row",
+        _stub_phase_estimate_row(seen),
+    )
 
     row = patch._patched_phase_estimate_row(0, Path("frame.png"), object(), 123.0)
 
@@ -51,7 +55,11 @@ def test_phase_estimate_row_preserves_direct_numeric_period(monkeypatch):
 def test_phase_estimate_row_omits_cycle_fields_for_inferred_driver_support(monkeypatch):
     patch._DRIVER_MODEL_PERIOD_PX[0] = None
     seen: dict[str, float] = {}
-    monkeypatch.setattr(patch, "_original_phase_estimate_row", _stub_phase_estimate_row(seen))
+    monkeypatch.setattr(
+        patch,
+        "_original_phase_estimate_row",
+        _stub_phase_estimate_row(seen),
+    )
 
     row = patch._patched_phase_estimate_row(0, Path("frame.png"), object(), 123.0)
 
@@ -63,7 +71,11 @@ def test_phase_estimate_row_omits_cycle_fields_for_inferred_driver_support(monke
 def test_phase_estimate_row_preserves_cycle_fields_for_known_driver_period(monkeypatch):
     patch._DRIVER_MODEL_PERIOD_PX[0] = 123.0
     seen: dict[str, float] = {}
-    monkeypatch.setattr(patch, "_original_phase_estimate_row", _stub_phase_estimate_row(seen))
+    monkeypatch.setattr(
+        patch,
+        "_original_phase_estimate_row",
+        _stub_phase_estimate_row(seen),
+    )
 
     row = patch._patched_phase_estimate_row(0, Path("frame.png"), object(), 123.0)
 
@@ -102,7 +114,7 @@ def test_texture_phase_velocity_uses_direct_numeric_period(monkeypatch):
     }
 
 
-def test_texture_phase_velocity_skips_periodic_summary_for_unknown_driver_period(monkeypatch):
+def test_texture_phase_velocity_skips_unknown_period(monkeypatch):
     patch._DRIVER_MODEL_PERIOD_PX[0] = None
     called = False
 
@@ -144,7 +156,14 @@ def test_accumulation_context_controls_driver_map_render_periodicity(
 ):
     seen: dict[str, object] = {}
 
-    def fake_render_belt_view(belt_map, phase_px, height, *, x_slice=None, periodic=True):
+    def fake_render_belt_view(
+        belt_map,
+        phase_px,
+        height,
+        *,
+        x_slice=None,
+        periodic=True,
+    ):
         seen["phase_px"] = phase_px
         seen["height"] = height
         seen["x_slice"] = x_slice
@@ -160,7 +179,11 @@ def test_accumulation_context_controls_driver_map_render_periodicity(
         return "accumulated"
 
     monkeypatch.setattr(patch, "_render_belt_view", fake_render_belt_view)
-    monkeypatch.setattr(patch, "_original_accumulate_belt_map", fake_accumulate_belt_map)
+    monkeypatch.setattr(
+        patch,
+        "_original_accumulate_belt_map",
+        fake_accumulate_belt_map,
+    )
 
     result = patch._patched_accumulate_belt_map(model_period=model_period)
 
