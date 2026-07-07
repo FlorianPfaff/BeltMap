@@ -82,6 +82,10 @@ from . import phase_registration_loss_patch as _phase_registration_loss_patch  #
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
 
+# Import for side effect: make direct imports of beltmap.yolo_recurrence score
+# recurrence on pixelwise residual evidence, matching the CLI wrapper path.
+from . import yolo_recurrence_residual_excess_patch as _yolo_recurrence_residual_excess_patch  # noqa: F401,E402
+
 # Import for side effect: make YOLO recurrence filtered runs keep
 # detections_per_frame.csv consistent with the exported detections.csv rows.
 from . import yolo_recurrence_per_frame_patch as _yolo_recurrence_per_frame_patch  # noqa: F401,E402
