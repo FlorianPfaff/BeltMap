@@ -30,10 +30,12 @@ from .phase import PhaseDriftFilter as _PhaseDriftFilter
 from .phase import render_belt_view as _render_belt_view
 
 _MAP_BUILD_PERIOD_KNOWN: list[bool | None] = [None]
+_MAP_ACCUMULATION_PERIODIC: list[bool | None] = [None]
 _DRIVER_MODEL_PERIOD_UNKNOWN = object()
 _DRIVER_MODEL_PERIOD_PX = [_DRIVER_MODEL_PERIOD_UNKNOWN]
 
 _original_build_belt_map_result = _driver.build_belt_map_result
+_original_accumulate_belt_map = _driver_map.accumulate_belt_map
 _original_belt_motion_model = _BeltMotionModel
 _original_phase_drift_filter = _PhaseDriftFilter
 _original_phase_estimate_row = _driver.phase_estimate_row
@@ -122,6 +124,15 @@ def _patched_build_belt_map_result(*args, **kwargs):
         _MAP_BUILD_PERIOD_KNOWN[0] = previous
 
 
+def _patched_accumulate_belt_map(*args, **kwargs):
+    previous = _MAP_ACCUMULATION_PERIODIC[0]
+    _MAP_ACCUMULATION_PERIODIC[0] = bool(kwargs.get("model_period"))
+    try:
+        return _original_accumulate_belt_map(*args, **kwargs)
+    finally:
+        _MAP_ACCUMULATION_PERIODIC[0] = previous
+
+
 def _patched_driver_map_render_belt_view(
     belt_map,
     phase_px,
@@ -130,6 +141,9 @@ def _patched_driver_map_render_belt_view(
     x_slice=None,
     periodic: bool = True,
 ):
+    accumulation_periodic = _MAP_ACCUMULATION_PERIODIC[0]
+    if periodic and accumulation_periodic is False:
+        periodic = False
     build_period_known = _MAP_BUILD_PERIOD_KNOWN[0]
     if periodic and build_period_known is False:
         periodic = False
@@ -307,4 +321,5 @@ _driver.phase_estimate_row = _patched_phase_estimate_row
 _driver.texture_phase_velocity_summary = _patched_texture_phase_velocity_summary
 _driver.score_recurrent_artifact_detections = _patched_score_recurrent_artifact_detections
 _driver.main = _patched_main
+_driver_map.accumulate_belt_map = _patched_accumulate_belt_map
 _driver_map.render_belt_view = _patched_driver_map_render_belt_view
