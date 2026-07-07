@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
-import beltmap.ghost_repair_crop_clip_patch  # noqa: F401
+import beltmap  # noqa: F401
 from beltmap.ghost_repair import build_ghost_defect_maps
 
 
 def test_ghost_repair_defect_mask_clips_bottom_margin_to_visible_crop_height() -> None:
+    assert getattr(build_ghost_defect_maps, "_beltmap_ghost_repair_crop_clipped", False)
+
     mask, counts, _probability, track_rows = build_ghost_defect_maps(
         belt_map_shape=(20, 6),
         tracks_by_id={
