@@ -10,6 +10,8 @@ from beltmap import yolo_recurrence as _yolo_recurrence
 
 _PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
 _ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original"
+_FRAME_VALIDATED_ATTR = "_beltmap_yolo_recurrence_frame_validated"
+_FRAME_ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original_score_detection_recurrence"
 THRESHOLD_FIELD = "hard_ratio_threshold"
 
 
@@ -56,6 +58,13 @@ def _bool_value(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
+def _is_indexable_sequence(value: Any) -> bool:
+    return hasattr(value, "__len__") and hasattr(value, "__getitem__") and not isinstance(
+        value,
+        (str, bytes),
+    )
+
+
 def _validate_score_frame_range(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> None:
     """Reject detections whose frame index is outside the recurrence inputs.
 
@@ -71,26 +80,36 @@ def _validate_score_frame_range(args: tuple[Any, ...], kwargs: Mapping[str, Any]
         return
     row = args[0]
     frame = _integer_value(row, "frame_index")
-    if frame < 0:
-        raise ValueError(f"frame_index {frame} must be non-negative")
 
     phase_by_frame = kwargs.get("phase_by_frame")
-    if isinstance(phase_by_frame, Sequence):
+    if _is_indexable_sequence(phase_by_frame):
         n_phases = len(phase_by_frame)
-        if frame >= n_phases:
+        if frame < 0 or frame >= n_phases:
             raise ValueError(
                 f"frame_index {frame} is outside phase_estimates frame range 0..{n_phases - 1}; "
                 "increase --frame-count or provide matching phase estimates"
             )
+        try:
+            phase = float(phase_by_frame[frame])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"frame_index {frame} has no usable phase estimate") from exc
+        if not math.isfinite(phase):
+            raise ValueError(f"frame_index {frame} has a non-finite phase estimate")
+    elif frame < 0:
+        raise ValueError(f"frame_index {frame} must be non-negative")
 
     revolution_by_frame = kwargs.get("revolution_by_frame")
-    if isinstance(revolution_by_frame, Sequence):
+    if _is_indexable_sequence(revolution_by_frame):
         n_revolutions = len(revolution_by_frame)
-        if frame >= n_revolutions:
+        if frame < 0 or frame >= n_revolutions:
             raise ValueError(
                 f"frame_index {frame} is outside revolution-index frame range 0..{n_revolutions - 1}; "
                 "increase --frame-count or provide matching phase estimates"
             )
+
+    source_images = kwargs.get("source_images")
+    if isinstance(source_images, Mapping) and frame not in source_images:
+        raise ValueError(f"frame_index {frame} has no matching source image")
 
 
 def _recurrence_strength(ratio: float, correlation: float) -> float:
@@ -109,21 +128,41 @@ def _shape_supported_strengths(row: Mapping[str, Any]) -> list[float]:
 
 
 def _unwrap_patched_callable(func: Any) -> Any:
-    """Return the original unpatched callable behind our wrapper, if present.
+    """Return the stable unwrapped callable behind known wrapper layers."""
 
-    This module is imported for side effects from ``beltmap.__init__`` and from
-    the YOLO recurrence CLI.  A normal second import is cached, but test suites
-    and notebooks can reload modules.  Without unwrapping, a reload would store
-    the previous wrapper as ``_original_score_detection_recurrence`` and the new
-    wrapper would recursively call itself.
-    """
-
-    return getattr(func, _ORIGINAL_ATTR, func)
+    current = func
+    seen: set[int] = set()
+    for _ in range(8):
+        marker = id(current)
+        if marker in seen:
+            break
+        seen.add(marker)
+        if hasattr(current, _ORIGINAL_ATTR):
+            current = getattr(current, _ORIGINAL_ATTR)
+            continue
+        if hasattr(current, _FRAME_ORIGINAL_ATTR):
+            current = getattr(current, _FRAME_ORIGINAL_ATTR)
+            continue
+        break
+    return current
 
 
 def _ensure_field(fieldnames: list[str], field: str) -> None:
     if field not in fieldnames:
         fieldnames.append(field)
+
+
+def _preserve_composed_patch_markers(wrapper: Any, wrapped: Any) -> None:
+    """Keep marker attributes from behavior-preserving inner wrappers.
+
+    ``score_detection_recurrence`` can be wrapped by multiple compatibility
+    patches.  Reloading this module intentionally makes this wrapper the outer
+    one, but downstream tests and callers still need to see that frame validation
+    is active when the wrapped callable provides it.
+    """
+
+    if getattr(wrapped, _FRAME_VALIDATED_ATTR, False):
+        setattr(wrapper, _FRAME_VALIDATED_ATTR, True)
 
 
 def correlation_supported_high_revisits(
@@ -225,7 +264,12 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
 
 
 setattr(correlation_gated_score_detection_recurrence, _PATCHED_ATTR, True)
+setattr(correlation_gated_score_detection_recurrence, _FRAME_VALIDATED_ATTR, True)
 setattr(correlation_gated_score_detection_recurrence, _ORIGINAL_ATTR, _original_score_detection_recurrence)
+_preserve_composed_patch_markers(
+    correlation_gated_score_detection_recurrence,
+    _original_score_detection_recurrence,
+)
 
 
 def persist_threshold_enrich_detection_row(*args: Any, **kwargs: Any) -> dict[str, Any]:
