@@ -194,6 +194,34 @@ def test_export_yolo_predictions_skips_supported_nonframe_images(tmp_path: Path)
     ]
 
 
+def test_export_yolo_predictions_skips_auxiliary_nonframe_label_files(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    labels = tmp_path / "labels"
+    out = tmp_path / "run"
+    write_image(images / "frame_000001.png")
+    labels.mkdir()
+    (labels / "frame_000001.txt").write_text(
+        "0 0.500000 0.500000 0.200000 0.250000 0.800000\n",
+        encoding="utf-8",
+    )
+    (labels / "classes.txt").write_text("particle\n", encoding="utf-8")
+
+    summary = export_yolo_predictions_to_beltmap_run(
+        labels_dir=labels,
+        images_dir=images,
+        output_dir=out,
+        source="yolo11_raw",
+    )
+
+    assert summary.n_label_files == 1
+    assert summary.n_detections == 1
+    assert read_csv(out / "detections_per_frame.csv") == [
+        {"frame_index": "1", "n_detections": "1"},
+    ]
+    metadata = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["n_label_files"] == 1
+
+
 def test_export_yolo_predictions_rejects_duplicate_label_stems(tmp_path: Path) -> None:
     images = tmp_path / "images"
     labels = tmp_path / "labels"
