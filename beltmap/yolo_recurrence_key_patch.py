@@ -10,6 +10,7 @@ from beltmap import yolo_recurrence as _yolo_recurrence
 
 _PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
 _ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original"
+_FRAME_VALIDATED_ATTR = "_beltmap_yolo_recurrence_frame_validated"
 THRESHOLD_FIELD = "hard_ratio_threshold"
 
 
@@ -126,6 +127,19 @@ def _ensure_field(fieldnames: list[str], field: str) -> None:
         fieldnames.append(field)
 
 
+def _preserve_composed_patch_markers(wrapper: Any, wrapped: Any) -> None:
+    """Keep marker attributes from behavior-preserving inner wrappers.
+
+    ``score_detection_recurrence`` can be wrapped by multiple compatibility
+    patches.  Reloading this module intentionally makes this wrapper the outer
+    one, but downstream tests and callers still need to see that frame validation
+    is active when the wrapped callable provides it.
+    """
+
+    if getattr(wrapped, _FRAME_VALIDATED_ATTR, False):
+        setattr(wrapper, _FRAME_VALIDATED_ATTR, True)
+
+
 def correlation_supported_high_revisits(
     row: Mapping[str, Any],
     *,
@@ -226,6 +240,10 @@ def correlation_gated_score_detection_recurrence(*args: Any, **kwargs: Any) -> d
 
 setattr(correlation_gated_score_detection_recurrence, _PATCHED_ATTR, True)
 setattr(correlation_gated_score_detection_recurrence, _ORIGINAL_ATTR, _original_score_detection_recurrence)
+_preserve_composed_patch_markers(
+    correlation_gated_score_detection_recurrence,
+    _original_score_detection_recurrence,
+)
 
 
 def persist_threshold_enrich_detection_row(*args: Any, **kwargs: Any) -> dict[str, Any]:
