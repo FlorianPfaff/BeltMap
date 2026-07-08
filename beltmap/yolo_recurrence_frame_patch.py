@@ -10,6 +10,7 @@ from beltmap import yolo_recurrence as _yolo_recurrence
 _PATCHED_ATTR = "_beltmap_yolo_recurrence_frame_validated"
 _ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original_score_detection_recurrence"
 _KEY_PATCHED_ATTR = "_beltmap_yolo_recurrence_patched"
+_KEY_ORIGINAL_ATTR = "_beltmap_yolo_recurrence_original"
 
 
 def _unwrap_patched_callable(func: Any) -> Any:
@@ -21,6 +22,8 @@ def _preserve_composed_patch_markers(wrapper: Any, wrapped: Any) -> None:
 
     if getattr(wrapped, _KEY_PATCHED_ATTR, False):
         setattr(wrapper, _KEY_PATCHED_ATTR, True)
+    if hasattr(wrapped, _KEY_ORIGINAL_ATTR):
+        setattr(wrapper, _KEY_ORIGINAL_ATTR, getattr(wrapped, _KEY_ORIGINAL_ATTR))
 
 
 _original_score_detection_recurrence = _unwrap_patched_callable(
