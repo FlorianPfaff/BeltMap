@@ -228,7 +228,11 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, object]], fieldnames: Seq
             writer.writerow(row)
 
 
-def _label_files(labels_dir: Path) -> dict[str, Path]:
+def _label_files(
+    labels_dir: Path,
+    *,
+    frame_index_pattern: str = DEFAULT_FRAME_INDEX_PATTERN,
+) -> dict[str, Path]:
     # Ultralytics may omit the prediction labels directory entirely when every
     # evaluated image has zero detections.  That is a valid empty detector output,
     # so export it as an empty BeltMap run instead of failing before comparison.
@@ -238,6 +242,14 @@ def _label_files(labels_dir: Path) -> dict[str, Path]:
         raise NotADirectoryError(labels_dir)
     files: dict[str, Path] = {}
     for path in sorted(labels_dir.rglob("*.txt"), key=natural_key):
+        # Some YOLO export directories contain auxiliary text files such as
+        # classes.txt or notes.  Keep only label files whose stem identifies a
+        # frame; parseable labels without a matching image are still rejected by
+        # export_yolo_predictions_to_beltmap_run unless explicitly allowed.
+        try:
+            infer_frame_index(path.stem, pattern=frame_index_pattern)
+        except ValueError:
+            continue
         existing = files.get(path.stem)
         if existing is not None:
             raise ValueError(f"duplicate YOLO label stem {path.stem!r}: {existing} and {path}")
@@ -258,7 +270,7 @@ def export_yolo_predictions_to_beltmap_run(
     """Write BeltMap-compatible CSV outputs from YOLO prediction text files."""
 
     images = find_images(images_dir, frame_index_pattern=frame_index_pattern)
-    labels = _label_files(labels_dir)
+    labels = _label_files(labels_dir, frame_index_pattern=frame_index_pattern)
     missing_images = sorted(set(labels) - set(images))
     if missing_images and not allow_label_without_image:
         preview = ", ".join(missing_images[:5])
