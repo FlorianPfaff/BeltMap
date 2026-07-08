@@ -46,6 +46,33 @@ def _int_or_zero(value: Any) -> int:
     return int(_float_or_zero(value))
 
 
+def _centered_unclipped_patch_box(
+    *,
+    y: float,
+    x: float,
+    height: int,
+    width: int,
+) -> _yolo_recurrence.PatchBox:
+    """Return a centered patch before crop-local clipping.
+
+    Revisit patches are projected from belt coordinates into another frame and
+    can legitimately cross the visible crop boundary.  Build the unbounded box
+    first so the rendering path can clip it to the actual crop instead of
+    treating near-border recurrence evidence as missing.
+    """
+
+    height = max(1, int(height))
+    width = max(1, int(width))
+    top = int(round(y - 0.5 * height))
+    left = int(round(x - 0.5 * width))
+    return _yolo_recurrence.PatchBox(
+        top=top,
+        left=left,
+        bottom=top + height,
+        right=left + width,
+    )
+
+
 def _patch_box_from_feature(row: Mapping[str, Any], column: str) -> _yolo_recurrence.PatchBox | None:
     top = _int_value(row["patch_top"])
     left = _int_value(row["patch_left"])
@@ -63,15 +90,17 @@ def _patch_box_from_feature(row: Mapping[str, Any], column: str) -> _yolo_recurr
         return None
     center_x = 0.5 * (left + right)
     try:
-        return _yolo_recurrence.centered_patch_box(
-            y=float(revisit_y),
-            x=center_x,
-            height=height,
-            width=width,
-            image_shape=(10**9, 10**9),
-        )
-    except ValueError:
+        projected_y = float(revisit_y)
+    except (TypeError, ValueError):
         return None
+    if not np.isfinite(projected_y):
+        return None
+    return _centered_unclipped_patch_box(
+        y=projected_y,
+        x=center_x,
+        height=height,
+        width=width,
+    )
 
 
 def _clip_patch_to_crop(
