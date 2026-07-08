@@ -4,7 +4,11 @@ import csv
 
 from PIL import Image
 
-from beltmap.cli.annotation_audit_review import build_payload, merge_frame_review
+from beltmap.cli.annotation_audit_review import (
+    build_payload,
+    find_source_image,
+    merge_frame_review,
+)
 
 
 def write_csv(path, rows, fieldnames):
@@ -87,6 +91,14 @@ def test_annotation_audit_review_builds_context_state(tmp_path):
     assert len(frame["original_particles"]) == 1
     assert [item["missing"] for item in frame["context"]] == [False, False, False]
     assert len(state.image_paths) == 3
+
+
+def test_annotation_audit_review_finds_generic_supported_source_images(tmp_path):
+    source_dir = tmp_path / "source"
+    expected = source_dir / "nested" / "camera_frame_000011.jpg"
+    write_png(expected)
+
+    assert find_source_image(source_dir, 11) == expected
 
 
 def test_annotation_audit_review_merge_updates_status():
