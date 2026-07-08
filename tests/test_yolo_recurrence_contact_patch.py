@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import beltmap.yolo_recurrence as yolo_recurrence
-from beltmap.yolo_recurrence_contact_patch import contact_sheet_rows
+from beltmap.yolo_recurrence_contact_patch import (
+    _clip_patch_to_crop,
+    _patch_box_from_feature,
+    contact_sheet_rows,
+)
 
 
 def test_contact_sheet_selection_prefers_shape_supported_recurrence() -> None:
@@ -46,6 +50,25 @@ def test_contact_sheet_selection_treats_blank_valid_revisits_as_zero() -> None:
     selected = contact_sheet_rows([blank_revisits], limit=1)
 
     assert selected == [blank_revisits]
+
+
+def test_contact_sheet_revisit_patch_clips_near_crop_boundary() -> None:
+    row = {
+        "patch_top": "0",
+        "patch_left": "5",
+        "patch_bottom": "20",
+        "patch_right": "15",
+        "revisit_y_prev": "3",
+    }
+
+    patch = _patch_box_from_feature(row, "previous")
+
+    assert patch is not None
+    assert patch.top < 0
+    clipped = _clip_patch_to_crop(patch, (12, 30))
+    assert clipped.top == 0
+    assert clipped.bottom == 12
+    assert clipped.height > 0
 
 
 def test_yolo_recurrence_contact_sheet_selector_is_patched() -> None:
