@@ -222,6 +222,125 @@ def test_find_revisit_selects_adjacent_revolutions(tmp_path: Path) -> None:
     assert next_revisit[0] == 4
 
 
+def test_yolo_recurrence_filter_accepts_sparse_absolute_phase_frames(tmp_path: Path) -> None:
+    source_dir = tmp_path / "images"
+    yolo_run = tmp_path / "yolo_run"
+    reference = tmp_path / "beltmap_reference"
+    source_dir.mkdir()
+    yolo_run.mkdir()
+    reference.mkdir()
+
+    belt_map = np.full((20, 12), 50.0, dtype=np.float32)
+    np.save(reference / "belt_map.npy", belt_map)
+    phase_rows = [
+        {
+            "frame_index": frame,
+            "image": f"frame_{frame:06d}.png",
+            "phase_px": 0,
+            "predicted_phase_px": 0,
+            "correction_px": 0,
+            "score": 1,
+            "method": "test",
+        }
+        for frame in (10, 12, 14)
+    ]
+    write_csv(
+        reference / "phase_estimates.csv",
+        phase_rows,
+        ["frame_index", "image", "phase_px", "predicted_phase_px", "correction_px", "score", "method"],
+    )
+    (reference / "metadata.json").write_text(
+        json.dumps(
+            {
+                "n_images": 3,
+                "belt_velocity_px_per_frame": 10.0,
+                "belt_period_px_input": 20.0,
+                "belt_map_height_px": 20,
+                "reference_phase_px": 0.0,
+                "belt_region": {"top": 0, "left": 0, "height": 10, "width": 12},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for frame in (10, 12, 14):
+        image = np.full((10, 12), 50, dtype=np.uint8)
+        image[4:7, 5:8] = np.asarray(
+            [[120, 180, 120], [180, 220, 180], [120, 180, 120]],
+            dtype=np.uint8,
+        )
+        Image.fromarray(image).save(source_dir / f"frame_{frame:06d}.png")
+
+    fields = [
+        "frame_index",
+        "label",
+        "y",
+        "x",
+        "area_px",
+        "bbox_top",
+        "bbox_left",
+        "bbox_bottom",
+        "bbox_right",
+        "score",
+        "confidence",
+        "class_id",
+        "source",
+    ]
+    write_csv(
+        yolo_run / "detections.csv",
+        [
+            {
+                "frame_index": 12,
+                "label": 1,
+                "y": 5,
+                "x": 6,
+                "area_px": 9,
+                "bbox_top": 4,
+                "bbox_left": 5,
+                "bbox_bottom": 7,
+                "bbox_right": 8,
+                "score": "0.80000000",
+                "confidence": "0.80000000",
+                "class_id": 0,
+                "source": "yolo11_raw",
+            }
+        ],
+        fields,
+    )
+    write_csv(
+        yolo_run / "detections_per_frame.csv",
+        [{"frame_index": 12, "n_detections": 1}],
+        ["frame_index", "n_detections"],
+    )
+
+    phases = load_phase_px_by_frame(reference / "phase_estimates.csv", frame_count=15)
+    assert np.isnan(phases[0])
+    assert phases[12] == 0.0
+
+    summary = run_yolo_recurrence_filter(
+        yolo_run_dir=yolo_run,
+        beltmap_reference_dir=reference,
+        source_image_dir=source_dir,
+        truth_path=None,
+        output_dir=tmp_path / "outputs" / "yolo_recurrence",
+        config=YoloRecurrenceConfig(
+            frame_count=15,
+            belt_region=BeltRegion(0, 0, 10, 12),
+            patch_margin_px=0,
+            min_patch_size_px=3,
+            hard_ratio_threshold=0.4,
+            hard_min_revisits=2,
+        ),
+    )
+
+    features = read_csv(summary.features_csv)
+    assert len(features) == 1
+    assert features[0]["revisit_frame_prev"] == "10"
+    assert features[0]["revisit_frame_next"] == "14"
+    assert features[0]["hard_reject"] == "True"
+
+
 def test_yolo_recurrence_filter_removes_belt_fixed_detection(tmp_path: Path) -> None:
     source_dir, yolo_run, reference, truth_path = make_fixture(tmp_path)
     out = tmp_path / "outputs" / "yolo_recurrence"
