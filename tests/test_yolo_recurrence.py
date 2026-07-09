@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
-import pytest
 import numpy as np
+import pytest
+from PIL import Image
 
 from beltmap.yolo_recurrence import (
     FEATURE_FIELDNAMES,
     RUN_EXTRA_FIELDS,
     enrich_detection_row,
     error_taxonomy,
+    find_source_images,
     parse_belt_region,
     patch_correlation,
     patch_excess,
@@ -23,12 +26,32 @@ from beltmap.yolo_recurrence_key_patch import (
 )
 
 
+def write_image(path: Path, *, size: tuple[int, int] = (12, 10)) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("L", size, 32).save(path)
+
+
 def test_parse_belt_region() -> None:
     region = parse_belt_region("1,2,3,4")
     assert region.top == 1
     assert region.left == 2
     assert region.height == 3
     assert region.width == 4
+
+
+def test_find_source_images_skips_supported_nonframe_auxiliary_images(tmp_path: Path) -> None:
+    write_image(tmp_path / "frame_000001.png")
+    write_image(tmp_path / "preview_without_digits.png")
+
+    assert find_source_images(tmp_path) == {1: tmp_path / "frame_000001.png"}
+
+
+def test_find_source_images_still_rejects_duplicate_parseable_frames(tmp_path: Path) -> None:
+    write_image(tmp_path / "raw" / "frame_000001.png")
+    write_image(tmp_path / "augmented" / "copy_000001.jpg")
+
+    with pytest.raises(ValueError, match="duplicate source image frame index 1"):
+        find_source_images(tmp_path)
 
 
 def test_patch_correlation_identical_patch_is_one() -> None:

@@ -102,6 +102,10 @@ from . import yolo_recurrence_metadata_patch as _yolo_recurrence_metadata_patch 
 # reference unavailable phase/source frames instead of surfacing raw indexing errors.
 from . import yolo_recurrence_frame_patch as _yolo_recurrence_frame_patch  # noqa: F401,E402
 
+# Import for side effect: make YOLO recurrence ignore auxiliary supported
+# images whose stems do not identify source frames.
+from . import yolo_recurrence_source_image_patch as _yolo_recurrence_source_image_patch  # noqa: F401,E402
+
 # Import for side effect: make YOLO recurrence contact sheets focus on the
 # scored detection and revisit patches instead of downscaled full crops.
 from . import yolo_recurrence_contact_patch as _yolo_recurrence_contact_patch  # noqa: F401,E402
