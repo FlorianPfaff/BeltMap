@@ -41,6 +41,11 @@ def duplicate_safe_find_images(
     multiple image files that parse to the same frame index can make labels attach
     to the wrong image or emit duplicate per-frame rows.  Treat those cases as
     invalid input instead of overwriting an earlier image record.
+
+    Image directories can also contain auxiliary supported images such as preview
+    panels, logos, or contact sheets.  Skip supported image files whose stems do
+    not match the configured frame-index pattern; once a file is parseable as a
+    frame image, keep duplicate-stem and duplicate-frame validation strict.
     """
 
     if not images_dir.is_dir():
@@ -51,7 +56,13 @@ def duplicate_safe_find_images(
     for path in sorted(images_dir.rglob("*"), key=_yolo_export.natural_key):
         if path.suffix.lower() not in _yolo_export.IMAGE_EXTENSIONS:
             continue
-        frame_index = _yolo_export.infer_frame_index(path.stem, pattern=frame_index_pattern)
+        try:
+            frame_index = _yolo_export.infer_frame_index(
+                path.stem,
+                pattern=frame_index_pattern,
+            )
+        except ValueError:
+            continue
         existing_stem = records.get(path.stem)
         if existing_stem is not None:
             raise ValueError(
