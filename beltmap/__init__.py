@@ -106,6 +106,10 @@ from . import yolo_recurrence_frame_patch as _yolo_recurrence_frame_patch  # noq
 # images whose stems do not identify source frames.
 from . import yolo_recurrence_source_image_patch as _yolo_recurrence_source_image_patch  # noqa: F401,E402
 
+# Import for side effect: make YOLO recurrence tolerate sparse/non-zero-based
+# phase estimates while still rejecting detections without matching phases.
+from . import yolo_recurrence_sparse_phase_patch as _yolo_recurrence_sparse_phase_patch  # noqa: F401,E402
+
 # Import for side effect: make YOLO recurrence contact sheets focus on the
 # scored detection and revisit patches instead of downscaled full crops.
 from . import yolo_recurrence_contact_patch as _yolo_recurrence_contact_patch  # noqa: F401,E402
