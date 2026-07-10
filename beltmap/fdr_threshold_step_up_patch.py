@@ -65,8 +65,3 @@ setattr(
     _original_fdr_threshold_from_p_values,
 )
 _operational.fdr_threshold_from_p_values = benjamini_hochberg_step_up_threshold
-
-# This module is already autoloaded by ``beltmap.__init__``.  Load the companion
-# residual-stack threshold correction here so direct operational-helper imports
-# and the ``beltmap-suggest-threshold`` CLI receive the fix as well.
-from . import recommend_threshold_stack_patch as _recommend_threshold_stack_patch  # noqa: E402,F401
