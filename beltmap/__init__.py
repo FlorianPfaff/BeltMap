@@ -130,6 +130,10 @@ from . import driver_period_state_patch as _driver_period_state_patch  # noqa: F
 # support across the ends of an inferred finite belt-map strip.
 from . import map_risk_period_state_patch as _map_risk_period_state_patch  # noqa: F401,E402
 
+# Import for side effect: keep map-uncertainty coverage from wrapping finite
+# inferred map support onto the opposite boundary.
+from . import map_uncertainty_period_state_patch as _map_uncertainty_period_state_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
