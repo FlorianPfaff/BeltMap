@@ -78,6 +78,10 @@ from .tracking import (
 # Import for side effect: keep subpixel phase-registration losses and scores bounded.
 from . import phase_registration_loss_patch as _phase_registration_loss_patch  # noqa: F401,E402
 
+# Import for side effect: keep integer camera-shift diagnostics from circularly
+# wrapping image boundaries into the candidate-shift loss.
+from . import advanced_quality_shift_patch as _advanced_quality_shift_patch  # noqa: F401,E402
+
 # Import for side effect: make direct imports of beltmap.yolo_recurrence use the
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
