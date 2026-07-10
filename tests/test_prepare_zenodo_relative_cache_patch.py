@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from beltmap.cli import prepare_zenodo_dataset as prep
 
 
 def test_expose_path_keeps_relative_cache_target_reachable(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     target = Path("cache/images_Test")
