@@ -126,6 +126,10 @@ from . import ghost_repair_crop_clip_patch as _ghost_repair_crop_clip_patch  # n
 # support height into a cyclic belt period.
 from . import driver_period_state_patch as _driver_period_state_patch  # noqa: F401,E402
 
+# Import for side effect: keep map-risk diagnostics and rejection from wrapping
+# support across the ends of an inferred finite belt-map strip.
+from . import map_risk_period_state_patch as _map_risk_period_state_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
