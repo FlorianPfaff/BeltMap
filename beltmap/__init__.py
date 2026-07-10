@@ -82,6 +82,10 @@ from . import phase_registration_loss_patch as _phase_registration_loss_patch  #
 # wrapping image boundaries into the candidate-shift loss.
 from . import advanced_quality_shift_patch as _advanced_quality_shift_patch  # noqa: F401,E402
 
+# Import for side effect: apply the full Benjamini-Hochberg step-up rejection set
+# when converting FDR-controlled p-values back to a score threshold.
+from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noqa: F401,E402
+
 # Import for side effect: make direct imports of beltmap.yolo_recurrence use the
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
