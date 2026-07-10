@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         state.seen_paths = set(payload.get("seen_paths", []))
         state.last_scan_unix_s = float(payload.get("last_scan_unix_s", 0.0))
     new_paths = discover_new_stream_frames(args.image_dir, state, max_new=None if args.max_new == 0 else args.max_new)
+    args.state.parent.mkdir(parents=True, exist_ok=True)
     args.state.write_text(json.dumps({"seen_paths": sorted(state.seen_paths), "last_scan_unix_s": state.last_scan_unix_s}, indent=2), encoding="utf-8")
     print(json.dumps({"new_frames": [str(path) for path in new_paths], "state": str(args.state)}, indent=2))
     return 0
