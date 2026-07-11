@@ -146,6 +146,10 @@ from . import map_risk_period_state_patch as _map_risk_period_state_patch  # noq
 # inferred map support onto the opposite boundary.
 from . import map_uncertainty_period_state_patch as _map_uncertainty_period_state_patch  # noqa: F401,E402
 
+# Import for side effect: prevent one confirming-map component from validating
+# multiple primary detections in cross-map agreement scoring.
+from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
