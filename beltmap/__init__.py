@@ -90,6 +90,10 @@ from . import advanced_quality_matching_patch as _advanced_quality_matching_patc
 # when converting FDR-controlled p-values back to a score threshold.
 from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noqa: F401,E402
 
+# Import for side effect: keep per-frame false-pixel budgets invariant when
+# threshold selection pools an N-D residual stack.
+from . import recommend_threshold_stack_patch as _recommend_threshold_stack_patch  # noqa: F401,E402
+
 # Import for side effect: make direct imports of beltmap.yolo_recurrence use the
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
