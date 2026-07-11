@@ -86,6 +86,10 @@ from . import advanced_quality_shift_patch as _advanced_quality_shift_patch  # n
 # matches before using IoU to choose among equal-cardinality assignments.
 from . import advanced_quality_matching_patch as _advanced_quality_matching_patch  # noqa: F401,E402
 
+# Import for side effect: make sparse tracklet evaluation maximize valid one-to-one
+# matches before using IoU to choose among equal-cardinality assignments.
+from . import tracklet_matching_patch as _tracklet_matching_patch  # noqa: F401,E402
+
 # Import for side effect: apply the full Benjamini-Hochberg step-up rejection set
 # when converting FDR-controlled p-values back to a score threshold.
 from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noqa: F401,E402
