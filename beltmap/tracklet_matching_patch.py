@@ -1,8 +1,8 @@
 """Use cardinality-optimal assignment for sparse tracklet evaluation.
 
 The original frame-level evaluator accepted candidate pairs greedily in descending
-IoU order.  A high-IoU pair can consume the only prediction available to another
-truth box even when an alternative assignment would match both boxes.  That
+IoU order. A high-IoU pair can consume the only prediction available to another
+truth box even when an alternative assignment would match both boxes. That
 undercounts true positives and distorts every downstream detection and HOTA-style
 metric.
 """
@@ -10,7 +10,6 @@ metric.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from typing import Any
 
 from . import tracklet_evaluation as _evaluation
@@ -30,74 +29,79 @@ _original_greedy_frame_matches = _unwrap_patched_callable(
 )
 
 
-@dataclass
-class _ResidualEdge:
-    destination: int
-    reverse_index: int
-    capacity: int
-    cost: float
+def _maximum_weight_square_assignment(weights: list[list[float]]) -> list[int]:
+    """Return a maximum-weight one-to-one square assignment.
 
+    This is the O(n^3) Hungarian primal-dual algorithm. The returned list maps
+    each row index to exactly one column index.
+    """
 
-def _add_unit_edge(
-    graph: list[list[_ResidualEdge]],
-    source: int,
-    destination: int,
-    *,
-    cost: float,
-) -> _ResidualEdge:
-    """Add a unit-capacity residual edge and return its forward edge."""
+    size = len(weights)
+    if size == 0:
+        return []
+    if any(len(row) != size for row in weights):
+        raise ValueError("assignment weights must form a square matrix")
 
-    forward = _ResidualEdge(
-        destination=destination,
-        reverse_index=len(graph[destination]),
-        capacity=1,
-        cost=float(cost),
-    )
-    reverse = _ResidualEdge(
-        destination=source,
-        reverse_index=len(graph[source]),
-        capacity=0,
-        cost=-float(cost),
-    )
-    graph[source].append(forward)
-    graph[destination].append(reverse)
-    return forward
+    maximum_weight = max(max(row) for row in weights)
+    costs = [
+        [maximum_weight - weight for weight in row]
+        for row in weights
+    ]
 
+    row_potential = [0.0] * (size + 1)
+    column_potential = [0.0] * (size + 1)
+    matched_row = [0] * (size + 1)
+    previous_column = [0] * (size + 1)
 
-def _shortest_augmenting_path(
-    graph: list[list[_ResidualEdge]],
-    *,
-    source: int,
-    sink: int,
-) -> tuple[list[int], list[int]] | None:
-    """Find one minimum-cost residual path with Bellman-Ford relaxation."""
+    for row_index in range(1, size + 1):
+        matched_row[0] = row_index
+        minimum_slack = [math.inf] * (size + 1)
+        used_column = [False] * (size + 1)
+        current_column = 0
 
-    node_count = len(graph)
-    distances = [math.inf] * node_count
-    previous_nodes = [-1] * node_count
-    previous_edges = [-1] * node_count
-    distances[source] = 0.0
-
-    for _iteration in range(node_count - 1):
-        changed = False
-        for node, edges in enumerate(graph):
-            if not math.isfinite(distances[node]):
-                continue
-            for edge_index, edge in enumerate(edges):
-                if edge.capacity <= 0:
+        while True:
+            used_column[current_column] = True
+            current_row = matched_row[current_column]
+            delta = math.inf
+            next_column = 0
+            for column_index in range(1, size + 1):
+                if used_column[column_index]:
                     continue
-                candidate = distances[node] + edge.cost
-                if candidate < distances[edge.destination] - 1e-15:
-                    distances[edge.destination] = candidate
-                    previous_nodes[edge.destination] = node
-                    previous_edges[edge.destination] = edge_index
-                    changed = True
-        if not changed:
-            break
+                reduced_cost = (
+                    costs[current_row - 1][column_index - 1]
+                    - row_potential[current_row]
+                    - column_potential[column_index]
+                )
+                if reduced_cost < minimum_slack[column_index]:
+                    minimum_slack[column_index] = reduced_cost
+                    previous_column[column_index] = current_column
+                if minimum_slack[column_index] < delta:
+                    delta = minimum_slack[column_index]
+                    next_column = column_index
 
-    if previous_nodes[sink] < 0:
-        return None
-    return previous_nodes, previous_edges
+            for column_index in range(size + 1):
+                if used_column[column_index]:
+                    row_potential[matched_row[column_index]] += delta
+                    column_potential[column_index] -= delta
+                else:
+                    minimum_slack[column_index] -= delta
+            current_column = next_column
+            if matched_row[current_column] == 0:
+                break
+
+        while True:
+            prior_column = previous_column[current_column]
+            matched_row[current_column] = matched_row[prior_column]
+            current_column = prior_column
+            if current_column == 0:
+                break
+
+    assignment = [-1] * size
+    for column_index in range(1, size + 1):
+        row_index = matched_row[column_index]
+        if row_index > 0:
+            assignment[row_index - 1] = column_index - 1
+    return assignment
 
 
 def _optimal_frame_pairs(
@@ -110,74 +114,45 @@ def _optimal_frame_pairs(
 ) -> list[tuple[float, int, int]]:
     """Maximize valid match count, then total IoU, for one frame."""
 
-    if not truth_indices or not prediction_indices:
-        return []
-
     truth_count = len(truth_indices)
     prediction_count = len(prediction_indices)
-    source = 0
-    first_truth = 1
-    first_prediction = first_truth + truth_count
-    sink = first_prediction + prediction_count
-    graph: list[list[_ResidualEdge]] = [[] for _node in range(sink + 1)]
+    if truth_count == 0 or prediction_count == 0:
+        return []
 
-    for truth_position in range(truth_count):
-        _add_unit_edge(
-            graph,
-            source,
-            first_truth + truth_position,
-            cost=0.0,
-        )
-    for prediction_position in range(prediction_count):
-        _add_unit_edge(
-            graph,
-            first_prediction + prediction_position,
-            sink,
-            cost=0.0,
-        )
+    # Real truth rows plus one dummy row per prediction, and real prediction
+    # columns plus one dummy column per truth, permit either side to remain
+    # unmatched without ever forcing an invalid real-to-real edge.
+    size = truth_count + prediction_count
+    cardinality_bonus = float(size + 1)
+    forbidden_weight = -cardinality_bonus * float(size + 1)
+    weights = [[0.0] * size for _ in range(size)]
+    accepted_iou: dict[tuple[int, int], float] = {}
 
-    candidate_edges: dict[
-        tuple[int, int],
-        tuple[_ResidualEdge, float],
-    ] = {}
     for truth_position, truth_index in enumerate(truth_indices):
         truth = _evaluation.box_dict(truth_boxes[truth_index])
         for prediction_position, prediction_index in enumerate(prediction_indices):
             prediction = _evaluation.box_dict(prediction_boxes[prediction_index])
             iou = float(_evaluation.bbox_iou(prediction, truth))
-            if iou < iou_threshold:
+            if not math.isfinite(iou) or iou < iou_threshold:
+                weights[truth_position][prediction_position] = forbidden_weight
                 continue
-            edge = _add_unit_edge(
-                graph,
-                first_truth + truth_position,
-                first_prediction + prediction_position,
-                cost=-iou,
+            weights[truth_position][prediction_position] = cardinality_bonus + iou
+            accepted_iou[(truth_position, prediction_position)] = iou
+
+    assignment = _maximum_weight_square_assignment(weights)
+    pairs: list[tuple[float, int, int]] = []
+    for truth_position in range(truth_count):
+        prediction_position = assignment[truth_position]
+        iou = accepted_iou.get((truth_position, prediction_position))
+        if iou is None:
+            continue
+        pairs.append(
+            (
+                iou,
+                truth_indices[truth_position],
+                prediction_indices[prediction_position],
             )
-            candidate_edges[(truth_position, prediction_position)] = (edge, iou)
-
-    while True:
-        path = _shortest_augmenting_path(graph, source=source, sink=sink)
-        if path is None:
-            break
-        previous_nodes, previous_edges = path
-        node = sink
-        while node != source:
-            previous_node = previous_nodes[node]
-            edge_index = previous_edges[node]
-            edge = graph[previous_node][edge_index]
-            edge.capacity -= 1
-            graph[node][edge.reverse_index].capacity += 1
-            node = previous_node
-
-    pairs = [
-        (
-            iou,
-            truth_indices[truth_position],
-            prediction_indices[prediction_position],
         )
-        for (truth_position, prediction_position), (edge, iou) in candidate_edges.items()
-        if edge.capacity == 0
-    ]
     return sorted(pairs, key=lambda item: (item[1], item[2]))
 
 
