@@ -77,6 +77,54 @@ def test_finite_strip_map_risk_does_not_wrap_opposite_edge_support() -> None:
     assert periodic_score.rejected is False
 
 
+def test_finite_strip_map_risk_counts_partial_overflow_as_unsupported() -> None:
+    maps = map_risk.compute_belt_map_risk_maps(
+        np.ones((4, 1), dtype=np.float32),
+        min_support=1.0,
+    )
+
+    driver_period_state._DRIVER_MODEL_PERIOD_PX[0] = None
+    score = map_risk.score_map_risk_detections(
+        [boundary_detection()],
+        phase_px=3.0,
+        frame_shape=(2, 1),
+        maps=maps,
+        reject_max_interpolated_fraction=0.25,
+    )[0]
+
+    assert score.detection.map_support_min == pytest.approx(0.0)
+    assert score.detection.map_support_mean == pytest.approx(0.5)
+    assert score.detection.map_risk_mean == pytest.approx(0.5)
+    assert score.detection.map_risk_max == pytest.approx(1.0)
+    assert score.detection.map_interpolated_fraction == pytest.approx(0.5)
+    assert score.detection.map_low_support_fraction == pytest.approx(0.5)
+    assert score.rejected is True
+
+
+def test_finite_strip_map_risk_scores_fully_out_of_support_box() -> None:
+    maps = map_risk.compute_belt_map_risk_maps(
+        np.ones((4, 1), dtype=np.float32),
+        min_support=1.0,
+    )
+
+    driver_period_state._DRIVER_MODEL_PERIOD_PX[0] = None
+    score = map_risk.score_map_risk_detections(
+        [boundary_detection()],
+        phase_px=4.0,
+        frame_shape=(2, 1),
+        maps=maps,
+        reject_max_mean_risk=0.75,
+    )[0]
+
+    assert score.detection.map_support_min == pytest.approx(0.0)
+    assert score.detection.map_support_mean == pytest.approx(0.0)
+    assert score.detection.map_risk_mean == pytest.approx(1.0)
+    assert score.detection.map_risk_max == pytest.approx(1.0)
+    assert score.detection.map_interpolated_fraction == pytest.approx(1.0)
+    assert score.detection.map_low_support_fraction == pytest.approx(1.0)
+    assert score.rejected is True
+
+
 def test_map_risk_rendering_remains_periodic_outside_driver_context() -> None:
     belt_map = np.arange(4, dtype=np.float32).reshape(4, 1)
 
