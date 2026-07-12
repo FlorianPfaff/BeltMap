@@ -82,6 +82,10 @@ from . import phase_registration_loss_patch as _phase_registration_loss_patch  #
 # wrapping image boundaries into the candidate-shift loss.
 from . import advanced_quality_shift_patch as _advanced_quality_shift_patch  # noqa: F401,E402
 
+# Import for side effect: keep the returned photometric coefficients aligned with
+# the pixel set retained by the final robust trimming update.
+from . import advanced_quality_gain_offset_patch as _advanced_quality_gain_offset_patch  # noqa: F401,E402
+
 # Import for side effect: make real-data evaluation maximize valid one-to-one
 # matches before using IoU to choose among equal-cardinality assignments.
 from . import advanced_quality_matching_patch as _advanced_quality_matching_patch  # noqa: F401,E402
