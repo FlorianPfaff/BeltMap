@@ -194,22 +194,30 @@ def _bbox_map_risk_stats(
     risk_values = risk_view[top:bottom, left:right]
     interpolated_values = interpolated_view[top:bottom, left:right]
     low_support_values = low_support_view[top:bottom, left:right]
-    finite_support = support_values[np.isfinite(support_values)]
-    finite_risk = risk_values[np.isfinite(risk_values)]
-    if finite_support.size == 0 or finite_risk.size == 0:
-        return {
-            "map_support_min": None,
-            "map_support_mean": None,
-            "map_risk_mean": None,
-            "map_risk_max": None,
-            "map_interpolated_fraction": None,
-            "map_low_support_fraction": None,
-        }
+
+    # Non-periodic finite-strip rendering marks rows beyond reconstructed map
+    # support with NaN.  Those pixels are not missing observations to ignore:
+    # they have zero support and maximal map uncertainty.  Counting them
+    # conservatively prevents boundary detections from appearing better supported
+    # than they are, and keeps fully out-of-support boxes scoreable and filterable.
+    support_values = np.where(np.isfinite(support_values), support_values, 0.0)
+    risk_values = np.where(np.isfinite(risk_values), risk_values, 1.0)
+    interpolated_values = np.where(
+        np.isfinite(interpolated_values),
+        interpolated_values,
+        1.0,
+    )
+    low_support_values = np.where(
+        np.isfinite(low_support_values),
+        low_support_values,
+        1.0,
+    )
+
     return {
-        "map_support_min": float(np.min(finite_support)),
-        "map_support_mean": float(np.mean(finite_support)),
-        "map_risk_mean": float(np.mean(finite_risk)),
-        "map_risk_max": float(np.max(finite_risk)),
+        "map_support_min": float(np.min(support_values)),
+        "map_support_mean": float(np.mean(support_values)),
+        "map_risk_mean": float(np.mean(risk_values)),
+        "map_risk_max": float(np.max(risk_values)),
         "map_interpolated_fraction": _finite_mean_clipped_fraction(interpolated_values),
         "map_low_support_fraction": _finite_mean_clipped_fraction(low_support_values),
     }
