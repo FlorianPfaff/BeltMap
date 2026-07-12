@@ -104,9 +104,7 @@ from . import recommend_threshold_stack_patch as _recommend_threshold_stack_patc
 
 # Import for side effect: count elapsed belt travel monotonically even when the
 # motion model uses a nonzero reference frame.
-from . import (
-    recurrent_artifact_revolution_index_patch as _recurrent_artifact_revolution_index_patch,
-)  # noqa: F401,E402
+from . import recurrent_artifact_revolution_index_patch as _recurrent_artifact_revolution_index_patch  # noqa: F401,E402
 
 # Import for side effect: make direct imports of beltmap.yolo_recurrence use the
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
