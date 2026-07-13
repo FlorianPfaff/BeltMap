@@ -60,7 +60,8 @@ def finite_overlap_estimate_period_from_profile(
         )
     )
 
-    if values.size < 2 * min_period_px:
+    finite = np.isfinite(values)
+    if int(np.count_nonzero(finite)) < 2 * min_period_px:
         raise ValueError("profile is too short for the requested minimum period")
     max_period = (
         values.size // 2
@@ -70,9 +71,6 @@ def finite_overlap_estimate_period_from_profile(
     if max_period < min_period_px:
         raise ValueError("invalid period search range")
 
-    finite = np.isfinite(values)
-    if int(np.count_nonzero(finite)) < 2:
-        raise ValueError("profile has no variation")
     centered = values - float(np.mean(values[finite]))
     std = float(np.std(centered[finite]))
     if std <= 0:
