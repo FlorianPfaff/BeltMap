@@ -94,6 +94,10 @@ from . import tracklet_matching_patch as _tracklet_matching_patch  # noqa: F401,
 # the greatest finite coverage across detections.
 from . import froc_score_field_coverage_patch as _froc_score_field_coverage_patch  # noqa: F401,E402
 
+# Import for side effect: measure detection-count drift against recorded source
+# frame indices instead of CSV row positions.
+from . import trust_detection_drift_frame_patch as _trust_detection_drift_frame_patch  # noqa: F401,E402
+
 # Import for side effect: apply the full Benjamini-Hochberg step-up rejection set
 # when converting FDR-controlled p-values back to a score threshold.
 from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noqa: F401,E402
