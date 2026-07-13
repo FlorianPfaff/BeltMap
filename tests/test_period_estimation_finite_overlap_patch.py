@@ -31,3 +31,15 @@ def test_period_estimator_preserves_pixel_lags_across_missing_rows() -> None:
 
     assert estimate.period_px == 8
     assert estimate.score == pytest.approx(1.0)
+
+
+def test_period_estimator_keeps_minimum_finite_sample_guard() -> None:
+    profile = np.full(32, np.nan, dtype=np.float64)
+    profile[[0, 4, 8, 12, 16, 20]] = [0.0, 1.0, 0.0, -1.0, 0.5, -0.5]
+
+    with pytest.raises(ValueError, match="profile is too short"):
+        operational.estimate_period_from_profile(
+            profile,
+            min_period_px=4,
+            max_period_px=12,
+        )
