@@ -102,6 +102,10 @@ from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noq
 # threshold selection pools an N-D residual stack.
 from . import recommend_threshold_stack_patch as _recommend_threshold_stack_patch  # noqa: F401,E402
 
+# Import for side effect: preserve the original spatial lags when belt-period
+# profiles contain missing or non-finite rows.
+from . import period_estimation_finite_overlap_patch as _period_estimation_finite_overlap_patch  # noqa: F401,E402
+
 # Import for side effect: make direct imports of beltmap.yolo_recurrence use the
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
