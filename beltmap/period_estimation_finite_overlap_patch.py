@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from . import operational_improvements as _operational
 
@@ -31,12 +32,12 @@ _original_estimate_period_from_profile = _unwrap_patched_callable(
 
 
 def finite_overlap_estimate_period_from_profile(
-    profile,
+    profile: ArrayLike,
     *,
     min_period_px: int = 8,
     max_period_px: int | None = None,
     top_k: int = 5,
-):
+) -> _operational.PeriodEstimate:
     """Estimate profile periodicity without compressing non-finite samples.
 
     Candidate correlations retain the original pixel coordinates and use only
@@ -53,7 +54,10 @@ def finite_overlap_estimate_period_from_profile(
     max_period_px = (
         None
         if max_period_px is None
-        else _operational._positive_integer_value(max_period_px, "max_period_px")
+        else _operational._positive_integer_value(
+            max_period_px,
+            "max_period_px",
+        )
     )
 
     if values.size < 2 * min_period_px:
