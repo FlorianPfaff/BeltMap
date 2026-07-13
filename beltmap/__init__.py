@@ -166,6 +166,10 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: treat a vanishing circular resultant as an undefined
+# belt-coordinate center instead of assigning a floating-point-dependent angle.
+from . import revolution_recurrence_circular_mean_patch as _revolution_recurrence_circular_mean_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
