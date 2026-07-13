@@ -166,6 +166,10 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: assign each track-level velocity estimate to one
+# mutually exclusive texture-stress subset using a single representative frame.
+from . import texture_stress_velocity_assignment_patch as _texture_stress_velocity_assignment_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
