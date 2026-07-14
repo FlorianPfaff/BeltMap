@@ -166,6 +166,10 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: keep shared image discovery from returning directories
+# whose names merely use an image-file suffix.
+from . import operational_image_discovery_patch as _operational_image_discovery_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
