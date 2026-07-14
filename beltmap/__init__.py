@@ -166,6 +166,10 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: rank cyclic benchmark map alignments by paired finite
+# support before comparing RMSE on equal-support candidates.
+from . import benchmark_map_overlap_patch as _benchmark_map_overlap_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
