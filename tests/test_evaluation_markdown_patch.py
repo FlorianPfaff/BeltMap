@@ -33,6 +33,6 @@ def test_cli_evaluation_escapes_table_delimiters_and_line_breaks(
 
     assert status == 0
     report = (output_dir / "evaluation_summary.md").read_text(encoding="utf-8")
-    row = next(line for line in report.splitlines() if "baseline" in line)
+    row = next(line for line in report.splitlines() if "<code>baseline" in line)
     assert "<code>baseline&#124;stress<br>&lt;script&gt;</code>" in row
     assert row.count("|") == 11
