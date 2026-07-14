@@ -142,6 +142,10 @@ from . import yolo_recurrence_contact_patch as _yolo_recurrence_contact_patch  #
 # instead of silently overwriting duplicate stems or duplicate frame indices.
 from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,E402
 
+# Import for side effect: make trust/preflight image discovery ignore directories
+# whose names happen to end in a supported image extension.
+from . import trust_image_discovery_patch as _trust_image_discovery_patch  # noqa: F401,E402
+
 # Import for side effect: make the ghost objective understand the nested JSON
 # schema written by beltmap-map-only-negative-control metrics files.
 from . import ghost_objective_map_only_json_patch as _ghost_objective_map_only_json_patch  # noqa: F401,E402
