@@ -101,6 +101,15 @@ def test_annotation_audit_review_finds_generic_supported_source_images(tmp_path)
     assert find_source_image(source_dir, 11) == expected
 
 
+def test_annotation_audit_review_ignores_image_named_directories(tmp_path):
+    source_dir = tmp_path / "source"
+    (source_dir / "frame_000011.png").mkdir(parents=True)
+    expected = source_dir / "nested" / "camera_frame_000011.jpg"
+    write_png(expected)
+
+    assert find_source_image(source_dir, 11) == expected
+
+
 def test_annotation_audit_review_merge_updates_status():
     review = {
         "frames": [
