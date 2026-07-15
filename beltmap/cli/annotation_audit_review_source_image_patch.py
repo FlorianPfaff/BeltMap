@@ -30,10 +30,12 @@ def supported_source_image_lookup(source_image_dir: Path, frame_index: int) -> P
     """
 
     direct = _original_find_source_image(source_image_dir, frame_index)
-    if direct is not None:
+    if direct is not None and direct.is_file():
         return direct
 
     for path in sorted(source_image_dir.rglob("*"), key=natural_key):
+        if not path.is_file():
+            continue
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
         try:
