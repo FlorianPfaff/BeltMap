@@ -86,6 +86,10 @@ from . import advanced_quality_shift_patch as _advanced_quality_shift_patch  # n
 # matches before using IoU to choose among equal-cardinality assignments.
 from . import advanced_quality_matching_patch as _advanced_quality_matching_patch  # noqa: F401,E402
 
+# Import for side effect: keep unavailable detections-per-frame values from being
+# treated as genuine zero-count frames in advanced spike diagnostics.
+from . import advanced_quality_detection_counts_patch as _advanced_quality_detection_counts_patch  # noqa: F401,E402
+
 # Import for side effect: make sparse tracklet evaluation maximize valid one-to-one
 # matches before using IoU to choose among equal-cardinality assignments.
 from . import tracklet_matching_patch as _tracklet_matching_patch  # noqa: F401,E402
