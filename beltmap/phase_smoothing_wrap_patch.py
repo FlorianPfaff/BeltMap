@@ -88,7 +88,10 @@ def wrap_aware_smooth_phase_estimates(
         dtype=np.float64,
     )
     scores = np.asarray(
-        [np.nan if estimate.score is None else estimate.score for estimate in estimates],
+        [
+            np.nan if estimate.score is None else estimate.score
+            for estimate in estimates
+        ],
         dtype=np.float64,
     )
 
