@@ -32,6 +32,26 @@ def test_image_paths_excludes_output_subdirectory(tmp_path, monkeypatch):
     assert frame_stride == 1
 
 
+def test_image_paths_ignores_image_suffixed_directories(tmp_path, monkeypatch):
+    data = tmp_path / "images"
+    output = tmp_path / "outputs"
+    data.mkdir(parents=True)
+    (data / "frame_000.png").mkdir()
+    real_image = data / "frame_001.png"
+    real_image.write_bytes(b"")
+
+    monkeypatch.setattr(rt, "DATA", data)
+    monkeypatch.setattr(rt, "OUT", output)
+    monkeypatch.delenv("FRAME_STRIDE", raising=False)
+    monkeypatch.delenv("MAX_FRAMES", raising=False)
+
+    paths, discovered_frame_count, frame_stride = rt.image_paths()
+
+    assert paths == [real_image]
+    assert discovered_frame_count == 1
+    assert frame_stride == 1
+
+
 def test_image_paths_rejects_output_directory_equal_to_image_directory(
     tmp_path,
     monkeypatch,
