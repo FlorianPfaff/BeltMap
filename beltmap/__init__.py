@@ -166,6 +166,10 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: do not let two zero-mean residual regions satisfy the
+# cross-map sign-consistency gate without positive or negative polarity evidence.
+from . import cross_map_agreement_zero_sign_patch as _cross_map_agreement_zero_sign_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
