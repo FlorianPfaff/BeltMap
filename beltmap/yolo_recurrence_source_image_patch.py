@@ -19,13 +19,14 @@ _original_find_source_images = _unwrap_patched_callable(_yolo_recurrence.find_so
 
 
 def skip_auxiliary_find_source_images(source_image_dir: Path) -> dict[int, Path]:
-    """Return parseable source-frame images while ignoring auxiliary image assets.
+    """Return regular, parseable source-frame images while ignoring auxiliary assets.
 
     YOLO recurrence operates on one source image per frame. Prediction folders and
     debug directories may also contain supported image files such as previews,
-    logos, or contact sheets whose stems do not encode a frame index. Ignore
-    those auxiliary assets, while preserving duplicate-frame validation for
-    parseable source-frame images.
+    logos, or contact sheets whose stems do not encode a frame index. Directories
+    can likewise have image-like suffixes. Ignore those auxiliary and non-file
+    entries, while preserving duplicate-frame validation for parseable source-frame
+    image files.
     """
 
     if not source_image_dir.is_dir():
@@ -33,7 +34,7 @@ def skip_auxiliary_find_source_images(source_image_dir: Path) -> dict[int, Path]
 
     result: dict[int, Path] = {}
     for path in sorted(source_image_dir.rglob("*"), key=_yolo_recurrence.natural_key):
-        if path.suffix.lower() not in _yolo_recurrence.IMAGE_EXTENSIONS:
+        if not path.is_file() or path.suffix.lower() not in _yolo_recurrence.IMAGE_EXTENSIONS:
             continue
         try:
             frame = _yolo_recurrence.infer_frame_index(path.stem)
