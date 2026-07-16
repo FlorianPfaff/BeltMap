@@ -146,6 +146,10 @@ from . import yolo_export_image_patch as _yolo_export_image_patch  # noqa: F401,
 # schema written by beltmap-map-only-negative-control metrics files.
 from . import ghost_objective_map_only_json_patch as _ghost_objective_map_only_json_patch  # noqa: F401,E402
 
+# Import for side effect: prevent map-only negative-control rendering from
+# wrapping inferred finite-strip support onto the opposite map boundary.
+from . import map_only_period_state_patch as _map_only_period_state_patch  # noqa: F401,E402
+
 # Import for side effect: make GhostRepair defect masks clip crop-local
 # detection margins to the visible crop height recorded by map-only metrics.
 from . import ghost_repair_crop_clip_patch as _ghost_repair_crop_clip_patch  # noqa: F401,E402
