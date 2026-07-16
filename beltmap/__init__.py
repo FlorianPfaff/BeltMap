@@ -166,6 +166,10 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: make synthetic event evaluation maximize valid
+# one-to-one matches before comparing temporal IoU among equal-cardinality assignments.
+from . import benchmark_event_matching_patch as _benchmark_event_matching_patch  # noqa: F401,E402
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
