@@ -1,8 +1,8 @@
 """Prevent cyclic map-only diagnostics on inferred finite belt-map strips.
 
 The map-only negative-control benchmark renders ``belt_map.npy`` as a synthetic
-sequence.  Cyclic rendering is valid only when the map represents a known full
-belt period.  Driver metadata explicitly distinguishes that case from an
+sequence. Cyclic rendering is valid only when the map represents a known full
+belt period. Driver metadata explicitly distinguishes that case from an
 inferred finite strip, whose support must never wrap to the opposite boundary.
 """
 
@@ -28,7 +28,11 @@ _original_generate_map_only_negative_control_report = _unwrap_patched_callable(
 
 
 def _metadata_path(*, output_dir: Path, belt_map_path: Path | None) -> Path:
-    belt_path = Path(belt_map_path) if belt_map_path is not None else Path(output_dir) / "belt_map.npy"
+    belt_path = (
+        Path(belt_map_path)
+        if belt_map_path is not None
+        else Path(output_dir) / "belt_map.npy"
+    )
     sibling = belt_path.with_name("metadata.json")
     if sibling.is_file():
         return sibling
@@ -49,7 +53,10 @@ def _declares_finite_strip(metadata: dict[str, Any]) -> bool:
         return True
     if metadata.get("belt_period_known") is False:
         return True
-    return "model_period_px" in metadata and metadata.get("model_period_px") in (None, "")
+    return "model_period_px" in metadata and metadata.get("model_period_px") in (
+        None,
+        "",
+    )
 
 
 def period_safe_generate_map_only_negative_control_report(
@@ -65,7 +72,7 @@ def period_safe_generate_map_only_negative_control_report(
     tracks_path: Path | None = None,
     velocities_path: Path | None = None,
     track_scores_path: Path | None = None,
-):
+) -> Any:
     """Run the map-only benchmark only for maps with cyclic support semantics."""
 
     metadata_path = _metadata_path(
