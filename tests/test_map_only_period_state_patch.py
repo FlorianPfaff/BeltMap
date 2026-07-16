@@ -13,7 +13,10 @@ def test_map_only_period_state_guard_is_autoloaded():
     )
 
 
-def test_map_only_negative_control_rejects_inferred_finite_strip(tmp_path, monkeypatch):
+def test_map_only_negative_control_rejects_inferred_finite_strip(
+    tmp_path,
+    monkeypatch,
+):
     output_dir = tmp_path / "run"
     output_dir.mkdir()
     (output_dir / "metadata.json").write_text(
@@ -47,7 +50,10 @@ def test_map_only_negative_control_rejects_inferred_finite_strip(tmp_path, monke
     assert not called
 
 
-def test_map_only_negative_control_preserves_periodic_and_legacy_runs(tmp_path, monkeypatch):
+def test_map_only_negative_control_preserves_periodic_and_legacy_runs(
+    tmp_path,
+    monkeypatch,
+):
     periodic_dir = tmp_path / "periodic"
     periodic_dir.mkdir()
     (periodic_dir / "metadata.json").write_text(
@@ -75,8 +81,14 @@ def test_map_only_negative_control_preserves_periodic_and_legacy_runs(tmp_path, 
         fake_generate,
     )
 
-    assert map_only.generate_map_only_negative_control_report(output_dir=periodic_dir) == periodic_dir
-    assert map_only.generate_map_only_negative_control_report(output_dir=legacy_dir) == legacy_dir
+    assert (
+        map_only.generate_map_only_negative_control_report(output_dir=periodic_dir)
+        == periodic_dir
+    )
+    assert (
+        map_only.generate_map_only_negative_control_report(output_dir=legacy_dir)
+        == legacy_dir
+    )
     assert [call["output_dir"] for call in calls] == [periodic_dir, legacy_dir]
 
 
