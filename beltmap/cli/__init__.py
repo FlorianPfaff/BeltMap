@@ -12,6 +12,6 @@ from . import prepare_zenodo_relative_cache_patch as _prepare_zenodo_relative_ca
 # observed absolute frame IDs instead of allocating every preceding frame.
 from . import filter_tracks_sparse_frame_patch as _filter_tracks_sparse_frame_patch  # noqa: F401,E402
 
-# Import for side effect: reject duplicate phase rows before runtime revolution
-# recurrence filtering can silently depend on CSV row order.
+# Import for side effect: reject duplicate or malformed phase rows before runtime
+# revolution-recurrence filtering can use ambiguous frame/phase data.
 from . import filter_revolution_recurrence_phase_patch as _filter_revolution_recurrence_phase_patch  # noqa: F401,E402
