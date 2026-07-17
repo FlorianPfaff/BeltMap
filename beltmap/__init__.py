@@ -168,9 +168,7 @@ from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_t
 
 # Import for side effect: allow one event/tracklet identity to span frames while
 # still rejecting duplicate identities within the same frame.
-from . import (
-    label_validation_event_id_patch as _label_validation_event_id_patch,
-)  # noqa: F401,E402
+from . import label_validation_event_id_patch as _label_validation_event_id_patch  # noqa: F401,E402
 
 __all__ = [
     "BeltMotionModel",
