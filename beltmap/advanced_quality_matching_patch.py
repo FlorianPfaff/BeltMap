@@ -259,3 +259,7 @@ setattr(
 _advanced_quality.evaluate_real_detections = (
     cardinality_optimal_evaluate_real_detections
 )
+
+# Import for side effect: keep labeled bootstrap intervals consistent with the
+# cardinality-optimal real-data point estimate above.
+from . import bootstrap_ci_matching_patch as _bootstrap_ci_matching_patch  # noqa: F401,E402
