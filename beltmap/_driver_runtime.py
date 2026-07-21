@@ -259,7 +259,8 @@ def image_paths() -> tuple[list[Path], int, int]:
         [
             p
             for p in DATA.rglob("*")
-            if p.suffix.lower() in EXTS
+            if p.is_file()
+            and p.suffix.lower() in EXTS
             and not p.name.startswith("._")
             and not (
                 excluded_output_root is not None
@@ -297,7 +298,6 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
 
 def display_values(array: Any) -> np.ndarray:
     """Return the numeric image values used for diagnostic preview rendering."""
-
     arr = np.asarray(array.normalized if isinstance(array, ResidualImage) else array, dtype=np.float64)
     return arr
 
