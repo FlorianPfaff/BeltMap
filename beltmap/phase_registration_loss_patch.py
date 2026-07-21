@@ -74,4 +74,6 @@ _phase._loss_to_score = bounded_loss_to_score
 
 # Import for side effect: preserve valid bottom/right border pixels in bilinear
 # perspective warps instead of replacing them with the configured fill value.
-from . import operational_improvements_bilinear_border_patch as _operational_improvements_bilinear_border_patch  # noqa: E402,F401
+from . import (  # noqa: E402,F401
+    operational_improvements_bilinear_border_patch as _operational_improvements_bilinear_border_patch,
+)
