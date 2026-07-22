@@ -24,9 +24,39 @@ def _unwrap_patched_callable(func: Any) -> Any:
     return getattr(func, _ORIGINAL_ATTR, func)
 
 
+_original_parse_yolo_label_line = _unwrap_patched_callable(
+    _yolo_export.parse_yolo_label_line
+)
 _original_yolo_prediction_to_detection_row = _unwrap_patched_callable(
     _yolo_export.yolo_prediction_to_detection_row
 )
+
+
+def validated_parse_yolo_label_line(
+    line: str,
+    *,
+    default_confidence: float = 1.0,
+) -> _yolo_export.YoloPrediction | None:
+    """Parse a YOLO row while rejecting invalid identifiers and probabilities.
+
+    YOLO class identifiers are zero-based non-negative integers, and prediction
+    confidences are probabilities.  Allowing negative class IDs or confidence
+    values outside ``[0, 1]`` creates apparently valid BeltMap detections with
+    nonsensical labels or scores, which can corrupt class filtering and FROC
+    threshold sweeps.
+    """
+
+    prediction = _original_parse_yolo_label_line(
+        line,
+        default_confidence=default_confidence,
+    )
+    if prediction is None:
+        return None
+    if prediction.class_id < 0:
+        raise ValueError(f"YOLO class id must be non-negative in line {line!r}")
+    if prediction.confidence < 0.0 or prediction.confidence > 1.0:
+        raise ValueError(f"YOLO confidence must be in [0, 1] in line {line!r}")
+    return prediction
 
 
 def duplicate_safe_find_images(
@@ -120,6 +150,12 @@ def discrete_area_yolo_prediction_to_detection_row(
     return row
 
 
+setattr(validated_parse_yolo_label_line, _PATCHED_ATTR, True)
+setattr(
+    validated_parse_yolo_label_line,
+    _ORIGINAL_ATTR,
+    _original_parse_yolo_label_line,
+)
 setattr(discrete_area_yolo_prediction_to_detection_row, _PATCHED_ATTR, True)
 setattr(
     discrete_area_yolo_prediction_to_detection_row,
@@ -127,5 +163,6 @@ setattr(
     _original_yolo_prediction_to_detection_row,
 )
 
+_yolo_export.parse_yolo_label_line = validated_parse_yolo_label_line
 _yolo_export.find_images = duplicate_safe_find_images
 _yolo_export.yolo_prediction_to_detection_row = discrete_area_yolo_prediction_to_detection_row
