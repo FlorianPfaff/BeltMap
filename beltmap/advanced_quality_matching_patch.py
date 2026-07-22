@@ -259,3 +259,9 @@ setattr(
 _advanced_quality.evaluate_real_detections = (
     cardinality_optimal_evaluate_real_detections
 )
+
+# Import for side effect: keep synthetic benchmark detection metrics aligned with
+# the cardinality-optimal matcher used for real-data evaluation.
+from . import (  # noqa: E402,F401
+    benchmark_detection_matching_patch as _benchmark_detection_matching_patch,
+)
