@@ -94,6 +94,10 @@ from . import tracklet_matching_patch as _tracklet_matching_patch  # noqa: F401,
 # the greatest finite coverage across detections.
 from . import froc_score_field_coverage_patch as _froc_score_field_coverage_patch  # noqa: F401,E402
 
+# Import for side effect: ignore directory entries whose names match comparison
+# preview-image patterns before those paths can reach Pillow.
+from . import compare_preview_file_patch as _compare_preview_file_patch  # noqa: F401,E402
+
 # Import for side effect: apply the full Benjamini-Hochberg step-up rejection set
 # when converting FDR-controlled p-values back to a score threshold.
 from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noqa: F401,E402
