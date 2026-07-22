@@ -8,6 +8,10 @@ from . import annotation_audit_review_source_image_patch as _annotation_audit_re
 # supplied as a relative path.
 from . import prepare_zenodo_relative_cache_patch as _prepare_zenodo_relative_cache_patch  # noqa: F401,E402
 
+# Import for side effect: reject exposure paths that can delete or recursively
+# copy the prepared Zenodo cache into itself.
+from . import prepare_zenodo_link_overlap_patch as _prepare_zenodo_link_overlap_patch  # noqa: F401,E402
+
 # Import for side effect: reconstruct fallback track membership directly from
 # observed absolute frame IDs instead of allocating every preceding frame.
 from . import filter_tracks_sparse_frame_patch as _filter_tracks_sparse_frame_patch  # noqa: F401,E402
