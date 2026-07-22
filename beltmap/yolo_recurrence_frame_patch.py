@@ -114,3 +114,7 @@ _preserve_composed_patch_markers(
     _original_score_detection_recurrence,
 )
 _yolo_recurrence.score_detection_recurrence = frame_validating_score_detection_recurrence
+
+# Import for side effect: keep YOLO recurrence TP/FP role assignment consistent
+# with BeltMap's cardinality-optimal real-data evaluator.
+from . import yolo_recurrence_matching_patch as _yolo_recurrence_matching_patch  # noqa: E402,F401
