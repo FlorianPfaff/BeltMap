@@ -64,6 +64,11 @@ def reused_period_state(
     _validate_metadata_map_height(meta, height)
 
     metadata_period = _metadata_period(meta)
+    if metadata_period is not None and _metadata_declares_finite(meta):
+        raise ValueError(
+            "metadata provides a physical belt period but explicitly declares "
+            "the reused belt map finite or non-periodic"
+        )
     if metadata_period is not None:
         _validate_reused_period_matches_height(
             metadata_period,
