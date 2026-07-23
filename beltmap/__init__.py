@@ -102,6 +102,10 @@ from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noq
 # threshold selection pools an N-D residual stack.
 from . import recommend_threshold_stack_patch as _recommend_threshold_stack_patch  # noqa: F401,E402
 
+# Import for side effect: reject fractional, negative, boolean, and non-finite
+# detection frame indices before revolution-recurrence scoring rounds them.
+from . import revolution_recurrence_frame_validation_patch as _revolution_recurrence_frame_validation_patch  # noqa: F401,E402
+
 # Import for side effect: make direct imports of beltmap.yolo_recurrence use the
 # duplicate-safe YOLO detection key, not only the CLI wrapper path.
 from . import yolo_recurrence_key_patch as _yolo_recurrence_key_patch  # noqa: F401,E402
