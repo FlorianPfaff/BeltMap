@@ -11,3 +11,7 @@ from . import prepare_zenodo_relative_cache_patch as _prepare_zenodo_relative_ca
 # Import for side effect: reconstruct fallback track membership directly from
 # observed absolute frame IDs instead of allocating every preceding frame.
 from . import filter_tracks_sparse_frame_patch as _filter_tracks_sparse_frame_patch  # noqa: F401,E402
+
+# Import for side effect: reject fractional --belt-region coordinates instead
+# of silently truncating them in the YOLO recurrence CLI.
+from .. import yolo_recurrence_region_patch as _yolo_recurrence_region_patch  # noqa: F401,E402
