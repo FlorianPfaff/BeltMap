@@ -55,9 +55,18 @@ def test_reviewed_truth_rejects_negative_frame_indices(tmp_path) -> None:
     assert report.is_valid_for_metrics is False
     assert report.n_scored_frames == 0
     assert report.n_particle_boxes == 0
-    assert any("scored_frames[0] has no valid frame index" in error for error in report.errors)
-    assert any("particle row 0 has no valid frame_index" in error for error in report.errors)
-    assert any("frame review row 0 has no valid frame_index" in error for error in report.errors)
+    assert any(
+        "scored_frames[0] has no valid frame index" in error
+        for error in report.errors
+    )
+    assert any(
+        "particle row 0 has no valid frame_index" in error
+        for error in report.errors
+    )
+    assert any(
+        "frame review row 0 has no valid frame_index" in error
+        for error in report.errors
+    )
 
 
 def test_label_frame_indices_preserve_nonnegative_integer_values(tmp_path) -> None:
