@@ -5,6 +5,8 @@ import csv
 import json
 import math
 from dataclasses import asdict
+from decimal import Decimal
+from decimal import InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +103,20 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def exact_integer(value: Any, *, name: str) -> int:
+    """Parse an exact finite integer without truncating fractional values."""
+
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite integer")
+    try:
+        parsed = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite integer") from exc
+    if not parsed.is_finite() or parsed != parsed.to_integral_value():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(parsed)
+
+
 def parse_optional_float(row: dict[str, str], key: str) -> float | None:
     value = row.get(key, "")
     return None if value is None or str(value).strip() == "" else float(value)
@@ -109,14 +125,14 @@ def parse_optional_float(row: dict[str, str], key: str) -> float | None:
 def parse_detection(row: dict[str, str]) -> ParticleDetection:
     return ParticleDetection(
         frame_index=float(row["frame_index"]),
-        label=int(float(row["label"])),
+        label=exact_integer(row["label"], name="label"),
         y=float(row["y"]),
         x=float(row["x"]),
-        area_px=int(float(row["area_px"])),
-        bbox_top=int(float(row["bbox_top"])),
-        bbox_left=int(float(row["bbox_left"])),
-        bbox_bottom=int(float(row["bbox_bottom"])),
-        bbox_right=int(float(row["bbox_right"])),
+        area_px=exact_integer(row["area_px"], name="area_px"),
+        bbox_top=exact_integer(row["bbox_top"], name="bbox_top"),
+        bbox_left=exact_integer(row["bbox_left"], name="bbox_left"),
+        bbox_bottom=exact_integer(row["bbox_bottom"], name="bbox_bottom"),
+        bbox_right=exact_integer(row["bbox_right"], name="bbox_right"),
         mean_signal=parse_optional_float(row, "mean_signal"),
         peak_signal=parse_optional_float(row, "peak_signal"),
         recurrent_artifact_overlap_fraction=parse_optional_float(
@@ -137,12 +153,12 @@ def parse_detection(row: dict[str, str]) -> ParticleDetection:
 def parse_tracks(rows: list[dict[str, str]]) -> list[ParticleTrack]:
     grouped: dict[int, list[tuple[int, ParticleDetection]]] = {}
     for row in rows:
-        track_id = int(float(row["track_id"]))
+        track_id = exact_integer(row["track_id"], name="track_id")
         raw_index = row.get("track_detection_index", "")
         detection_index = (
             len(grouped.get(track_id, []))
             if raw_index == ""
-            else int(float(raw_index))
+            else exact_integer(raw_index, name="track_detection_index")
         )
         grouped.setdefault(track_id, []).append((detection_index, parse_detection(row)))
     return [
@@ -208,19 +224,21 @@ def accepted_track_ids(input_dir: Path) -> set[int]:
     score_rows = read_csv(input_dir / "track_scores.csv")
     if score_rows:
         return {
-            int(float(row["track_id"]))
+            exact_integer(row["track_id"], name="track_id")
             for row in score_rows
             if bool_value(row.get("accepted", False))
         }
     filtered_rows = read_csv(input_dir / "filtered_tracks.csv")
     if filtered_rows:
-        return {int(float(row["track_id"])) for row in filtered_rows}
+        return {exact_integer(row["track_id"], name="track_id") for row in filtered_rows}
     velocity_rows = read_csv(input_dir / "filtered_velocities.csv")
-    return {int(float(row["track_id"])) for row in velocity_rows}
+    return {exact_integer(row["track_id"], name="track_id") for row in velocity_rows}
 
 
 def filter_rows_by_track_id(rows: list[dict[str, str]], ids: set[int]) -> list[dict[str, str]]:
-    return [row for row in rows if int(float(row["track_id"])) in ids]
+    return [
+        row for row in rows if exact_integer(row["track_id"], name="track_id") in ids
+    ]
 
 
 def write_report(path: Path, summary: dict[str, Any], rejected_rows: list[dict[str, Any]]) -> None:
