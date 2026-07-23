@@ -65,3 +65,7 @@ setattr(
     _original_fdr_threshold_from_p_values,
 )
 _operational.fdr_threshold_from_p_values = benjamini_hochberg_step_up_threshold
+
+# Import for side effect: keep period-estimation lags tied to the original belt
+# row coordinate instead of compressing away non-finite profile positions.
+from . import period_profile_finite_patch as _period_profile_finite_patch  # noqa: E402,F401
