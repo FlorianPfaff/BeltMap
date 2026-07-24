@@ -13,6 +13,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=Path("data_manifest.json"))
     args = parser.parse_args(argv)
     manifest = dataset_manifest(args.image_dir)
+
+    output_path = args.output.resolve()
+    source_paths = {
+        (args.image_dir / record.path).resolve()
+        for record in manifest.files
+    }
+    if output_path in source_paths:
+        raise SystemExit(
+            f"Refusing to overwrite an input image with the manifest: {args.output}"
+        )
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest.to_dict(), indent=2), encoding="utf-8")
     print(json.dumps({"files": len(manifest.files), "manifest_sha256": manifest.manifest_sha256}, indent=2))
