@@ -5,6 +5,9 @@ import json
 import sys
 from pathlib import Path
 
+# Import for side effect: reject malformed top-level label collections before
+# reporting a truth file as safe for metrics.
+from beltmap import label_validation_collection_patch as _label_validation_collection_patch  # noqa: F401,E402
 from beltmap.label_validation import validated_label_state
 
 
