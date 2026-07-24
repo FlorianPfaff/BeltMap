@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from beltmap.cli import validate_labels as cli_validate_labels
 from beltmap import label_validation
 from beltmap import label_validation_collection_patch
 
@@ -39,6 +40,16 @@ def test_validated_label_state_rejects_non_list_collections(tmp_path, key):
 
     assert report.is_valid_for_metrics is False
     assert f"{key} must be a list" in report.errors
+
+
+def test_validate_labels_cli_fails_for_malformed_collection(tmp_path, capsys):
+    truth_path = tmp_path / "labels.json"
+    payload = _reviewed_empty_payload()
+    payload["particles"] = {"frame_index": 0}
+    truth_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert cli_validate_labels.main(["--truth-path", str(truth_path)]) == 1
+    assert "particles must be a list" in capsys.readouterr().out
 
 
 def test_label_collection_patch_reload_is_idempotent(tmp_path):
