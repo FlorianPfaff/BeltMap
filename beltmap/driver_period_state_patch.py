@@ -308,10 +308,11 @@ def _patched_main(*args, **kwargs):
     previous_output_period = _DRIVER_MODEL_PERIOD_PX[0]
     _DRIVER_MODEL_PERIOD_PX[0] = None if state is None else state.model_period_px
     try:
-        return _original_driver_main(*args, **kwargs)
+        result = _original_driver_main(*args, **kwargs)
     finally:
         _DRIVER_MODEL_PERIOD_PX[0] = previous_output_period
-        _patch_metadata_file()
+    _patch_metadata_file()
+    return result
 
 
 _driver.build_belt_map_result = _patched_build_belt_map_result
