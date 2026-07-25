@@ -30,12 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    image_dir = args.image_dir.expanduser().resolve()
     state = StreamingFrameState()
     if args.state.is_file():
         payload = json.loads(args.state.read_text(encoding="utf-8"))
-        state.seen_paths = set(payload.get("seen_paths", []))
+        state.seen_paths = {
+            str(Path(path).expanduser().resolve())
+            for path in payload.get("seen_paths", [])
+        }
         state.last_scan_unix_s = float(payload.get("last_scan_unix_s", 0.0))
-    new_paths = discover_new_stream_frames(args.image_dir, state, max_new=None if args.max_new == 0 else args.max_new)
+    new_paths = discover_new_stream_frames(image_dir, state, max_new=None if args.max_new == 0 else args.max_new)
     args.state.parent.mkdir(parents=True, exist_ok=True)
     args.state.write_text(json.dumps({"seen_paths": sorted(state.seen_paths), "last_scan_unix_s": state.last_scan_unix_s}, indent=2), encoding="utf-8")
     print(json.dumps({"new_frames": [str(path) for path in new_paths], "state": str(args.state)}, indent=2))
