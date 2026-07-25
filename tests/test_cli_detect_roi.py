@@ -1,3 +1,4 @@
+from PIL import Image
 import pytest
 
 from beltmap.cli import detect_roi as cli_detect_roi
@@ -43,6 +44,26 @@ def test_detect_roi_accepts_valid_numeric_arguments():
     assert args.max_frames == 3
     assert args.percentile == 99.5
     assert args.margin_px == 0
+
+
+def test_detect_roi_rejects_output_aliasing_an_input_image(tmp_path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    image_path = image_dir / "frame_000.png"
+    Image.new("L", (8, 8), color=32).save(image_path)
+    original_bytes = image_path.read_bytes()
+
+    with pytest.raises(SystemExit, match="would overwrite it"):
+        cli_detect_roi.main(
+            [
+                "--image-dir",
+                str(image_dir),
+                "--output",
+                str(image_path),
+            ]
+        )
+
+    assert image_path.read_bytes() == original_bytes
 
 
 @pytest.mark.parametrize("value", ["-1", "1.5", "abc"])
