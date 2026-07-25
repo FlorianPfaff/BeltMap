@@ -77,4 +77,6 @@ _operational.recommend_threshold = recommend_threshold_per_frame
 
 # Import for side effect: keep periodic crop coverage from counting wrapped phase
 # bins repeatedly when adaptive map-frame selection spans more than one map period.
-from . import adaptive_sampling_coverage_patch as _adaptive_sampling_coverage_patch  # noqa: E402,F401
+from . import (  # noqa: E402,F401
+    adaptive_sampling_coverage_patch as _adaptive_sampling_coverage_patch,
+)
