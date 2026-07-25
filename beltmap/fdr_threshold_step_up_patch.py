@@ -65,3 +65,7 @@ setattr(
     _original_fdr_threshold_from_p_values,
 )
 _operational.fdr_threshold_from_p_values = benjamini_hochberg_step_up_threshold
+
+# Import for side effect: keep particle-flux summaries and science exports from
+# emitting NaN or infinity when timing metadata or derived values are invalid.
+from . import flux_summary_finite_patch as _flux_summary_finite_patch  # noqa: E402,F401
