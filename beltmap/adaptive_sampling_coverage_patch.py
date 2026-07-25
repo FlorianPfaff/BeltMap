@@ -12,6 +12,8 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any, Sequence
 
+import numpy as np
+
 from . import operational_improvements as _operational
 
 _PATCHED_ATTR = "_beltmap_adaptive_sampling_coverage_patched"
@@ -46,21 +48,41 @@ def select_adaptive_map_frames_with_bounded_coverage(
     effective crop height at one map height before delegating to the sampler.
     """
 
+    phases = np.asarray(phases_px, dtype=np.float64)
+    if phases.size == 0 or not np.all(np.isfinite(phases)):
+        return _original_select_adaptive_map_frames(
+            phases_px,
+            map_height_px=map_height_px,
+            sample_count=sample_count,
+            crop_height_px=crop_height_px,
+            quality_scores=quality_scores,
+            bin_count=bin_count,
+        )
+
     validated_map_height = _operational._positive_integer_value(
         map_height_px,
         "map_height_px",
+    )
+    validated_sample_count = _operational._positive_integer_value(
+        sample_count,
+        "sample_count",
     )
     validated_crop_height = _operational._positive_integer_value(
         crop_height_px,
         "crop_height_px",
     )
+    validated_bin_count = (
+        None
+        if bin_count is None
+        else _operational._positive_integer_value(bin_count, "bin_count")
+    )
     return _original_select_adaptive_map_frames(
         phases_px,
         map_height_px=validated_map_height,
-        sample_count=sample_count,
+        sample_count=validated_sample_count,
         crop_height_px=min(validated_crop_height, validated_map_height),
         quality_scores=quality_scores,
-        bin_count=bin_count,
+        bin_count=validated_bin_count,
     )
 
 
