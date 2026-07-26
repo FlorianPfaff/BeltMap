@@ -20,6 +20,8 @@ _ORIGINAL_VALUES_ATTR = "_beltmap_original_residual_values_and_valid_mask"
 _ORIGINAL_EXTRACT_ATTR = "_beltmap_original_extract_particle_detections"
 _ORIGINAL_GAIN_OFFSET_ATTR = "_beltmap_original_robust_gain_offset"
 _ORIGINAL_SHIFT_ATTR = "_beltmap_original_estimate_integer_xy_shift_before_mask_validation"
+_NONWRAPPING_SHIFT_PATCHED_ATTR = "_beltmap_nonwrapping_integer_shift_patched"
+_NONWRAPPING_SHIFT_ORIGINAL_ATTR = "_beltmap_original_estimate_integer_xy_shift"
 
 
 def _unwrap_patched_callable(func: Any, original_attr: str) -> Any:
@@ -231,6 +233,16 @@ _mark_wrapper(
     _ORIGINAL_SHIFT_ATTR,
     _original_estimate_integer_xy_shift,
 )
+for _attribute in (
+    _NONWRAPPING_SHIFT_PATCHED_ATTR,
+    _NONWRAPPING_SHIFT_ORIGINAL_ATTR,
+):
+    if hasattr(_original_estimate_integer_xy_shift, _attribute):
+        setattr(
+            validating_estimate_integer_xy_shift,
+            _attribute,
+            getattr(_original_estimate_integer_xy_shift, _attribute),
+        )
 
 _detection._residual_values_and_valid_mask = validating_residual_values_and_valid_mask
 _detection.detect_particles_from_residual = validating_detect_particles_from_residual
