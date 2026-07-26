@@ -1,4 +1,4 @@
-"""Reject ambiguous non-boolean masks before residual and component detection."""
+"""Reject ambiguous non-boolean masks before BeltMap image analysis."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from . import advanced_quality_shift_patch as _advanced_quality_shift_patch  # noqa: F401
+from . import advanced_quality as _advanced_quality
 from . import detection as _detection
 from . import tracking as _tracking
 from .residual import ResidualImage
@@ -16,6 +18,8 @@ _PATCHED_ATTR = "_beltmap_detection_mask_validation_patched"
 _ORIGINAL_DETECT_ATTR = "_beltmap_original_detect_particles_from_residual"
 _ORIGINAL_VALUES_ATTR = "_beltmap_original_residual_values_and_valid_mask"
 _ORIGINAL_EXTRACT_ATTR = "_beltmap_original_extract_particle_detections"
+_ORIGINAL_GAIN_OFFSET_ATTR = "_beltmap_original_robust_gain_offset"
+_ORIGINAL_SHIFT_ATTR = "_beltmap_original_estimate_integer_xy_shift_before_mask_validation"
 
 
 def _unwrap_patched_callable(func: Any, original_attr: str) -> Any:
@@ -35,6 +39,14 @@ _original_residual_values_and_valid_mask = _unwrap_patched_callable(
 _original_extract_particle_detections = _unwrap_patched_callable(
     _tracking.extract_particle_detections,
     _ORIGINAL_EXTRACT_ATTR,
+)
+_original_robust_gain_offset = _unwrap_patched_callable(
+    _advanced_quality.robust_gain_offset,
+    _ORIGINAL_GAIN_OFFSET_ATTR,
+)
+_original_estimate_integer_xy_shift = _unwrap_patched_callable(
+    _advanced_quality.estimate_integer_xy_shift,
+    _ORIGINAL_SHIFT_ATTR,
 )
 
 
@@ -61,12 +73,13 @@ def _validate_binary_mask(
     expected_shape: tuple[int, ...],
     name: str,
     shape_error: str,
-) -> None:
+) -> np.ndarray:
     """Accept boolean or legacy binary masks, but reject ambiguous values."""
 
     raw = _validate_binary_values(mask, name=name)
     if raw.shape != expected_shape:
         raise ValueError(shape_error)
+    return raw
 
 
 def validating_residual_values_and_valid_mask(
@@ -97,7 +110,7 @@ def validating_detect_particles_from_residual(
 
     if mask is not None:
         residual_values = residual.normalized if isinstance(residual, ResidualImage) else residual
-        _validate_binary_mask(
+        mask = _validate_binary_mask(
             mask,
             expected_shape=np.asarray(residual_values).shape,
             name="mask",
@@ -122,7 +135,7 @@ def validating_extract_particle_detections(
 ):
     """Reject invalid component masks before NumPy turns nonzero values true."""
 
-    _validate_binary_values(particle_mask, name="particle_mask")
+    particle_mask = _validate_binary_values(particle_mask, name="particle_mask")
     return _original_extract_particle_detections(
         particle_mask,
         residual=residual,
@@ -132,28 +145,98 @@ def validating_extract_particle_detections(
     )
 
 
-setattr(validating_residual_values_and_valid_mask, _PATCHED_ATTR, True)
-setattr(
+def validating_robust_gain_offset(
+    observed: ArrayLike,
+    expected: ArrayLike,
+    *,
+    mask: ArrayLike | None = None,
+    trim_fraction: float = 0.05,
+    max_iterations: int = 3,
+    min_pixels: int = 128,
+):
+    """Reject ambiguous photometric-fit masks before boolean coercion."""
+
+    if mask is not None:
+        mask = _validate_binary_mask(
+            mask,
+            expected_shape=np.asarray(observed).shape,
+            name="mask",
+            shape_error="mask must have the same shape as observed",
+        )
+    return _original_robust_gain_offset(
+        observed,
+        expected,
+        mask=mask,
+        trim_fraction=trim_fraction,
+        max_iterations=max_iterations,
+        min_pixels=min_pixels,
+    )
+
+
+def validating_estimate_integer_xy_shift(
+    observed: ArrayLike,
+    expected: ArrayLike,
+    *,
+    mask: ArrayLike | None = None,
+    max_shift_y_px: int = 4,
+    max_shift_x_px: int = 4,
+    trim_fraction: float = 0.08,
+):
+    """Reject ambiguous registration masks before boolean coercion."""
+
+    if mask is not None:
+        mask = _validate_binary_mask(
+            mask,
+            expected_shape=np.asarray(observed).shape,
+            name="mask",
+            shape_error="mask must have the same shape as observed",
+        )
+    return _original_estimate_integer_xy_shift(
+        observed,
+        expected,
+        mask=mask,
+        max_shift_y_px=max_shift_y_px,
+        max_shift_x_px=max_shift_x_px,
+        trim_fraction=trim_fraction,
+    )
+
+
+def _mark_wrapper(func: Any, original_attr: str, original: Any) -> None:
+    setattr(func, _PATCHED_ATTR, True)
+    setattr(func, original_attr, original)
+
+
+_mark_wrapper(
     validating_residual_values_and_valid_mask,
     _ORIGINAL_VALUES_ATTR,
     _original_residual_values_and_valid_mask,
 )
-setattr(validating_detect_particles_from_residual, _PATCHED_ATTR, True)
-setattr(
+_mark_wrapper(
     validating_detect_particles_from_residual,
     _ORIGINAL_DETECT_ATTR,
     _original_detect_particles_from_residual,
 )
-setattr(validating_extract_particle_detections, _PATCHED_ATTR, True)
-setattr(
+_mark_wrapper(
     validating_extract_particle_detections,
     _ORIGINAL_EXTRACT_ATTR,
     _original_extract_particle_detections,
+)
+_mark_wrapper(
+    validating_robust_gain_offset,
+    _ORIGINAL_GAIN_OFFSET_ATTR,
+    _original_robust_gain_offset,
+)
+_mark_wrapper(
+    validating_estimate_integer_xy_shift,
+    _ORIGINAL_SHIFT_ATTR,
+    _original_estimate_integer_xy_shift,
 )
 
 _detection._residual_values_and_valid_mask = validating_residual_values_and_valid_mask
 _detection.detect_particles_from_residual = validating_detect_particles_from_residual
 _tracking.extract_particle_detections = validating_extract_particle_detections
+_advanced_quality.robust_gain_offset = validating_robust_gain_offset
+_advanced_quality.estimate_integer_xy_shift = validating_estimate_integer_xy_shift
 
 _package = sys.modules.get(__package__)
 if _package is not None:
