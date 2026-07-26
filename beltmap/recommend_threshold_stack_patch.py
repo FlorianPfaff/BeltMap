@@ -39,6 +39,7 @@ def recommend_threshold_per_frame(
     probability over the pooled valid residual values.  A 2-D residual remains
     a single-frame input, preserving the original behavior.
     """
+
     values = np.asarray(residual, dtype=np.float64)
     valid = np.isfinite(values)
     if mask is not None:
