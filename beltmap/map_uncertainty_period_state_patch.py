@@ -1,7 +1,7 @@
 """Keep map-uncertainty coverage finite for inferred belt-map strips.
 
 The post-run uncertainty helper historically treated every belt-map height as a
-cyclic period.  Modern driver metadata distinguishes a trusted physical period
+cyclic period. Modern driver metadata distinguishes a trusted physical period
 from finite inferred support, so row-exposure counts must honor that state too.
 """
 
@@ -66,7 +66,7 @@ def period_aware_compute_phase_row_counts(
 ):
     """Count row exposure without wrapping finite inferred map support.
 
-    Direct callers retain the historical periodic default.  The output writer
+    Direct callers retain the historical periodic default. The output writer
     supplies the metadata-derived state through a context variable, and callers
     may also request finite-strip semantics explicitly with ``periodic=False``.
     """
@@ -135,3 +135,7 @@ for patched, original in (
 
 _postrun.compute_phase_row_counts = period_aware_compute_phase_row_counts
 _postrun.write_map_uncertainty_outputs = period_aware_write_map_uncertainty_outputs
+
+# Import for side effect: reject negative metadata counts before post-run quality
+# diagnostics use them as physical event totals.
+from . import postrun_count_metadata_patch as _postrun_count_metadata_patch  # noqa: E402,F401
