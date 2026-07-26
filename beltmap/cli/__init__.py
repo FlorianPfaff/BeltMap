@@ -14,4 +14,4 @@ from . import filter_tracks_sparse_frame_patch as _filter_tracks_sparse_frame_pa
 
 # Import for side effect: ignore syntactically valid non-object records in
 # validation progress telemetry before mapping-only consumers inspect them.
-from .. import validation_progress_jsonl_patch as _validation_progress_jsonl_patch  # noqa: F401,E402
+from . import validation_progress_jsonl_patch as _validation_progress_jsonl_patch  # noqa: F401,E402
