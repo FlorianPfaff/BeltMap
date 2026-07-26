@@ -94,6 +94,10 @@ from . import tracklet_matching_patch as _tracklet_matching_patch  # noqa: F401,
 # the greatest finite coverage across detections.
 from . import froc_score_field_coverage_patch as _froc_score_field_coverage_patch  # noqa: F401,E402
 
+# Import for side effect: reject fractional or boolean summary counts instead of
+# rounding them before ghost-objective configuration selection.
+from . import ghost_objective_integer_patch as _ghost_objective_integer_patch  # noqa: F401,E402
+
 # Import for side effect: apply the full Benjamini-Hochberg step-up rejection set
 # when converting FDR-controlled p-values back to a score threshold.
 from . import fdr_threshold_step_up_patch as _fdr_threshold_step_up_patch  # noqa: F401,E402
