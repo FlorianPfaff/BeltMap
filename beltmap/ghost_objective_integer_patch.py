@@ -1,9 +1,10 @@
-"""Require exact integer-valued count metrics in the ghost objective.
+"""Require exact non-negative count metrics in the ghost objective.
 
 Ghost-objective inputs may come from CSV or JSON summaries.  The original count
 parser rounded every finite number before converting it to ``int``.  Malformed
-values such as ``0.6`` were therefore treated as one false detection instead of
-being rejected as invalid evidence, which could change configuration ranking.
+values such as ``0.6`` were therefore treated as one false detection, while
+negative and boolean values were also accepted as counts.  Invalid evidence can
+change configuration ranking instead of making the affected variant ineligible.
 """
 
 from __future__ import annotations
@@ -28,12 +29,12 @@ _original_finite_integer = _unwrap_patched_callable(_ghost_objective.finite_inte
 
 
 def exact_finite_integer(value: Any) -> int | None:
-    """Parse a finite exact integer, rejecting booleans and fractional values."""
+    """Parse a finite exact non-negative integer, rejecting booleans."""
 
     if isinstance(value, (bool, np.bool_)):
         return None
     parsed = _ghost_objective.finite_number(value)
-    if parsed is None or not parsed.is_integer():
+    if parsed is None or parsed < 0.0 or not parsed.is_integer():
         return None
     return int(parsed)
 
