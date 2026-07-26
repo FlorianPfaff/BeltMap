@@ -39,7 +39,6 @@ def recommend_threshold_per_frame(
     probability over the pooled valid residual values.  A 2-D residual remains
     a single-frame input, preserving the original behavior.
     """
-
     values = np.asarray(residual, dtype=np.float64)
     valid = np.isfinite(values)
     if mask is not None:
@@ -74,3 +73,7 @@ setattr(
     _original_recommend_threshold,
 )
 _operational.recommend_threshold = recommend_threshold_per_frame
+
+# Import for side effect: keep comparison-report named preview discovery
+# restricted to regular files before preview paths can reach Pillow.
+from . import compare_named_preview_file_patch as _compare_named_preview_file_patch  # noqa: E402,F401
