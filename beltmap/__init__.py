@@ -75,6 +75,10 @@ from .tracking import (
     track_particle_detections,
 )
 
+# Import for side effect: reject non-finite and non-binary detection masks instead
+# of silently coercing ambiguous values to valid pixels.
+from . import detection_mask_validation_patch as _detection_mask_validation_patch  # noqa: F401,E402
+
 # Import for side effect: keep subpixel phase-registration losses and scores bounded.
 from . import phase_registration_loss_patch as _phase_registration_loss_patch  # noqa: F401,E402
 
