@@ -1,4 +1,4 @@
-"""Reject ambiguous non-boolean masks before residual detection."""
+"""Reject ambiguous non-boolean masks before residual and component detection."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from . import detection as _detection
+from . import tracking as _tracking
 from .residual import ResidualImage
 
 _PATCHED_ATTR = "_beltmap_detection_mask_validation_patched"
 _ORIGINAL_DETECT_ATTR = "_beltmap_original_detect_particles_from_residual"
 _ORIGINAL_VALUES_ATTR = "_beltmap_original_residual_values_and_valid_mask"
+_ORIGINAL_EXTRACT_ATTR = "_beltmap_original_extract_particle_detections"
 
 
 def _unwrap_patched_callable(func: Any, original_attr: str) -> Any:
@@ -30,6 +32,27 @@ _original_residual_values_and_valid_mask = _unwrap_patched_callable(
     _detection._residual_values_and_valid_mask,
     _ORIGINAL_VALUES_ATTR,
 )
+_original_extract_particle_detections = _unwrap_patched_callable(
+    _tracking.extract_particle_detections,
+    _ORIGINAL_EXTRACT_ATTR,
+)
+
+
+def _validate_binary_values(mask: ArrayLike, *, name: str) -> np.ndarray:
+    """Return a mask array after rejecting ambiguous non-binary values."""
+
+    raw = np.asarray(mask)
+    if raw.dtype == np.bool_:
+        return raw
+    try:
+        numeric = np.issubdtype(raw.dtype, np.number)
+    except TypeError:
+        numeric = False
+    if not numeric:
+        raise ValueError(f"{name} must be a boolean or binary 0/1 array")
+    if not np.all(np.isfinite(raw)) or not np.all((raw == 0) | (raw == 1)):
+        raise ValueError(f"{name} must be a boolean or binary 0/1 array")
+    return raw
 
 
 def _validate_binary_mask(
@@ -41,15 +64,9 @@ def _validate_binary_mask(
 ) -> None:
     """Accept boolean or legacy binary masks, but reject ambiguous values."""
 
-    raw = np.asarray(mask)
+    raw = _validate_binary_values(mask, name=name)
     if raw.shape != expected_shape:
         raise ValueError(shape_error)
-    if raw.dtype == np.bool_:
-        return
-    if not np.issubdtype(raw.dtype, np.number):
-        raise ValueError(f"{name} must be a boolean or binary 0/1 array")
-    if not np.all(np.isfinite(raw)) or not np.all((raw == 0) | (raw == 1)):
-        raise ValueError(f"{name} must be a boolean or binary 0/1 array")
 
 
 def validating_residual_values_and_valid_mask(
@@ -95,6 +112,26 @@ def validating_detect_particles_from_residual(
     )
 
 
+def validating_extract_particle_detections(
+    particle_mask: ArrayLike,
+    *,
+    residual: ArrayLike | ResidualImage | None = None,
+    frame_index: float = 0.0,
+    config: _tracking.ParticleComponentConfig | None = None,
+    signal_mode: str | None = None,
+):
+    """Reject invalid component masks before NumPy turns nonzero values true."""
+
+    _validate_binary_values(particle_mask, name="particle_mask")
+    return _original_extract_particle_detections(
+        particle_mask,
+        residual=residual,
+        frame_index=frame_index,
+        config=config,
+        signal_mode=signal_mode,
+    )
+
+
 setattr(validating_residual_values_and_valid_mask, _PATCHED_ATTR, True)
 setattr(
     validating_residual_values_and_valid_mask,
@@ -107,9 +144,16 @@ setattr(
     _ORIGINAL_DETECT_ATTR,
     _original_detect_particles_from_residual,
 )
+setattr(validating_extract_particle_detections, _PATCHED_ATTR, True)
+setattr(
+    validating_extract_particle_detections,
+    _ORIGINAL_EXTRACT_ATTR,
+    _original_extract_particle_detections,
+)
 
 _detection._residual_values_and_valid_mask = validating_residual_values_and_valid_mask
 _detection.detect_particles_from_residual = validating_detect_particles_from_residual
+_tracking.extract_particle_detections = validating_extract_particle_detections
 
 _package = sys.modules.get(__package__)
 if _package is not None:
@@ -117,4 +161,9 @@ if _package is not None:
         _package,
         "detect_particles_from_residual",
         validating_detect_particles_from_residual,
+    )
+    setattr(
+        _package,
+        "extract_particle_detections",
+        validating_extract_particle_detections,
     )
