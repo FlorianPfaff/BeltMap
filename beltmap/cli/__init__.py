@@ -11,3 +11,7 @@ from . import prepare_zenodo_relative_cache_patch as _prepare_zenodo_relative_ca
 # Import for side effect: reconstruct fallback track membership directly from
 # observed absolute frame IDs instead of allocating every preceding frame.
 from . import filter_tracks_sparse_frame_patch as _filter_tracks_sparse_frame_patch  # noqa: F401,E402
+
+# Import for side effect: ignore syntactically valid non-object records in
+# validation progress telemetry before mapping-only consumers inspect them.
+from .. import validation_progress_jsonl_patch as _validation_progress_jsonl_patch  # noqa: F401,E402
