@@ -6,6 +6,15 @@ from pathlib import Path
 from beltmap.postrun_improvements import write_label_plan, write_label_template
 
 
+_LABEL_PLAN_INPUT_FILENAMES = (
+    "metadata.json",
+    "phase_estimates.csv",
+    "detections_per_frame.csv",
+    "recurrent_artifact_detections.csv",
+    "photometric_fits.csv",
+)
+
+
 def parse_positive_int(value: str) -> int:
     """Parse a strictly positive integer CLI argument."""
 
@@ -28,6 +37,51 @@ def parse_non_negative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be a non-negative integer")
     return parsed
+
+
+def paths_alias(left: Path, right: Path) -> bool:
+    """Return whether two path spellings identify the same filesystem object."""
+
+    left = Path(left)
+    right = Path(right)
+    try:
+        if left.resolve(strict=False) == right.resolve(strict=False):
+            return True
+    except OSError:
+        if left.absolute() == right.absolute():
+            return True
+    try:
+        return left.exists() and right.exists() and left.samefile(right)
+    except OSError:
+        return False
+
+
+def validate_output_paths(
+    parser: argparse.ArgumentParser,
+    *,
+    output_dir: Path,
+    output: Path,
+    template_output: Path | None,
+) -> None:
+    """Reject output aliases before any label-plan artifact is written."""
+
+    outputs = [("--output", Path(output))]
+    if template_output is not None:
+        outputs.append(("--template-output", Path(template_output)))
+
+    for index, (left_name, left_path) in enumerate(outputs):
+        for right_name, right_path in outputs[index + 1 :]:
+            if paths_alias(left_path, right_path):
+                parser.error(f"{left_name} and {right_name} must refer to different files")
+
+    output_dir = Path(output_dir)
+    for argument, output_path in outputs:
+        for filename in _LABEL_PLAN_INPUT_FILENAMES:
+            input_path = output_dir / filename
+            if paths_alias(output_path, input_path):
+                parser.error(
+                    f"{argument} must not overwrite label-plan input {input_path}"
+                )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +123,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     output = args.output or args.output_dir / "label_plan.csv"
+    validate_output_paths(
+        parser,
+        output_dir=args.output_dir,
+        output=output,
+        template_output=args.template_output,
+    )
     rows = write_label_plan(
         args.output_dir,
         output_path=output,
