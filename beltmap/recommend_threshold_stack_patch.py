@@ -78,3 +78,7 @@ _operational.recommend_threshold = recommend_threshold_per_frame
 # Import for side effect: keep comparison-report named preview discovery
 # restricted to regular files before preview paths can reach Pillow.
 from . import compare_named_preview_file_patch as _compare_named_preview_file_patch  # noqa: E402,F401
+
+# Import for side effect: prevent evaluation reports from overwriting one another
+# or the standard artifacts belonging to an evaluated BeltMap run.
+from . import evaluation_path_collision_patch as _evaluation_path_collision_patch  # noqa: E402,F401
