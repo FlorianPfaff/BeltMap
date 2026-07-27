@@ -197,10 +197,10 @@ def revolution_split_frame_rows(
 
     if len(image_names) != split.frame_count:
         raise ValueError("image_names must match the split frame count")
-    selected = {
-        _nonnegative_integer_value(index, "selected_train_frame_indices")
-        for index in selected_train_frame_indices
-    }
+    selected = _normalize_selected_train_frame_indices(
+        split,
+        selected_train_frame_indices,
+    )
     return [
         {
             "frame_index": index,
@@ -220,10 +220,10 @@ def revolution_split_revolution_rows(
 ) -> list[dict]:
     """Return per-revolution split composition rows for CSV output."""
 
-    selected = {
-        _nonnegative_integer_value(index, "selected_train_frame_indices")
-        for index in selected_train_frame_indices
-    }
+    selected = _normalize_selected_train_frame_indices(
+        split,
+        selected_train_frame_indices,
+    )
     rows: list[dict] = []
     for revolution in split.revolutions:
         frame_indices = _frame_indices_for_revolution(split, revolution)
@@ -332,6 +332,31 @@ def _normalize_revolution_by_frame(
         _nonnegative_integer_value(value, "revolution indices")
         for value in arr.tolist()
     )
+
+
+def _normalize_selected_train_frame_indices(
+    split: RevolutionSplit,
+    selected_train_frame_indices: Sequence[int],
+) -> set[int]:
+    selected = {
+        _nonnegative_integer_value(index, "selected_train_frame_indices")
+        for index in selected_train_frame_indices
+    }
+    missing = sorted(index for index in selected if index >= split.frame_count)
+    if missing:
+        preview = ", ".join(str(index) for index in missing[:8])
+        raise ValueError(
+            "selected_train_frame_indices contains frame indices outside the split; "
+            f"first invalid: {preview}"
+        )
+    eval_selected = sorted(selected.intersection(split.eval_frame_indices))
+    if eval_selected:
+        preview = ", ".join(str(index) for index in eval_selected[:8])
+        raise ValueError(
+            "selected_train_frame_indices contains held-out evaluation frames; "
+            f"first invalid: {preview}"
+        )
+    return selected
 
 
 def _frame_indices_for_revolution(
