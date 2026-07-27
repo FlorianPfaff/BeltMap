@@ -12,6 +12,22 @@ _ORIGINAL_ATTR = "_beltmap_ghost_repair_original_build_defect_maps"
 _PATCHED_ATTR = "_beltmap_ghost_repair_crop_clipped"
 
 
+def _exact_nonnegative_int(value: Any) -> int | None:
+    """Parse integer-valued GhostRepair identifiers and counts without rounding."""
+
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    parsed = _ghost_repair.finite_float(value)
+    if parsed is None or parsed < 0.0 or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
+# GhostRepair uses ``finite_int`` for track identifiers and non-negative summary
+# counts. Rounding a malformed value can merge unrelated tracks or invent counts.
+_ghost_repair.finite_int = _exact_nonnegative_int
+
+
 def _unwrap_patched_callable(func: Any) -> Any:
     return getattr(func, _ORIGINAL_ATTR, func)
 
@@ -137,11 +153,21 @@ def crop_clipped_build_ghost_defect_maps(
         if centers_y:
             reference = centers_y[0]
             unwrapped_y = np.asarray(
-                [reference + _ghost_repair.cyclic_delta(value, reference, belt_map_shape[0]) for value in centers_y],
+                [
+                    reference
+                    + _ghost_repair.cyclic_delta(
+                        value,
+                        reference,
+                        belt_map_shape[0],
+                    )
+                    for value in centers_y
+                ],
                 dtype=np.float64,
             )
             centers_x_arr = np.asarray(centers_x, dtype=np.float64)
-            compactness = float(np.sqrt(np.mean((unwrapped_y - np.mean(unwrapped_y)) ** 2)))
+            compactness = float(
+                np.sqrt(np.mean((unwrapped_y - np.mean(unwrapped_y)) ** 2))
+            )
             track_rows.append(
                 {
                     "track_id": track_id,
