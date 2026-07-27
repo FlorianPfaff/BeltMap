@@ -63,3 +63,7 @@ setattr(
     _original_detection_score_field,
 )
 _compare_runs.detection_score_field = most_complete_detection_score_field
+
+# Import for side effect: validate every comparison-report destination before
+# it can overwrite truth labels, run artifacts, previews, or a sibling output.
+from . import compare_report_path_collision_patch as _compare_report_path_collision_patch  # noqa: E402,F401
