@@ -93,3 +93,7 @@ setattr(
     _original_load_timestamps_csv,
 )
 _operational.load_timestamps_csv = load_validated_timestamps_csv
+
+# Import for side effect: keep multi-camera event support unique by camera so
+# repeated detections from one stream cannot inflate cross-camera evidence.
+from . import operational_multicamera_unique_camera_patch as _operational_multicamera_unique_camera_patch  # noqa: E402,F401
