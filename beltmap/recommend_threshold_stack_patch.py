@@ -74,3 +74,7 @@ setattr(
     _original_recommend_threshold,
 )
 _operational.recommend_threshold = recommend_threshold_per_frame
+
+# Import for side effect: keep comparison-report named preview discovery
+# restricted to regular files before preview paths can reach Pillow.
+from . import compare_named_preview_file_patch as _compare_named_preview_file_patch  # noqa: E402,F401
