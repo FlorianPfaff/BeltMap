@@ -47,7 +47,7 @@ def fresh_period_state(*, map_height_px: int, model_period_px: float | None) -> 
 def reused_period_state(
     *,
     map_height_px: int,
-    supplied_period_px: int | None,
+    supplied_period_px: float | int | None,
     metadata: Mapping[str, Any] | None,
 ) -> BeltPeriodState:
     """Resolve period state for a reused ``belt_map.npy`` and metadata pair.
@@ -91,7 +91,7 @@ def reused_period_state(
             source="metadata_finite_strip",
         )
 
-    if supplied is not None and int(round(supplied)) == height:
+    if supplied is not None and abs(float(supplied) - float(height)) <= 1e-6:
         return BeltPeriodState(
             map_height_px=height,
             model_period_px=float(supplied),

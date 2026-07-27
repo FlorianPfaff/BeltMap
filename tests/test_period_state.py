@@ -137,6 +137,19 @@ def test_reused_period_state_only_trusts_matching_supplied_period_for_legacy_map
     assert mismatching.source == "legacy_reuse_unknown"
 
 
+def test_reused_period_state_does_not_round_nearby_supplied_period():
+    state = reused_period_state(
+        map_height_px=120,
+        supplied_period_px=119.6,
+        metadata={},
+    )
+
+    assert state.model_period_px is None
+    assert not state.period_known
+    assert not state.periodic
+    assert state.source == "legacy_reuse_unknown"
+
+
 def test_phase_fraction_and_radians_are_empty_without_physical_period():
     assert phase_fraction_and_radians(12.0, None) == ("", "")
 
