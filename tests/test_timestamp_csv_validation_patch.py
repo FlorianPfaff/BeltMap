@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 import beltmap  # noqa: F401 - imports side-effect patches
-from beltmap import operational_improvements as operational
 import beltmap.timestamp_csv_validation_patch as timestamp_patch
+from beltmap import operational_improvements as operational
 
 
 def _write_timestamps(path: Path, rows: str) -> Path:
