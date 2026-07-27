@@ -18,8 +18,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _paths_refer_to_same_file(first: Path, second: Path) -> bool:
+    """Return whether two path spellings identify the same filesystem object."""
+
+    try:
+        if first.resolve(strict=False) == second.resolve(strict=False):
+            return True
+    except OSError:
+        pass
+
+    try:
+        return first.samefile(second)
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if _paths_refer_to_same_file(args.belt_map, args.output):
+        parser.error("--output must not refer to the same file as --belt-map")
+
     belt_map = np.load(args.belt_map)
     estimate = estimate_period_from_belt_map(
         belt_map,
