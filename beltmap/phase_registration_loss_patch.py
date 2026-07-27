@@ -71,3 +71,7 @@ setattr(
 
 _phase._refine_quadratic_offset = nonnegative_refine_quadratic_offset
 _phase._loss_to_score = bounded_loss_to_score
+
+# Import for side effect: smooth periodic phase corrections on a locally
+# unwrapped branch so values near +/- half a period are not averaged apart.
+from . import phase_smoothing_cyclic_patch as _phase_smoothing_cyclic_patch  # noqa: E402,F401
