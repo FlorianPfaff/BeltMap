@@ -78,3 +78,7 @@ _operational.recommend_threshold = recommend_threshold_per_frame
 # Import for side effect: keep comparison-report named preview discovery
 # restricted to regular files before preview paths can reach Pillow.
 from . import compare_named_preview_file_patch as _compare_named_preview_file_patch  # noqa: E402,F401
+
+# Import for side effect: reject duplicate frame IDs and non-finite values in
+# irregular-frame timestamp CSV files before they reach timing calculations.
+from . import timestamp_csv_validation_patch as _timestamp_csv_validation_patch  # noqa: E402,F401
