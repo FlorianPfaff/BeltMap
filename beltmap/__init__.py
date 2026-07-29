@@ -166,6 +166,13 @@ from . import map_uncertainty_period_state_patch as _map_uncertainty_period_stat
 # multiple primary detections in cross-map agreement scoring.
 from . import cross_map_agreement_one_to_one_patch as _cross_map_agreement_one_to_one_patch  # noqa: F401,E402
 
+# Import for side effect: filter duplicate-ID velocity rows by their own score.
+from . import tracking_filter_row_patch as _tracking_filter_row_patch  # noqa: F401,E402
+
+filter_particle_velocities = (
+    _tracking_filter_row_patch.rowwise_filter_particle_velocities
+)
+
 __all__ = [
     "BeltMotionModel",
     "BeltPeriodState",
