@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Sequence
 
 from . import tracking as _tracking
@@ -45,3 +46,7 @@ setattr(
     _original_filter_particle_velocities,
 )
 _tracking.filter_particle_velocities = rowwise_filter_particle_velocities
+
+_package = sys.modules.get(__package__)
+if _package is not None:
+    setattr(_package, "filter_particle_velocities", rowwise_filter_particle_velocities)
