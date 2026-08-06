@@ -46,6 +46,8 @@ def duplicate_safe_find_images(
     panels, logos, or contact sheets.  Skip supported image files whose stems do
     not match the configured frame-index pattern; once a file is parseable as a
     frame image, keep duplicate-stem and duplicate-frame validation strict.
+    Directory entries that merely end in an image extension are not image files
+    and must be ignored before Pillow attempts to open them.
     """
 
     if not images_dir.is_dir():
@@ -54,7 +56,7 @@ def duplicate_safe_find_images(
     records: dict[str, _yolo_export.ImageRecord] = {}
     frame_paths: dict[int, Path] = {}
     for path in sorted(images_dir.rglob("*"), key=_yolo_export.natural_key):
-        if path.suffix.lower() not in _yolo_export.IMAGE_EXTENSIONS:
+        if not path.is_file() or path.suffix.lower() not in _yolo_export.IMAGE_EXTENSIONS:
             continue
         try:
             frame_index = _yolo_export.infer_frame_index(
@@ -86,6 +88,35 @@ def duplicate_safe_find_images(
     if not records:
         raise ValueError(f"no supported images found below {images_dir}")
     return records
+
+
+def regular_file_label_files(
+    labels_dir: Path,
+    *,
+    frame_index_pattern: str = _yolo_export.DEFAULT_FRAME_INDEX_PATTERN,
+) -> dict[str, Path]:
+    """Return frame-label files while ignoring matching directory entries."""
+
+    if not labels_dir.exists():
+        return {}
+    if not labels_dir.is_dir():
+        raise NotADirectoryError(labels_dir)
+    files: dict[str, Path] = {}
+    for path in sorted(labels_dir.rglob("*.txt"), key=_yolo_export.natural_key):
+        if not path.is_file():
+            continue
+        try:
+            _yolo_export.infer_frame_index(
+                path.stem,
+                pattern=frame_index_pattern,
+            )
+        except ValueError:
+            continue
+        existing = files.get(path.stem)
+        if existing is not None:
+            raise ValueError(f"duplicate YOLO label stem {path.stem!r}: {existing} and {path}")
+        files[path.stem] = path
+    return files
 
 
 def discrete_area_yolo_prediction_to_detection_row(
@@ -128,4 +159,5 @@ setattr(
 )
 
 _yolo_export.find_images = duplicate_safe_find_images
+_yolo_export._label_files = regular_file_label_files
 _yolo_export.yolo_prediction_to_detection_row = discrete_area_yolo_prediction_to_detection_row
