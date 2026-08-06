@@ -74,5 +74,31 @@ def test_cross_map_agreement_maximizes_one_to_one_match_cardinality():
     assert {score.matches[0].matched_label for score in scores} == {7, 8}
 
 
+def test_cross_map_agreement_maximizes_total_iou_after_cardinality():
+    primary_exact = _detection(1, 5.0, 5.0, (0, 0, 10, 10))
+    primary_near_exact = _detection(2, 5.0, 6.0, (0, 1, 10, 11))
+    primary_bridge = _detection(3, 5.0, 9.0, (0, 4, 10, 14))
+    confirming_left = _detection(7, 5.0, 5.0, (0, 0, 10, 10))
+    confirming_right = _detection(8, 5.0, 13.0, (0, 8, 10, 18))
+    config = CrossMapAgreementConfig(
+        max_centroid_distance_px=8.0,
+        min_bbox_iou=0.1,
+        min_peak_ratio=0.5,
+        require_sign_consistency=False,
+        min_confirming_maps=1,
+    )
+
+    scores = score_cross_map_agreement(
+        [primary_exact, primary_near_exact, primary_bridge],
+        [[confirming_left, confirming_right]],
+        config=config,
+    )
+
+    assert [score.accepted for score in scores] == [True, False, True]
+    assert scores[0].matches[0].matched_label == confirming_left.label
+    assert scores[1].matches[0].accepted is False
+    assert scores[2].matches[0].matched_label == confirming_right.label
+
+
 def test_package_export_uses_one_to_one_cross_map_scorer():
     assert score_cross_map_agreement is module_score_cross_map_agreement
