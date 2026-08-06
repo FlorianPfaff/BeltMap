@@ -1,9 +1,9 @@
 name: PR 300 self-hosted validation
 
 on:
-  push:
+  pull_request:
     branches:
-      - cleanup/consolidate-substantive-fixes
+      - main
   workflow_dispatch:
 
 permissions:
