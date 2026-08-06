@@ -1,9 +1,9 @@
 """Keep robust photometric coefficients aligned with the retained pixels.
 
-The original iterative fitter updates its retained-pixel mask after every fit.  If
+The original iterative fitter updates its retained-pixel mask after every fit. If
 that update happens on the final configured iteration, the returned coefficients
 still belong to the previous mask even though ``n_pixels`` and ``rmse_gray`` are
-computed from the newly trimmed mask.  In particular, ``max_iterations=1`` can
+computed from the newly trimmed mask. In particular, ``max_iterations=1`` can
 report that an outlier was trimmed while returning the fully outlier-biased fit.
 """
 
@@ -14,9 +14,10 @@ from typing import Any
 import numpy as np
 
 from . import advanced_quality as _advanced_quality
+from . import detection_mask_validation_patch as _mask_validation
 
 _PATCHED_ATTR = "_beltmap_final_gain_offset_refit_patched"
-_ORIGINAL_ATTR = "_beltmap_original_robust_gain_offset"
+_ORIGINAL_ATTR = "_beltmap_final_refit_original_robust_gain_offset"
 
 
 def _unwrap_patched_callable(func: Any) -> Any:
@@ -42,7 +43,7 @@ def refitting_robust_gain_offset(
     """Fit gain/offset after every accepted trimming update.
 
     The final least-squares coefficients, reported pixel count, and RMSE always
-    refer to the same retained-pixel set.  A trimming update that would leave too
+    refer to the same retained-pixel set. A trimming update that would leave too
     few pixels or make the gain unidentifiable is ignored.
     """
 
@@ -68,9 +69,12 @@ def refitting_robust_gain_offset(
         raise ValueError("observed and expected must have the same shape")
     valid = _advanced_quality.finite_mask(obs, exp)
     if mask is not None:
-        user_mask = np.asarray(mask, dtype=bool)
-        if user_mask.shape != obs.shape:
-            raise ValueError("mask must have the same shape as observed")
+        user_mask = _mask_validation._validate_binary_mask(
+            mask,
+            expected_shape=obs.shape,
+            name="mask",
+            shape_error="mask must have the same shape as observed",
+        ).astype(bool, copy=False)
         valid &= user_mask
 
     x = exp[valid].ravel()
@@ -111,8 +115,6 @@ def refitting_robust_gain_offset(
             break
         keep = new_keep
 
-    # A mask update may have occurred on the final loop iteration.  Refit once on
-    # that exact mask so the coefficients and diagnostics describe one data set.
     gain, offset = fit_retained(keep)
     fitted = gain * x[keep] + offset
     rmse = float(np.sqrt(np.mean(np.square(y[keep] - fitted))))
