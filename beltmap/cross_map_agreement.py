@@ -118,6 +118,10 @@ def score_cross_map_agreement(
             "confirming_residuals must have the same length as "
             "confirming_detections_by_map"
         )
+    _validate_detection_frame_alignment(
+        primary_detections,
+        confirming_detections_by_map,
+    )
 
     scores: list[CrossMapAgreementScore] = []
     for detection in primary_detections:
@@ -369,12 +373,46 @@ def _bool_value(value: object, name: str) -> bool:
     return value
 
 
+def _validate_detection_frame_alignment(
+    primary_detections: Sequence[ParticleDetection],
+    confirming_detections_by_map: Sequence[Sequence[ParticleDetection]],
+) -> None:
+    """Reject cross-map evidence that comes from a different source frame."""
+
+    if not primary_detections:
+        return
+    primary_frame = _finite_real(
+        primary_detections[0].frame_index,
+        "primary detection.frame_index",
+    )
+    for detection in primary_detections[1:]:
+        frame_index = _finite_real(
+            detection.frame_index,
+            "primary detection.frame_index",
+        )
+        if frame_index != primary_frame:
+            raise ValueError("all primary detections must have the same frame_index")
+
+    for map_index, candidates in enumerate(confirming_detections_by_map, start=1):
+        for candidate in candidates:
+            frame_index = _finite_real(
+                candidate.frame_index,
+                f"confirming detection map {map_index}.frame_index",
+            )
+            if frame_index != primary_frame:
+                raise ValueError(
+                    "confirming detections must have the same frame_index as "
+                    "the primary detections"
+                )
+
+
 def _validate_detection(
     detection: ParticleDetection,
     name: str,
     *,
     bbox_prefix: str | None = None,
 ) -> None:
+    _finite_real(detection.frame_index, f"{name}.frame_index")
     _finite_real(detection.y, f"{name}.y")
     _finite_real(detection.x, f"{name}.x")
     _validated_bbox(detection, prefix=bbox_prefix or name)
