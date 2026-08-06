@@ -60,7 +60,14 @@ def group_rows_by_track_id(
 ) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for index, row in enumerate(rows):
-        track_id = str(row.get("track_id", "")).strip() or f"missing:{index}"
+        raw_track_id = row.get("track_id")
+        track_id = "" if raw_track_id is None else str(raw_track_id).strip()
+        if (
+            not track_id
+            or isinstance(raw_track_id, (float, np.floating))
+            and not np.isfinite(raw_track_id)
+        ):
+            track_id = f"missing:{index}"
         grouped.setdefault(track_id, []).append(row)
     return grouped
 

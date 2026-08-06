@@ -43,6 +43,19 @@ def test_accepted_track_quality_summary_ignores_boolean_area_values():
     assert summary["small_accepted_track_ids_preview"] == ["real"]
 
 
+def test_accepted_track_quality_summary_keeps_missing_track_ids_separate():
+    rows = [
+        *({"track_id": None, "area_px": 10} for _ in range(5)),
+        *({"track_id": np.nan, "area_px": 10} for _ in range(5)),
+    ]
+
+    summary = accepted_track_quality_summary(rows)
+
+    assert summary["tracks"] == 10
+    assert summary["track_length"]["max"] == 1.0
+    assert summary["long_small_accepted_tracks_ge_5"] == 0
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
