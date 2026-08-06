@@ -260,6 +260,7 @@ def image_paths() -> tuple[list[Path], int, int]:
             p
             for p in DATA.rglob("*")
             if p.suffix.lower() in EXTS
+            and p.is_file()
             and not p.name.startswith("._")
             and not (
                 excluded_output_root is not None
