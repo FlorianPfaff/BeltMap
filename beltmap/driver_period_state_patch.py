@@ -33,15 +33,32 @@ _MAP_BUILD_PERIOD_KNOWN: list[bool | None] = [None]
 _MAP_ACCUMULATION_PERIODIC: list[bool | None] = [None]
 _DRIVER_MODEL_PERIOD_UNKNOWN = object()
 _DRIVER_MODEL_PERIOD_PX = [_DRIVER_MODEL_PERIOD_UNKNOWN]
+_ORIGINALS_ATTR = "_beltmap_driver_period_state_originals"
 
-_original_build_belt_map_result = _driver.build_belt_map_result
-_original_accumulate_belt_map = _driver_map.accumulate_belt_map
-_original_belt_motion_model = _BeltMotionModel
-_original_phase_drift_filter = _PhaseDriftFilter
-_original_phase_estimate_row = _driver.phase_estimate_row
-_original_texture_phase_velocity_summary = _driver.texture_phase_velocity_summary
-_original_score_recurrent_artifact_detections = _driver.score_recurrent_artifact_detections
-_original_driver_main = _driver.main
+_originals = getattr(_driver, _ORIGINALS_ATTR, None)
+if _originals is None:
+    _originals = {
+        "build_belt_map_result": _driver.build_belt_map_result,
+        "accumulate_belt_map": _driver_map.accumulate_belt_map,
+        "belt_motion_model": _BeltMotionModel,
+        "phase_drift_filter": _PhaseDriftFilter,
+        "phase_estimate_row": _driver.phase_estimate_row,
+        "texture_phase_velocity_summary": _driver.texture_phase_velocity_summary,
+        "score_recurrent_artifact_detections": _driver.score_recurrent_artifact_detections,
+        "driver_main": _driver.main,
+    }
+    setattr(_driver, _ORIGINALS_ATTR, _originals)
+
+_original_build_belt_map_result = _originals["build_belt_map_result"]
+_original_accumulate_belt_map = _originals["accumulate_belt_map"]
+_original_belt_motion_model = _originals["belt_motion_model"]
+_original_phase_drift_filter = _originals["phase_drift_filter"]
+_original_phase_estimate_row = _originals["phase_estimate_row"]
+_original_texture_phase_velocity_summary = _originals["texture_phase_velocity_summary"]
+_original_score_recurrent_artifact_detections = _originals[
+    "score_recurrent_artifact_detections"
+]
+_original_driver_main = _originals["driver_main"]
 
 
 def _env_int(name: str) -> int | None:
