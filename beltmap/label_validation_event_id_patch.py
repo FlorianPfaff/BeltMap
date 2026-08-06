@@ -99,3 +99,7 @@ if (
     is _original_validated_label_state
 ):
     _cli_module.validated_label_state = validated_label_state_allow_multiframe_event_ids
+
+# Import for side effect: load the substantive correctness fixes retained during
+# pull-request cleanup after the legacy patch chain is fully initialized.
+from . import consolidated_correctness_patches as _consolidated_correctness_patches  # noqa: E402,F401
