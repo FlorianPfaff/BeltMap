@@ -19,3 +19,12 @@ from . import prepare_zenodo_link_overlap_patch as _prepare_zenodo_link_overlap_
 # Import for side effect: reconstruct fallback track membership directly from
 # observed absolute frame IDs instead of allocating every preceding frame.
 from . import filter_tracks_sparse_frame_patch as _filter_tracks_sparse_frame_patch  # noqa: F401,E402
+
+# Import for side effect: refresh extracted caches when downloads are forced.
+from . import prepare_zenodo_force_download_patch as _prepare_zenodo_force_download_patch  # noqa: F401,E402
+
+# Import for side effect: reject duplicate normalized paths in dataset archives.
+from . import prepare_zenodo_duplicate_member_patch as _prepare_zenodo_duplicate_member_patch  # noqa: F401,E402
+
+# Import for side effect: validate recurrence phase rows before dense loading.
+from . import filter_revolution_recurrence_phase_patch as _filter_revolution_recurrence_phase_patch  # noqa: F401,E402
