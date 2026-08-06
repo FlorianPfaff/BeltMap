@@ -82,3 +82,7 @@ from . import compare_named_preview_file_patch as _compare_named_preview_file_pa
 # Import for side effect: reject duplicate frame IDs and non-finite values in
 # irregular-frame timestamp CSV files before they reach timing calculations.
 from . import timestamp_csv_validation_patch as _timestamp_csv_validation_patch  # noqa: E402,F401
+
+# Import for side effect: prevent evaluation reports from overwriting one another
+# or the standard artifacts belonging to an evaluated BeltMap run.
+from . import evaluation_path_collision_patch as _evaluation_path_collision_patch  # noqa: E402,F401
