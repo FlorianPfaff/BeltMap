@@ -90,6 +90,10 @@ from . import advanced_quality_matching_patch as _advanced_quality_matching_patc
 # matches before using IoU to choose among equal-cardinality assignments.
 from . import tracklet_matching_patch as _tracklet_matching_patch  # noqa: F401,E402
 
+# Import for side effect: require recurrent-artifact track evidence to align
+# one-to-one with the velocity rows being scored.
+from . import tracking_recurrent_gate_alignment_patch as _tracking_recurrent_gate_alignment_patch  # noqa: F401,E402
+
 # Import for side effect: make FROC sweeps prefer the available score field with
 # the greatest finite coverage across detections.
 from . import froc_score_field_coverage_patch as _froc_score_field_coverage_patch  # noqa: F401,E402
