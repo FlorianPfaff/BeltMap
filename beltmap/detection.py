@@ -162,6 +162,9 @@ def _residual_values_and_valid_mask(
             raise ValueError("residual must not be empty")
         valid = np.ones(values.shape, dtype=bool)
 
+    if values.ndim != 2:
+        raise ValueError("residual must be a 2-D array")
+
     valid &= np.isfinite(values)
     return values, valid
 
