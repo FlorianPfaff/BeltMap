@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from typing import Iterable
 
 from beltmap.operational_improvements import list_image_paths, read_gray_image, suggest_belt_region_from_frames
 
@@ -44,6 +45,25 @@ def parse_percentile(value: str) -> float:
     return parsed
 
 
+def paths_alias(first: Path, second: Path) -> bool:
+    """Return whether two path spellings refer to the same filesystem object."""
+
+    try:
+        return first.samefile(second)
+    except (FileNotFoundError, OSError):
+        return first.resolve(strict=False) == second.resolve(strict=False)
+
+
+def reject_output_input_alias(output: Path, image_paths: Iterable[Path]) -> None:
+    """Prevent the JSON output from replacing an input image."""
+
+    for image_path in image_paths:
+        if image_path.is_file() and paths_alias(output, image_path):
+            raise SystemExit(
+                f"Output path aliases an input image and would overwrite it: {output}"
+            )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Suggest a BeltMap belt region from motion energy.")
     parser.add_argument("--image-dir", type=Path, required=True)
@@ -56,9 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    paths = list_image_paths(args.image_dir, max_frames=args.max_frames)
+    all_paths = list_image_paths(args.image_dir)
+    paths = all_paths[: args.max_frames]
     if not paths:
         raise SystemExit(f"No image files found below {args.image_dir}")
+    reject_output_input_alias(args.output, all_paths)
     frames = [read_gray_image(path) for path in paths]
     suggestion = suggest_belt_region_from_frames(frames, percentile=args.percentile, margin_px=args.margin_px)
     payload = suggestion.to_dict()
