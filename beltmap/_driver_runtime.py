@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -176,12 +177,20 @@ def elapsed_s() -> float:
     return time.perf_counter() - START_TIME
 
 
+def _ru_maxrss_to_mib(value: float, *, platform: str | None = None) -> float:
+    """Convert ``resource.ru_maxrss`` to MiB for the current platform."""
+
+    current_platform = sys.platform if platform is None else platform
+    divisor = 1024.0 ** 2 if current_platform == "darwin" else 1024.0
+    return float(value) / divisor
+
+
 def rss_mb() -> float | None:
     """Return peak resident set size in MiB when available on this platform."""
 
     try:
         import resource
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        return _ru_maxrss_to_mib(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     except Exception:
         return None
 
