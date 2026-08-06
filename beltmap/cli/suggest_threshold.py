@@ -9,6 +9,24 @@ import numpy as np
 from beltmap.operational_improvements import empirical_p_values, fdr_threshold_from_p_values, recommend_threshold
 
 
+def paths_alias(first: Path, second: Path) -> bool:
+    """Return whether two path spellings refer to the same filesystem object."""
+
+    try:
+        return first.samefile(second)
+    except (FileNotFoundError, OSError):
+        return first.resolve(strict=False) == second.resolve(strict=False)
+
+
+def reject_output_input_alias(output: Path, residual_npy: Path) -> None:
+    """Prevent the JSON output from replacing the residual input array."""
+
+    if paths_alias(output, residual_npy):
+        raise SystemExit(
+            f"Output path aliases --residual-npy and would overwrite it: {output}"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Suggest a residual threshold from empirical residual tails.")
     parser.add_argument("--residual-npy", type=Path, required=True, help="2-D residual image or N-D residual stack saved as .npy")
@@ -21,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    reject_output_input_alias(args.output, args.residual_npy)
     residual = np.load(args.residual_npy)
     threshold = recommend_threshold(
         residual,
