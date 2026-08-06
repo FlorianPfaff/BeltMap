@@ -31,14 +31,7 @@ def nonnegative_refine_quadratic_offset(
     losses: Sequence[tuple[float, float]],
     best_index: int,
 ) -> tuple[float, float]:
-    """Refine a grid-search loss minimum without returning negative MSE values.
-
-    The quadratic interpolant is only a local approximation to a mean-square loss.
-    With asymmetric neighboring losses its vertex can dip slightly below zero, but
-    downstream code treats the value as a physical loss for diagnostics and score
-    conversion.  Clamp the approximation at zero instead of allowing impossible
-    negative losses to produce scores larger than one.
-    """
+    """Refine a grid-search loss minimum without returning negative MSE values."""
 
     refined_loss, refined_offset = _original_refine_quadratic_offset(losses, best_index)
     if np.isfinite(refined_loss) and refined_loss < 0.0:
@@ -71,6 +64,10 @@ setattr(
 
 _phase._refine_quadratic_offset = nonnegative_refine_quadratic_offset
 _phase._loss_to_score = bounded_loss_to_score
+
+# Import for side effect: smooth periodic phase corrections on a locally
+# unwrapped branch so values near +/- half a period are not averaged apart.
+from . import phase_smoothing_cyclic_patch as _phase_smoothing_cyclic_patch  # noqa: E402,F401
 
 # Import for side effect: preserve valid bottom/right border pixels in bilinear
 # perspective warps instead of replacing them with the configured fill value.
