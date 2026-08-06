@@ -129,3 +129,6 @@ setattr(
     _original_estimate_integer_xy_shift,
 )
 _advanced_quality.estimate_integer_xy_shift = nonwrapping_estimate_integer_xy_shift
+
+# Import for side effect: sort finite offset samples before local subpixel fitting.
+from . import advanced_quality_subpixel_order_patch as _advanced_quality_subpixel_order_patch  # noqa: E402,F401
