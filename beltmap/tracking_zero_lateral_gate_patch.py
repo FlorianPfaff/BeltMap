@@ -9,7 +9,7 @@ from typing import Any, Sequence
 from . import tracking as _tracking
 
 _PATCHED_ATTR = "_beltmap_zero_lateral_velocity_gate_patched"
-_ORIGINAL_ATTR = "_beltmap_original_score_particle_velocities"
+_ORIGINAL_ATTR = "_beltmap_zero_lateral_original_score_particle_velocities"
 
 
 def _unwrap_patched_callable(func: Any) -> Any:
