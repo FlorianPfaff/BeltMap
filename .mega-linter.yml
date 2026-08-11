@@ -14,3 +14,7 @@ PRINT_ALPACA: false
 SHOW_ELAPSED_TIME: true
 FLAVOR_SUGGESTIONS: false
 PYTHON_RUFF_CONFIG_FILE: pyproject.toml
+# Ruff 0.16 expanded its default rule set. Keep the v9-era E/F policy for this
+# MegaLinter upgrade; adopting the larger v0.16 defaults belongs in a separate
+# lint-cleanup change.
+PYTHON_RUFF_ARGUMENTS: "--select E4,E7,E9,F"
